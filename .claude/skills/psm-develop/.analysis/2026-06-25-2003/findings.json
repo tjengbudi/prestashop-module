@@ -1,0 +1,52 @@
+{
+  "schema_version": 2,
+  "subject": "/home/budi/dev/prestashop-module/skills/psm-develop",
+  "generated": "2026-06-25",
+  "verdict": "Workflow feature-add yang matang: plan-validate-execute dengan artefak rencana, katalog fungsi e-commerce tersendiri, validasi rencana pra-apply terhadap inventaris struktur. Lima temuan dari lima lensa — semuanya diperbaiki, dua di antaranya konvergen menjadi satu skrip inventaris baru.",
+  "grade": "excellent",
+  "summary": "psm-develop menambah fungsi e-commerce ke module PrestaShop existing tanpa regresi, lewat rencana yang divalidasi terhadap struktur module sebelum disentuh. Kekuatan utamanya adalah pola plan-validate-execute yang kini lengkap (inventaris deterministik + validasi rencana pra-apply); temuan terbesar — dua lensa menunjuk hal sama — diselesaikan dengan ps-module-inventory.py yang menggantikan parsing PHP manual.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "Inventaris struktur deterministik melengkapi plan-validate-execute",
+      "root_cause": "Model diminta mem-parse PHP mentah untuk mendaftar hook/tabel/controller (kerja deterministik), dan tak ada validasi rencana terhadap module existing sebelum apply yang tak mudah dibalik.",
+      "finding_ids": ["determinism-1", "enhancement-1"],
+      "action": "Tambah scripts/ps-module-inventory.py (emit hook terdaftar/ObjectModel+tabel/controller/upgrade-dir JSON); SKILL.md kini membacanya untuk peta titik sisip DAN memvalidasi rencana pra-apply (hook belum ada, $definition disertai upgrade script, titik sisip ada). Keduanya diterapkan + unit test."
+    },
+    {
+      "title": "Restatement & deklarasi",
+      "root_cause": "Aturan tambah-ke-existing diulang di tiga tempat; Overview menulis ulang gerbang; placeholder <module-path> tak dideklarasikan.",
+      "finding_ids": ["leanness-1", "leanness-2", "architecture-1"],
+      "action": "Aturan dipusatkan di katalog (dirujuk dari SKILL); Overview diringkas ke stance/outcome/why; <module-path> dideklarasikan di Resolution rules (semua diterapkan)."
+    }
+  ],
+  "strengths": [
+    "Plan-validate-execute lengkap: inventaris deterministik -> rancang -> validasi rencana pra-apply -> konfirmasi -> terapkan -> psm-validate.",
+    "Katalog fungsi e-commerce per domain + pertimbangan teknis PrestaShop (hook/persistensi/cross-version) — mandiri, augment KB bila ada.",
+    "Konsisten dgn keluarga psm: artefak rencana resumable, jejak asumsi headless ke memlog, baca vonis gate JSON apa adanya.",
+    "Pemisahan kerja bersih: inventaris+scan deterministik (skrip), rancang+sisip aman = judgment.",
+    "Aturan tambah-ke-existing eksplisit (jangan ubah $definition tanpa upgrade, daftarkan hook + upgrade script, GDPR)."
+  ],
+  "recommendations": [
+    {"rank": 1, "action": "Tambah ps-module-inventory.py + validasi rencana pra-apply (lengkapi plan-validate-execute).", "resolves": ["determinism-1", "enhancement-1"]},
+    {"rank": 2, "action": "Pusatkan aturan di katalog, ringkas Overview, deklarasikan <module-path>.", "resolves": ["leanness-1", "leanness-2", "architecture-1"]}
+  ],
+  "experience": {
+    "journeys": [
+      {"name": "Budi tambah fitur ke module", "steps": "panggil dgn path+fungsi -> inventaris+scan -> tawaran fungsi katalog -> rencana -> validasi rencana vs inventaris -> konfirmasi -> terapkan -> psm-validate 3 versi"},
+      {"name": "Headless", "steps": "argumen -> rencana+terapkan tanpa gerbang -> memlog asumsi -> psm-validate -> ringkasan+path"}
+    ],
+    "headless": "Lengkap: skip gerbang, catat asumsi (fungsi dipilih, sumber versi, revisi) ke memlog, kembalikan plan+memlog+status per versi dari vonis."
+  },
+  "findings": [
+    {"id": "determinism-1", "lens": "determinism", "severity": "medium", "title": "Inventaris hook/tabel/controller diparse model dari PHP mentah (DIPERBAIKI)", "evidence": "Stage 'Pahami module existing' minta model membaca main file & install() untuk enumerasi hook/tabel — kerja deterministik (satu jawaban per input).", "recommendation": "Diterapkan: scripts/ps-module-inventory.py emit JSON (registered/implemented hooks, ObjectModel+tabel, controller, upgrade-dir, files); SKILL.md membacanya, model hanya menilai titik sisip."},
+    {"id": "enhancement-1", "lens": "enhancement", "severity": "medium", "title": "Tak ada validasi rencana pra-apply (plan-validate-execute belum lengkap) (DIPERBAIKI)", "evidence": "Validasi hanya persetujuan manusia + psm-validate SETELAH apply; rencana tak dicek terhadap module existing sebelum perubahan tak mudah dibalik.", "recommendation": "Diterapkan: langkah 'Validasi rencana terhadap inventaris sebelum konfirmasi' (hook belum ada, $definition+upgrade script, titik sisip ada) pakai JSON inventaris."},
+    {"id": "leanness-1", "lens": "leanness", "severity": "medium", "title": "Aturan tambah-ke-existing diulang tiga tempat (DIPERBAIKI)", "evidence": "Aturan sama (jangan ubah $definition tanpa upgrade, daftarkan hook+upgrade, GDPR) muncul di Overview, Rancang, dan katalog.", "recommendation": "Diterapkan: aturan dipusatkan di katalog, SKILL.md merujuk; recap dari Overview dihapus."},
+    {"id": "leanness-2", "lens": "leanness", "severity": "low", "title": "Overview menulis ulang gerbang yang sudah ada di section-nya (DIPERBAIKI)", "evidence": "Overview mengulang 'tidak pernah menerapkan tanpa rencana / tidak pernah selesai sebelum validate' yang sudah dimiliki section Apply & Verify.", "recommendation": "Diterapkan: Overview diringkas ke stance/outcome/consumer + why; gerbang tetap di section-nya.", "proposed_smallest": "Overview ringkas tanpa restatement gerbang.", "predicted_delta": "Tak ada yang hilang; gerbang tetap di Apply & Verify tempat model bertindak."},
+    {"id": "architecture-1", "lens": "architecture", "severity": "low", "title": "Placeholder <module-path> tak dideklarasikan di Resolution rules (DIPERBAIKI)", "evidence": "Artefak .psm-develop-plan.md anchor pada <module-path> tapi Resolution rules hanya deklarasi {skill-root}/{project-root}/psm-develop.", "recommendation": "Diterapkan: <module-path> dideklarasikan di Resolution rules sebagai folder module yang dikembangkan."}
+  ]
+}

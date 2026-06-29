@@ -1,0 +1,68 @@
+{
+  "scanner": "workflow-integrity-prepass",
+  "script": "prepass-workflow-integrity.py",
+  "version": "1.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/skills/psm-validate",
+  "timestamp": "2026-06-25T11:17:30.081908+00:00",
+  "status": "warning",
+  "metadata": {
+    "frontmatter": {
+      "name": "psm-validate",
+      "description": "Validasi module PrestaShop terhadap 1.7/8/9 di flashlight. Use when the user says \"psm-validate\", \"validasi module\", \"cek kompatibilitas module PrestaShop\", or \"audit module\"."
+    },
+    "sections": [
+      {
+        "level": 2,
+        "title": "Resolution rules",
+        "line": 10
+      },
+      {
+        "level": 2,
+        "title": "On Activation",
+        "line": 16
+      },
+      {
+        "level": 2,
+        "title": "Validate",
+        "line": 22
+      },
+      {
+        "level": 2,
+        "title": "Vonis dan output",
+        "line": 32
+      },
+      {
+        "level": 2,
+        "title": "Mode headless",
+        "line": 40
+      }
+    ],
+    "workflow_type": "simple-workflow"
+  },
+  "stage_summary": {
+    "total_stages": 0,
+    "referenced": [],
+    "actual": [],
+    "missing_stages": [],
+    "orphaned_stages": []
+  },
+  "prompt_details": [],
+  "issues": [
+    {
+      "file": "SKILL.md",
+      "line": 1,
+      "severity": "high",
+      "category": "sections",
+      "issue": "Missing ## Overview section"
+    }
+  ],
+  "summary": {
+    "total_issues": 1,
+    "by_severity": {
+      "critical": 0,
+      "high": 1,
+      "medium": 0,
+      "low": 0
+    }
+  }
+}

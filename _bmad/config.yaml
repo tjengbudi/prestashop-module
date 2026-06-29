@@ -1,0 +1,19 @@
+document_output_language: English
+output_folder: '{project-root}/_bmad-output'
+bmb:
+  name: BMad Builder
+  description: Standard Skill Compliant Factory for BMad Agents, Workflows and Modules
+  version: 1.0.0
+  default_selected: false
+  bmad_builder_output_folder: '{project-root}/skills'
+  bmad_builder_reports: '{project-root}/skills/reports'
+psm:
+  name: PrestaShop Module Builder
+  description: Bikin, kembangkan, buat cross-version (1.7/8/9), validasi, dan optimasi
+    module PrestaShop dengan standar baku & uji flashlight.
+  version: 1.0.0
+  default_selected: false
+  psm_target_versions: 1.7.8,8.1,9.0
+  psm_flashlight_tag_map: 1.7.8=1.7.8.11,8.1=8.1,9.0=nightly
+  psm_modules_dir: '{project-root}/modules'
+  psm_reports_dir: '{project-root}/_bmad-output/psm-validate'

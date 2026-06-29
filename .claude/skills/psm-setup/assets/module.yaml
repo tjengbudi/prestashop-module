@@ -1,0 +1,47 @@
+code: psm
+name: PrestaShop Module Builder
+description: Bikin, kembangkan, buat cross-version (1.7/8/9), validasi, dan optimasi module PrestaShop dengan standar baku & uji flashlight.
+version: 1.0.0
+default_selected: false
+module_greeting: >
+  Selamat datang di PrestaShop Module Builder! Module ini membantu Budi membuat,
+  meng-cross-version-kan, mengembangkan, memvalidasi, dan mengoptimasi module
+  PrestaShop agar jalan di 1.7.x, 8.x, dan 9.x sekaligus. Mulai dengan memanggil
+  "psm-agent-expert" untuk berkonsultasi, atau langsung panggil workflow yang kamu butuh.
+
+agents:
+  - code: psm-agent-expert
+    name: PrestaShop Module Expert
+    title: Konsultan PrestaShop Cross-Version & E-commerce
+    icon: 🛒
+    description: Konsultan ahli PrestaShop cross-version & e-commerce; pintu masuk module psm.
+
+psm_target_versions:
+  prompt: "Versi PrestaShop target default (dipisah koma)?"
+  default: "1.7.8,8.1,9.0"
+  result: "{value}"
+
+psm_flashlight_tag_map:
+  prompt: "Pemetaan versi ke tag image prestashop-flashlight?"
+  default: "1.7.8=1.7.8.11,8.1=8.1,9.0=nightly"
+  result: "{value}"
+
+psm_modules_dir:
+  prompt: "Folder tempat module PrestaShop kamu berada?"
+  default: "{project-root}/modules"
+  result: "{value}"
+
+psm_reports_dir:
+  prompt: "Folder output laporan validasi/optimasi?"
+  default: "{project-root}/_bmad-output/psm-validate"
+  result: "{value}"
+
+directories:
+  - "{project-root}/_bmad/psm/memory/tech"
+  - "{project-root}/_bmad/psm/memory/ecommerce"
+  - "{project-root}/_bmad/psm/memory/projects"
+
+post-install-notes: >
+  Module psm terpasang. Dua langkah lanjutan: (1) Pastikan Docker terpasang & tarik
+  image prestashop-flashlight (uji validasi/optimasi berjalan di dalamnya). (2) Jalankan
+  psm-agent-expert sekali untuk men-seed knowledge base bersama di _bmad/psm/memory/.
