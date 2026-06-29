@@ -34,9 +34,9 @@ Satu agent konsultan + lima workflow + satu setup skill, berbagi knowledge base 
    ```
    /psm-agent-expert
    ```
-   First run akan mengisi `_bmad/psm/memory/` dari riset & katalog yang sudah disiapkan.
+   First run mengisi `_bmad/psm/memory/` dari riset & katalog yang sudah disiapkan: **9 file `tech/`** (breaking changes 8 & 9, pola cross-version, hooks, services-di, persistence, composer-structure, validator-rules, flashlight) + **3 file `ecommerce/`** (function-catalog, elicitation-lenses, adversarial-checks). Folder `projects/` terisi seiring kamu menggarap module. Lihat [Knowledge base](#knowledge-base) di bawah.
 
-3. **Pastikan Docker ada** — uji `psm-validate` & `psm-optimize` berjalan di dalam container `prestashop/prestashop-flashlight`. Cek `docker --version`; image flashlight ditarik otomatis saat workflow uji pertama dijalankan.
+3. **Pastikan Docker ada** — uji `psm-validate` & `psm-optimize` berjalan di dalam container `prestashop/prestashop-flashlight`. Cek `docker --version`; image flashlight ditarik otomatis saat workflow uji pertama dijalankan, lalu di-cache lokal. Setiap tag versi ditarik terpisah sesuai `psm_flashlight_tag_map` (mis. `nightly` untuk 9.0 sudah cukup besar ±1.3 GB; tag `1.7.8.11` & `8.1` ditarik saat pertama kali menguji versi itu).
 
 ### Konfigurasi (config section `psm`)
 
@@ -81,6 +81,33 @@ Bila sudah tahu mau apa, panggil workflow langsung dengan path module:
 /psm-optimize /home/budi/modules/ps_banner
 ```
 
+### Contoh end-to-end: cross-version module lama
+
+Module `ps_banner` ditulis untuk 1.7, mau jalan di 8 & 9 sekaligus.
+
+```
+/psm-cross-version /home/budi/modules/ps_banner
+```
+
+1. **Analisis** — workflow memindai source terhadap `ps-rules.json`. Temuan contoh:
+   - `Tools::jsonEncode(...)` → dihapus PS8 (error)
+   - hook `actionAdminLoginControllerBefore` → dihapus PS9 (error)
+   - variabel Smarty `{$title}` tak di-escape (warning)
+2. **Rencana** — ditulis ke `.psm-cross-plan.md` di folder module: tiap temuan + perbaikan version-safe yang diusulkan (mis. ganti ke `json_encode` native; daftarkan hook dengan cabang `version_compare`).
+3. **Konfirmasi** — kamu setujui/koreksi rencana. Tak ada yang diubah sebelum kamu OK.
+4. **Terapkan** — patch source + tambah `ps_versions_compliancy` bila belum ada.
+5. **Verifikasi** — otomatis memanggil `psm-validate`; module dipasang di flashlight 1.7.8 / 8.1 / 9.0. Laporan JSON per versi ke `psm_reports_dir`, status **lolos/gagal** + sisa temuan.
+
+Hasil akhir: satu codebase `ps_banner` yang sama, lolos di tiga versi. Pakai git untuk membandingkan/membatalkan diff.
+
+### Contoh: validasi cepat sebelum rilis
+
+```
+/psm-validate /home/budi/modules/ps_banner
+```
+
+Output: laporan per versi target — cek statis (API/hook/dependency dihapus, index.php, Smarty escaped, `ps_versions_compliancy`), hasil instalasi di core asli, dan temuan adversarial e-commerce (harga server-side? GDPR? multistore?). Tanpa Docker, cek statis tetap jalan; uji instalasi dilewati.
+
 ---
 
 ## Alur kerja umum
@@ -122,6 +149,35 @@ psm-optimize <module>        # profil (Blackfire/Xdebug) → rencana → terapka
 
 ---
 
+## Knowledge base
+
+Pengetahuan PrestaShop yang sulit & berulang hidup di `_bmad/psm/memory/` — **milik bersama semua workflow psm**, dibaca tiap kali sebuah workflow butuh konteks lintas versi, dan dirawat oleh `psm-agent-expert`. Tujuannya: kamu tak perlu menjelaskan ulang standar yang sama.
+
+```
+_bmad/psm/memory/
+  tech/         # pengetahuan teknis lintas versi
+    breaking-changes-8.md     # API/kelas/konstanta dihapus di PS8
+    breaking-changes-9.md     # dependency/hook/kelas dihapus di PS9
+    cross-version-patterns.md # ringkasan pola version-safe + checklist
+    hooks.md                  # registrasi & cabang versi hook
+    services-di.md            # akses service/DI lintas versi
+    persistence.md            # ObjectModel vs Doctrine, aturan tabel
+    composer-structure.md     # composer.json, ps_versions_compliancy, struktur folder
+    validator-rules.md        # ringkasan aturan Validator (rujuk ps-rules.json)
+    flashlight.md             # lingkungan uji Docker + status tag lokal
+  ecommerce/    # pengetahuan domain
+    function-catalog.md       # peta fungsi e-commerce → hook → persistensi
+    elicitation-lenses.md     # lensa menggali kebutuhan saat brainstorm
+    adversarial-checks.md     # pertanyaan tajam mengkritik module sebelum matang
+  projects/     # state per module yang digarap (<module>.md) — terisi seiring kerja
+```
+
+**Hidup, bukan statis.** Saat agent menemukan breaking change baru atau pola yang terbukti, dia menulis/memperbarui file yang relevan (riset devdocs via WebReader, catat sumber & tanggal). Setiap rilis PrestaShop baru memicu pembaruan `tech/breaking-changes-*.md`. Satu fakta per tempat yang jelas; bila katalog skill sudah lengkap, file memory merujuk ke sana alih-alih menyalin.
+
+**Cara memakai:** jalankan `/psm-agent-expert` dan tanya apa saja — jawaban datang dari knowledge base ini (dan riset bila ada celah, lalu KB diperbarui). Kamu juga bisa membaca/menyunting file-nya langsung.
+
+---
+
 ## Struktur
 
 ```
@@ -136,10 +192,8 @@ skills/
   reports/
     prestashop-module-builder-plan.md   # rencana & riset lengkap
 
-_bmad/psm/memory/        # knowledge base bersama (dibuat saat setup, di-seed oleh agent)
-  tech/                  # breaking changes, hooks, services, persistence, dll
-  ecommerce/             # katalog fungsi, lensa elicitation, checklist adversarial
-  projects/              # state per module yang dikerjakan
+_bmad/psm/memory/        # knowledge base bersama → lihat section "Knowledge base"
+  tech/  ecommerce/  projects/
 ```
 
 ---
@@ -147,6 +201,7 @@ _bmad/psm/memory/        # knowledge base bersama (dibuat saat setup, di-seed ol
 ## Troubleshooting
 
 - **"Docker tidak tersedia"** saat validasi/optimasi → uji flashlight dilewati; validasi tetap jalan dengan aturan statis saja, tapi uji perilaku di core asli butuh Docker. Pasang Docker lalu ulangi.
-- **Knowledge base kosong** → jalankan `/psm-agent-expert` sekali untuk men-seed-nya.
-- **Image flashlight lama diunduh** → image besar (GB); unduhan pertama per tag versi makan waktu, setelahnya di-cache lokal.
+- **Knowledge base kosong** (`_bmad/psm/memory/tech` & `ecommerce` tak ada isi) → jalankan `/psm-agent-expert` sekali untuk men-seed-nya dari riset & katalog.
+- **Image flashlight lama diunduh** → image besar (GB); unduhan pertama per tag versi makan waktu, setelahnya di-cache lokal. Cek tag yang sudah ada: `docker images | grep flashlight`.
+- **Uji versi tertentu dilewati** → tag untuk versi itu belum di-pull. Tarik manual sesuai `psm_flashlight_tag_map`, mis. `docker pull prestashop/prestashop-flashlight:1.7.8.11`.
 - **Mau ubah versi target** → jalankan ulang `/psm-setup` atau sunting `psm_target_versions` di `_bmad/config.yaml`.
