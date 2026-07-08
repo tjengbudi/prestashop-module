@@ -9,8 +9,8 @@ description: Sets up PrestaShop Module Builder module in a project. Use when the
 
 Installs and configures a BMad module into a project. Module identity (name, code, version) comes from `assets/module.yaml`. Collects user preferences and writes them to three files:
 
-- **`{project-root}/_bmad/config.yaml`** — shared project config: core settings at root (e.g. `output_folder`, `document_output_language`) plus a section per module with metadata and module-specific values. User-only keys (`user_name`, `communication_language`) are **never** written here.
-- **`{project-root}/_bmad/config.user.yaml`** — personal settings intended to be gitignored: `user_name`, `communication_language`, and any module variable marked `user_setting: true` in `assets/module.yaml`. These values live exclusively here.
+- **`{project-root}/_bmad/config.yaml`** — shared project config: core settings at root (e.g. `output_folder`, `document_output_language`) plus a section per module with metadata and module-specific values.
+- **`{project-root}/_bmad/config.user.yaml`** — personal settings intended to be gitignored: `user_name`, `communication_language`, and any module variable marked `user_setting: true` in `assets/module.yaml`.
 - **`{project-root}/_bmad/module-help.csv`** — registers module capabilities for the help system.
 
 `{project-root}` is a **literal token** in config _values_ (the data written into the files above) — never substitute it there. It signals to the consuming LLM that the value is relative to the project root, not the skill root. **This does not apply to the filesystem path _arguments_ passed to the scripts below** (the `--*-path`, `--*-dir`, `--project-root`, and `--target` arguments): those are real paths, so you **must** resolve `{project-root}` to the actual project root before running, or the scripts reject the unresolved token with an error.
@@ -41,6 +41,8 @@ If the user provides arguments (e.g. `accept all defaults`, `--headless`, or inl
 ## Collect Configuration
 
 Present the planner's `defaults` and ask the user for values, showing each default in brackets. Present all values together so the user can respond once with only the values they want to change (e.g. "change language to Swahili, rest are fine"). Never tell the user to "press enter" or "leave blank" — in a chat interface they must type something to respond.
+
+When `install_state` is `update` and no arguments were supplied, note the module is already configured and offer a keep-all exit: tell me only what to change, or say nothing to keep everything. Either way the run stays safe — the anti-zombie merge rewrites this module's section cleanly.
 
 **Core config** appears only when `core_needed` is true. Ask `communication_language` and `document_output_language` as a single language question (both keys get the same answer) — but if the user's answer implies they want to converse in one language and generate documents in another, collect the two separately. The planner marks each key's `target` (`config.yaml` at root, shared across modules, or `config.user.yaml` for `user_name`/`communication_language`).
 
@@ -75,11 +77,19 @@ Check `directories_removed` and `files_removed_count` in the JSON output for the
 
 After the directories are created, the shared knowledge base at `{project-root}/_bmad/psm/memory/` (`tech/`, `ecommerce/`, `projects/`) is still empty. Do not seed it here — that is `psm-agent-expert`'s job, which has first-run seed logic (see that skill's `references/maintain-knowledge.md`: it seeds from the research in `{project-root}/skills/reports/prestashop-module-builder-plan.md` plus the catalogs in `{project-root}/skills/psm-cross-version/references/version-safe-patterns.md` and `{project-root}/skills/psm-develop/references/ecommerce-function-catalog.md`, falling back to devdocs when absent). Tell the user to run `psm-agent-expert` once to populate the knowledge base.
 
-Also check external dependencies: **Docker** is required to run the `psm-validate`/`psm-optimize` tests inside `prestashop-flashlight`. Check `docker --version`; if it is missing, tell the user how to install it (do not install automatically) and that the flashlight image is pulled when the first test workflow runs.
+Also flag a forward-looking dependency — this is not a setup blocker, only a heads-up for later workflows: **Docker** is required to run the `psm-validate`/`psm-optimize` tests inside `prestashop-flashlight`. Check `docker --version`; if it is missing, tell the user how to install it (do not install automatically) and that the flashlight image is pulled when the first test workflow runs. Setup itself does not need Docker, so a missing Docker never blocks this install.
 
 ## Confirm
 
-Use the script JSON output to display what was written — config values set (written to `config.yaml` at root for core, module section for module values), user settings written to `config.user.yaml` (`user_keys` in result), help entries added, fresh install vs update, and the output directories created. If legacy files were deleted, mention the migration. If legacy directories were removed, report the count and list (e.g. "Cleaned up 106 installer package files from bmb/, core/, \_config/ — skills are installed at .claude/skills/"). Then display the `module_greeting` from `assets/module.yaml` to the user.
+Use the script JSON output to display what was written — config values set (written to `config.yaml` at root for core, module section for module values), user settings written to `config.user.yaml` (`user_keys` in result), help entries added, fresh install vs update, and the output directories created. If legacy files were deleted, mention the migration. If legacy directories were removed, report the count and list (e.g. "Cleaned up 106 installer package files from bmb/, core/, \_config/ — skills are installed at .claude/skills/").
+
+Then give the user one clear next action: run `psm-agent-expert` once — that single invocation both seeds the shared knowledge base (per the Seed step above) and opens the consultation entry point. Display the `module_greeting` from `assets/module.yaml` alongside this, so the seed and consult prompts land as one next step rather than two.
+
+When the skill was invoked headless or with arguments, also emit a compact machine-readable result the caller can gate on — a single JSON object aggregating the script outputs, e.g.:
+
+```json
+{"status": "success", "install_state": "fresh", "module_code": "psm", "user_keys": ["user_name", "communication_language"], "output_dirs_created": ["..."], "legacy_configs_deleted": [], "legacy_dirs_removed": []}
+```
 
 ## Outcome
 
