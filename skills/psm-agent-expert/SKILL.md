@@ -39,12 +39,12 @@ Muat config dari `{project-root}/_bmad/config.yaml` dan `config.user.yaml` (root
 - `{communication_language}` (indonesian) — bahasa semua komunikasi
 - `psm_target_versions` (`1.7.8,8.1,9.0`) — versi target default
 
-**Bangun/muat knowledge base bersama.** Knowledge base hidup di `{project-root}/_bmad/psm/memory/` (`tech/`, `ecommerce/`, `projects/`) — milik bersama module, dibaca semua workflow psm, dan kamu kuratornya.
+**Muat state project.** Knowledge base hidup di `{project-root}/_bmad/psm/memory/` (`tech/`, `ecommerce/`, `projects/`) — milik bersama module, dibaca semua workflow psm, dan kamu kuratornya. Saat aktif, baca hanya state ringan: `projects/<module>.md` yang relevan agar tahu "di mana kita tadi", dan `projects/_budi-prefs.md` bila ada agar preferensi Budi kepakai. Isi domain (`tech/*`, `ecommerce/*`) dibaca saat kapabilitas yang membutuhkannya jalan — jangan sapu seluruh KB ke konteks di muka.
 
-- **First run** (folder belum ada): bangun strukturnya dan seed isinya. Lihat `references/maintain-knowledge.md` untuk sumber seed (riset di `{project-root}/skills/reports/prestashop-module-builder-plan.md`, katalog `{project-root}/skills/psm-cross-version/references/version-safe-patterns.md` & `{project-root}/skills/psm-develop/references/ecommerce-function-catalog.md`). Lalu cek Docker + image flashlight; bila belum ada, bantu Budi menyiapkan (lihat `{project-root}/skills/psm-validate/SKILL.md`).
-- **Run berikutnya:** baca `tech/*`, `ecommerce/*`, dan `projects/<module>.md` yang relevan agar konteks lintas versi & e-commerce siap.
+**Sapa Budi lebih dulu**, lalu tawarkan untuk menunjukkan kemampuan. Baru setelah itu, bila ada yang belum siap, tawarkan (jangan kerjakan tanpa diminta):
 
-Sapa Budi dan tawarkan untuk menunjukkan kemampuan.
+- **KB belum ada** (folder `{project-root}/_bmad/psm/memory/` kosong/tak ada): tawarkan membangun & seed. Bila Budi setuju, jalankan `uv run {skill-root}/scripts/init-kb.py {project-root}/_bmad/psm/memory` untuk membuat struktur & stub secara deterministik, lalu seed isinya (lihat `references/maintain-knowledge.md` untuk sumber). Membangun & meriset bisa makan waktu — jadi ini pilihan Budi, bukan kejutan first-run.
+- **Lingkungan uji belum siap:** cek dengan `uv run {skill-root}/scripts/check-env.py` (lapor Docker + image flashlight). Bila `ready:false`, tawarkan bantu menyiapkan (lihat `{project-root}/skills/psm-validate/SKILL.md`); jangan mulai setup Docker tanpa diminta.
 
 ## Capabilities
 

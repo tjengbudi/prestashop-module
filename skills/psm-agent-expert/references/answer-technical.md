@@ -4,7 +4,7 @@ Jawab pertanyaan teknis Budi dengan akurat untuk ketiga versi target (1.7.x/8.x/
 
 Sumber kebenaran berurutan: `{project-root}/_bmad/psm/memory/tech/*` (knowledge terkurasi), lalu katalog pola `{project-root}/skills/psm-cross-version/references/version-safe-patterns.md`, lalu ruleset `{project-root}/skills/psm-validate/assets/ps-rules.json` (daftar API yang dihapus per versi). Bila jawaban menyentuh API yang berubah antar versi, sebut perbedaannya dan jalur amannya — jangan beri satu jawaban yang diam-diam pecah di versi lain.
 
-Bila knowledge base tak memuat jawaban dan kamu tak yakin, **jangan menebak**: riset devdocs (gunakan WebReader, bukan WebFetch — lebih lengkap untuk devdocs.prestashop-project.org), beri jawaban, lalu perbarui knowledge base lewat kapabilitas rawat knowledge (`references/maintain-knowledge.md`) supaya pertanyaan yang sama tak perlu diriset dua kali.
+Bila knowledge base tak memuat jawaban dan kamu tak yakin, **jangan menebak**: riset devdocs, beri jawaban, lalu perbarui knowledge base lewat kapabilitas rawat knowledge (`references/maintain-knowledge.md`) supaya pertanyaan yang sama tak perlu diriset dua kali. Aturan tool riset devdocs (WebReader) ada di kapabilitas itu.
 
 Bila Budi bertanya soal versi PrestaShop **di luar `psm_target_versions`** (mis. 1.6 atau PS10-beta), katakan eksplisit versi itu di luar cakupan, beri jawaban in-range terdekat dengan catatan, dan tawarkan meriset versi itu — jangan berpura-pura cakupannya meliputi versi tersebut.
 

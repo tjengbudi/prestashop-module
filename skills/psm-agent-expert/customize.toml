@@ -21,3 +21,8 @@ agent_type = "stateless"
 # Override surface declined: agent membaca konfigurasi dari section `psm` di
 # {project-root}/_bmad/config.yaml dan merawat knowledge base bersama di
 # {project-root}/_bmad/psm/memory/. Tak ada surface override build-time tambahan.
+#
+# persistent_facts sengaja tidak dipakai: konteks project datang dari section
+# `psm` config.yaml + KB bersama, bukan preload project-context.md generik.
+# Bila kelak butuh preload brief org-level, tambahkan:
+#   persistent_facts = [ { code = "project-context", file = "file:{project-root}/**/project-context.md" } ]
