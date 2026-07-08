@@ -19,7 +19,7 @@ Installs and configures a BMad module into a project. Module identity (name, cod
 
 Confirm `python3` is available (`python3 --version`) — every script below requires it. If it is missing, tell the user how to install it and stop before prompting.
 
-Run the planner to classify the install and resolve effective defaults in one read-only pass (resolve `{project-root}` in the path arguments first):
+Run the planner to classify the install and resolve effective defaults in one read-only pass (resolve `{project-root}` in the path arguments, as in Overview):
 
 ```bash
 python3 scripts/plan-setup.py --config-path "{project-root}/_bmad/config.yaml" --module-yaml assets/module.yaml --legacy-dir "{project-root}/_bmad"
@@ -42,7 +42,7 @@ If the user provides arguments (e.g. `accept all defaults`, `--headless`, or inl
 
 Present the planner's `defaults` and ask the user for values, showing each default in brackets. Present all values together so the user can respond once with only the values they want to change (e.g. "change language to Swahili, rest are fine"). Never tell the user to "press enter" or "leave blank" — in a chat interface they must type something to respond.
 
-When `install_state` is `update` and no arguments were supplied, note the module is already configured and offer a keep-all exit: tell me only what to change, or say nothing to keep everything. Either way the run stays safe — the anti-zombie merge rewrites this module's section cleanly.
+When `install_state` is `update` and no arguments were supplied, note the module is already configured and offer a keep-all exit: tell me only what to change, or say nothing to keep everything. The run stays safe either way (anti-zombie merge — see Write Files).
 
 **Core config** appears only when `core_needed` is true. Ask `communication_language` and `document_output_language` as a single language question (both keys get the same answer) — but if the user's answer implies they want to converse in one language and generate documents in another, collect the two separately. The planner marks each key's `target` (`config.yaml` at root, shared across modules, or `config.user.yaml` for `user_name`/`communication_language`).
 
@@ -50,7 +50,7 @@ When `install_state` is `update` and no arguments were supplied, note the module
 
 ## Write Files
 
-Write a temp JSON file with the collected answers structured as `{"core": {...}, "module": {...}}` (omit `core` when `core_needed` is false). Give it a run-unique name under the OS temp dir (e.g. `$(mktemp)`), overwrite rather than reuse so a stale file from a failed run can't feed a re-run, and delete it after both merge scripts complete. Values inside this JSON keep the literal `{project-root}` token. Then run both scripts — they can run in parallel since they write to different files. Pass the `module_code` from the planner and resolve `{project-root}` in every path argument to the actual project root first (these are filesystem paths, not config values). `--project-root` makes merge-config create the configured output directories in the same pass.
+Write a temp JSON file with the collected answers structured as `{"core": {...}, "module": {...}}` (omit `core` when `core_needed` is false). Give it a run-unique name under the OS temp dir (e.g. `$(mktemp)`), overwrite rather than reuse so a stale file from a failed run can't feed a re-run, and delete it after both merge scripts complete. Values inside this JSON keep the literal `{project-root}` token. Then run both scripts — they can run in parallel since they write to different files. Pass the `module_code` from the planner and resolve `{project-root}` in every path argument first (as in Overview). `--project-root` makes merge-config create the configured output directories in the same pass.
 
 ```bash
 python3 scripts/merge-config.py --config-path "{project-root}/_bmad/config.yaml" --user-config-path "{project-root}/_bmad/config.user.yaml" --module-yaml assets/module.yaml --answers {temp-file} --legacy-dir "{project-root}/_bmad" --project-root "{project-root}"
@@ -63,7 +63,7 @@ Both scripts output JSON to stdout. If either exits non-zero, surface the error 
 
 After both merge scripts complete successfully, remove the installer's package directories. Skills and agents in these directories are already installed at `.claude/skills/` — the `{project-root}/_bmad/` directory should only contain config files.
 
-As with the merge scripts, replace `{project-root}` in the `--bmad-dir` and `--skills-dir` path arguments with the actual project root, and pass the planner's `module_code`.
+As with the merge scripts, resolve `{project-root}` in the `--bmad-dir` and `--skills-dir` path arguments, and pass the planner's `module_code`.
 
 ```bash
 python3 scripts/cleanup-legacy.py --bmad-dir "{project-root}/_bmad" --module-code {module_code} --also-remove _config --skills-dir "{project-root}/.claude/skills"
@@ -75,7 +75,7 @@ Check `directories_removed` and `files_removed_count` in the JSON output for the
 
 ## Seed Knowledge Base & External Deps (psm-specific)
 
-After the directories are created, the shared knowledge base at `{project-root}/_bmad/psm/memory/` (`tech/`, `ecommerce/`, `projects/`) is still empty. Do not seed it here — that is `psm-agent-expert`'s job, which has first-run seed logic (see that skill's `references/maintain-knowledge.md`: it seeds from the research in `{project-root}/skills/reports/prestashop-module-builder-plan.md` plus the catalogs in `{project-root}/skills/psm-cross-version/references/version-safe-patterns.md` and `{project-root}/skills/psm-develop/references/ecommerce-function-catalog.md`, falling back to devdocs when absent). Tell the user to run `psm-agent-expert` once to populate the knowledge base.
+After the directories are created, the shared knowledge base at `{project-root}/_bmad/psm/memory/` (`tech/`, `ecommerce/`, `projects/`) is still empty. Do not seed it here — that is `psm-agent-expert`'s job, which has first-run seed logic (see that skill's `references/maintain-knowledge.md`: it seeds from the research in `{project-root}/skills/reports/prestashop-module-builder-plan.md` plus the catalogs in `{project-root}/skills/psm-cross-version/references/version-safe-patterns.md` and `{project-root}/skills/psm-develop/references/ecommerce-function-catalog.md`, falling back to devdocs when absent). The single `psm-agent-expert` invocation surfaced in Confirm handles this seeding — do not prompt the user separately here.
 
 Also flag a forward-looking dependency — this is not a setup blocker, only a heads-up for later workflows: **Docker** is required to run the `psm-validate`/`psm-optimize` tests inside `prestashop-flashlight`. Check `docker --version`; if it is missing, tell the user how to install it (do not install automatically) and that the flashlight image is pulled when the first test workflow runs. Setup itself does not need Docker, so a missing Docker never blocks this install.
 
@@ -90,6 +90,8 @@ When the skill was invoked headless or with arguments, also emit a compact machi
 ```json
 {"status": "success", "install_state": "fresh", "module_code": "psm", "user_keys": ["user_name", "communication_language"], "output_dirs_created": ["..."], "legacy_configs_deleted": [], "legacy_dirs_removed": []}
 ```
+
+On any stop branch while headless (python3 missing, planner/merge/cleanup non-zero), emit the error in the same shape instead — `{"status": "error", "stage": "python|planner|merge|cleanup", "message": "..."}` — so an automator can gate on `status` uniformly across success and failure.
 
 ## Outcome
 
