@@ -50,6 +50,17 @@ def main():
     noisy = mod.parse_phpcs('PSM_CS_JSON_START {"totals":{"errors":0,"warnings":0},"files":{}} PSM_CS_JSON_END echo "FOUND 9 ERRORS"')
     ok &= check("baris liar ber-ERROR tak menggelembungkan (errors=0)", noisy.get("errors") == 0)
 
+    # enhancement-1: image belum ada lokal + allow_pull False -> skipped_image, tak menarik & tak crash
+    orig_present = mod.image_present
+    mod.image_present = lambda ref: False  # simulasikan image absen tanpa Docker
+    try:
+        r = mod.run_one_version(Path("/tmp/x"), "8.1", "8.1", pull=True, timeout=1, allow_pull=False)
+        ok &= check("image absen + allow_pull False -> skipped_image", r.get("skipped_image") is True)
+        ok &= check("image absen + allow_pull False -> tak pass, tak konklusif (errors terisi)",
+                    r["pass"] is False and len(r["errors"]) == 1 and r["install"] is None)
+    finally:
+        mod.image_present = orig_present
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

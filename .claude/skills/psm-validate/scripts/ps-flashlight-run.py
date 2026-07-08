@@ -36,6 +36,16 @@ def docker_available():
         return False
 
 
+def image_present(image_ref):
+    """True bila image sudah ada lokal (tak perlu pull)."""
+    try:
+        r = subprocess.run(["docker", "image", "inspect", image_ref],
+                           capture_output=True, timeout=20)
+        return r.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
 def parse_tag_map(raw):
     """Format: '1.7.8=1.7.8.11,8.1=8.1,9.0=nightly' -> dict. Kosong -> default."""
     if not raw:
@@ -48,22 +58,32 @@ def parse_tag_map(raw):
     return out or dict(DEFAULT_TAG_MAP)
 
 
-def run_one_version(module_dir, full_ver, tag, pull, timeout):
+def run_one_version(module_dir, full_ver, tag, pull, timeout, allow_pull=True):
     """Spin container flashlight untuk satu versi, install module, jalankan CS.
 
     Strategi: jalankan container dengan module di-mount, gunakan PrestaShop CLI
     untuk instalasi dan jalankan coding-standard bila tooling ada di image.
+
+    Gerbang unduh image: bila image belum ada lokal dan `allow_pull` False,
+    degrade jujur (skipped_image, bukan error) supaya pemanggil non-interaktif
+    tak diam-diam menarik image multi-GB.
     """
     image_ref = f"{IMAGE}:{tag}"
     res = {"version": full_ver, "tag": tag, "image": image_ref, "pull": None,
            "install": None, "coding_standard": None, "errors": [], "pass": False}
 
-    if pull:
-        p = subprocess.run(["docker", "pull", image_ref], capture_output=True, text=True, timeout=timeout)
-        res["pull"] = {"ok": p.returncode == 0, "stderr": p.stderr.strip()[-500:]}
-        if p.returncode != 0:
-            res["errors"].append(f"gagal pull {image_ref}")
+    if not image_present(image_ref):
+        if not allow_pull:
+            res["skipped_image"] = True
+            res["errors"].append(
+                f"image {image_ref} belum ada lokal & pull tak diizinkan — lewati versi ini")
             return res
+        if pull:
+            p = subprocess.run(["docker", "pull", image_ref], capture_output=True, text=True, timeout=timeout)
+            res["pull"] = {"ok": p.returncode == 0, "stderr": p.stderr.strip()[-500:]}
+            if p.returncode != 0:
+                res["errors"].append(f"gagal pull {image_ref}")
+                return res
 
     # Script di dalam container: install module via PS CLI, lalu coding standard.
     # PS CLI ada di /var/www/html/bin/console (PS8/9) atau ./bin/console.
@@ -143,6 +163,9 @@ def main():
     ap.add_argument("--versions", default="1.7.8,8.1,9.0", help="Versi target dipisah koma")
     ap.add_argument("--tag-map", default="", help="Pemetaan versi=tag dipisah koma, mis. '9.0=nightly'")
     ap.add_argument("--no-pull", action="store_true", help="Jangan docker pull (pakai image lokal)")
+    ap.add_argument("--allow-image-pull", action="store_true",
+                    help="Izinkan unduh image bila belum ada lokal (default: lewati versi itu, degrade jujur). "
+                         "Wajib utk pemanggil non-interaktif yang memang mau menarik image.")
     ap.add_argument("--timeout", type=int, default=600, help="Timeout per versi (detik)")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     ap.add_argument("--verbose", action="store_true")
@@ -167,7 +190,8 @@ def main():
         tag = tag_map.get(full_ver) or tag_map.get(full_ver.rsplit(".", 1)[0]) or full_ver
         if args.verbose:
             print(f"versi {full_ver} -> {IMAGE}:{tag}", file=sys.stderr)
-        r = run_one_version(module_dir, full_ver, tag, pull=not args.no_pull, timeout=args.timeout)
+        r = run_one_version(module_dir, full_ver, tag, pull=not args.no_pull,
+                            timeout=args.timeout, allow_pull=args.allow_image_pull)
         result["versions"][full_ver] = r
         overall_pass = overall_pass and r["pass"]
     result["pass"] = overall_pass

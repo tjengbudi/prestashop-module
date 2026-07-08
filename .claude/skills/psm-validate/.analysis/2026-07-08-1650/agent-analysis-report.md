@@ -1,0 +1,57 @@
+# Analysis Report: psm-validate
+
+Generated: 2026-07-08 · Schema: 2
+
+**Grade: Excellent**
+
+> Clean pass. Every prior finding across all four rounds is resolved: the determinism fix and its two regressions, and the three deferred rank-2/3 items (headless image-pull policy, failing-verdict next-move, description regrain). Seven lenses run, no finding survives verification. The meticulous-honest-validator persona was treated as investment, not waste, and is now enforced in code end-to-end.
+
+psm-validate is a lean, well-architected stateless validator with a correct intelligence/determinism boundary: four deterministic scripts own rule-matching, exact count parsing, the merge+pass computation, version normalization, and the image-pull gate, while the prompt owns only adversarial judgment and human-facing prose. Its load-bearing 'never pass on the untested' persona is now structural — honest degradation for Docker-absent, flashlight infra failure, and missing-image are all enforced by the aggregator, not merely instructed. No open findings remain.
+
+| Severity | Count |
+| --- | --- |
+| Critical | 0 |
+| High | 0 |
+| Medium | 0 |
+| Low | 0 |
+
+## Strengths
+
+- Determinism boundary correct end-to-end: four deterministic scripts own rule-matching, exact count parsing, the merge+pass computation, version normalization, and the image-pull gate; the prompt owns only adversarial judgment and human-facing prose.
+- Honest-degrade is enforced in code across every failure mode — Docker absent, pull-fail, timeout, no_console, and missing-image all become flashlight not-conclusive: never a blocking FAIL, never a false pass, with per-version flashlight_conclusive surfaced. The 'never pass on the untested' persona is structural.
+- The adversarial-findings contract is safe against silent drop: major- and full-form version strings both resolve without leaking across majors — regression-tested.
+- Strong test coverage: aggregate 20 asserts, flashlight 11 asserts (incl. the image-gate via monkeypatch), static 10 asserts; scripts lint clean, all scripts tested. SKILL.md lean at 1940 tokens.
+- Config right for a stateless agent — no needless customize.toml, tunables externalized to project config via a shared resolver; the headless image policy protects CI from a surprise multi-GB pull.
+
+## Agent Profile
+
+- Name: psm-validate
+- Title: PrestaShop Cross-Version Module Validator
+- Type: stateless
+- Mission: Produce an evidence-based verdict on whether a module is healthy across PrestaShop 1.7/8/9 at once, via deterministic rules, real flashlight behavior, and adversarial e-commerce review.
+
+## Capabilities
+
+- **Layer 1 — static cross-version scan** (script) — ps-static-scan.py matches assets/ps-rules.json ruleset per version; always runs, always conclusive.
+- **Layer 2 — flashlight behavior test** (script) — ps-flashlight-run.py spins prestashop-flashlight per version, installs, runs coding-standard against real core; Docker-gated, degrades to skipped/skipped_image; --allow-image-pull opt-in.
+- **Layer 3 — adversarial e-commerce review** (prompt) — Model's skeptical judgment; emits findings as JSON (versions keyed to the same tokens as --versions) for the aggregator.
+- **Verdict aggregation** (script) — ps-aggregate.py merges the three layers and computes per-version/overall pass natively; flashlight not-conclusive (Docker absent, pull-fail, timeout, no_console, skipped_image) never blocks nor claims pass; adversarial versions match major- and full-form without leaking across majors.
+
+## Per-Lens Verdicts
+
+- **leanness**: Passes; added prose earns its place after a final trim removed the one cross-section restatement of the image-skip mechanism.
+- **architecture**: Structurally sound; skipped_image data-flow is correct — not_conclusive, no false FAIL, no false pass. No contract mismatch between the scripts.
+- **determinism**: Clean split holds — image-presence check, pull gate, skipped_image handling, and phpcs counts all live in script; new prose only routes flag choice and communicates degrade.
+- **customization**: Stateless, about right — no customize.toml by design; --allow-image-pull is a runtime behavior flag, not a config surface.
+- **enhancement**: Both prior findings genuinely resolved; no new gaps or over-applied ceremony introduced.
+- **agent-cohesion**: Persona and capabilities cohere; description now names all three validation layers, prior headline mismatch closed.
+
+## Experience
+
+- **Budi validates before release** — invoke on module path → L1 static → L2 flashlight if Docker (skips a version cleanly if its image is absent) → L3 adversarial (emits JSON) → ps-aggregate merges → conversational per-version pass/fail with fixes; on fail, offers to hand blockers to psm-develop
+- **Workflow calls as quality gate (headless)** — workflow passes module-path + versions → three layers run without --allow-image-pull (no silent pull) → aggregate computes pass → JSON + one-line summary; CI exits on overall pass
+- Headless: Solid CI-gate story: native pass computation, honest not-conclusive degrade, and a scarred default that never pulls a multi-GB image without a human — missing-image versions fall to Layer 1, explicit --allow-image-pull required to opt in.
+
+## Findings
+
+No findings: the scanners returned a clean pass.

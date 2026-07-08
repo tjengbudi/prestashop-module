@@ -1,0 +1,140 @@
+# Analysis Report: psm-validate
+
+Generated: 2026-07-08 · Schema: 2
+
+**Grade: Excellent**
+
+> Solid stateless validator — clean topology, correct intelligence/determinism split, honest degradation. The one real theme: the verdict-assembly step still hand-merges layer JSONs and recomputes pass, and the headless/degrade seam has gaps at the flashlight edge. Persona (meticulous, honest cross-version validator) was treated as investment, not waste.
+
+psm-validate is a lean, well-architected stateless agent: three deterministic scripts own rule-matching and count-parsing, the prompt owns adversarial e-commerce judgment, and the whole thing degrades honestly when Docker is absent. Its primary strength is the clean intelligence/determinism boundary; its primary opportunity is tightening the same boundary at the verdict-assembly step and closing three edge cases at the headless and flashlight-failure seams where the honest-degrade promise can invert.
+
+| Severity | Count |
+| --- | --- |
+| Critical | 0 |
+| High | 0 |
+| Medium | 3 |
+| Low | 4 |
+
+## Themes
+
+### 1. Verdict assembly still lives in the prompt
+
+- Root cause: Both scripts already emit deterministic per-version pass, yet the prompt hand-merges the two script JSONs plus its own adversarial findings and re-counts error-severity findings to recompute per-version and overall pass on every run. Aggregation, counting, and comparison with one correct answer is script work, not judgment.
+- Fix: Add a small aggregate script that takes the two script JSONs plus the model's adversarial findings as an input file and emits the merged report with per-version and overall pass computed natively — propagating docker_available/status:skipped and parse_ok, and refusing to mark any layer passed when untested. The prompt keeps only what it owns: generating the adversarial findings and phrasing the human-facing summary.
+- Findings:
+  - `determinism-1` Final verdict JSON assembly and pass computation done by prompt — `SKILL.md:Vonis dan output (lines 34-38)`
+  - `determinism-2` Prompt narrates degrade/parse-failure conditions the scripts already encode as fields — `SKILL.md:Lapis 2 / Vonis (lines 30, 36)`
+
+### 2. Honest-degrade promise has holes at the flashlight edge
+
+- Root cause: The agent's core promise — never claim pass on the untested — is enforced for global Docker-absent and parse_ok=false, but not for headless image-pull confirmation, nor for per-version flashlight infra failures (pull failure, container timeout, no_console). In headless a missing image silently triggers a multi-GB pull; an infra failure gets reported as a blocking FAIL, inverting the promise into claiming failure on the untested.
+- Fix: Define the headless image policy explicitly (pass --no-pull and treat a missing image as per-version flashlight skipped, or require an explicit opt-in flag to pull), and extend the honest-degrade rule so pull/timeout/no_console failures report 'flashlight not conclusive for this version' and fall back to the Layer-1 verdict rather than a Layer-2 blocking error.
+- Findings:
+  - `enhancement-1` Headless mode has no answer for the flashlight image-download confirmation gate — `SKILL.md — 'Lapis 2' vs 'Mode headless'`
+  - `enhancement-2` Honest-degrade rule covers global Docker-absent but not per-version flashlight infra failure — `SKILL.md — 'Vonis dan output'; scripts/ps-flashlight-run.py run_one_version`
+
+### 3. Surface framing and post-verdict follow-through
+
+- Root cause: Two independent polish items: the description headlines 'di flashlight' — the one layer that may not run — while Layer 1 is the always-on layer; and after a failing conversational verdict the agent goes silent instead of offering the obvious next move (hand blocking findings to psm-develop).
+- Fix: Reword the description to lead with the three-layer identity (deterministic + flashlight-when-available + adversarial) so the promise matches what always runs, and close a failing conversational verdict with a single soft next-move offer, suppressed in headless.
+- Findings:
+  - `agent-cohesion-1` Description headlines flashlight, the one layer that may not run — `SKILL.md:3 (description) vs Validate:Lapis 2`
+  - `enhancement-3` Agent goes silent after a failing verdict instead of offering the next move — `SKILL.md — 'Vonis dan output' (Budi conversational summary)`
+
+## Strengths
+
+- Clean intelligence/determinism boundary: scripts own rule-matching and exact phpcs count parsing (with unit tests), the prompt owns adversarial e-commerce judgment scripts cannot make.
+- Load-bearing persona — the meticulous, honest validator that 'never passes a module on grounds it did not test' — is enforced by the pass rule and the degrade instructions, not just declared. Investment, not waste; must be preserved.
+- Sound stateless topology: single lean SKILL.md (1608 tokens), bare-path routing that resolves, embedded degrade-proof ruleset in assets/ps-rules.json, org-augmentable via _bmad/psm/memory.
+- Genuine dual-consumer design: machine-readable JSON for workflow gates plus actionable conversational summary for Budi, with headless mode a real CI gate.
+- Config done right for a stateless agent — tunables externalized to project config, no needless customize.toml surface.
+
+## Recommendations
+
+1. Add an aggregate script that merges the two layer JSONs plus adversarial findings and computes per-version/overall pass natively, propagating skipped/parse_ok/infra-failure state so no layer is marked passed when untested. Resolves the determinism leak and, by giving the merge a single place to encode 'not conclusive', also carries the per-version flashlight-failure degrade. (resolves: determinism-1, determinism-2, enhancement-2)
+2. Define the headless flashlight image policy: pass --no-pull and degrade a missing image to per-version skipped, or gate pulling behind an explicit opt-in flag. Closes the silent multi-GB pull in CI. (resolves: enhancement-1)
+3. Reword the description to lead with the three-layer identity instead of 'di flashlight', and close a failing conversational verdict with a single soft offer to hand blocking findings to psm-develop (suppressed headless). (resolves: agent-cohesion-1, enhancement-3)
+
+## Agent Profile
+
+- Name: psm-validate
+- Title: PrestaShop Cross-Version Module Validator
+- Type: stateless
+- Mission: Produce an evidence-based verdict on whether a module is healthy across PrestaShop 1.7/8/9 at once, via deterministic rules, real flashlight behavior, and adversarial e-commerce review.
+
+## Capabilities
+
+- **Layer 1 — static cross-version scan** (script) — ps-static-scan.py matches assets/ps-rules.json ruleset (forbidden PS9 deps, removed hooks/classes/methods, ps_versions_compliancy) per version; always runs.
+- **Layer 2 — flashlight behavior test** (script) — ps-flashlight-run.py spins prestashop-flashlight per version, installs the module, runs coding-standard against real core; Docker-gated, degrades to skipped.
+- **Layer 3 — adversarial e-commerce review** (prompt) — Model's own skeptical judgment: transaction security, cart/order/stock edge cases, silent cross-version drift, performance.
+- **Verdict + structured output** (prompt) — Merges three layers into per-version JSON report; pass only when zero error-severity findings; states explicitly when a layer was skipped.
+
+## Per-Lens Verdicts
+
+- **leanness**: Passes. Lean stateless SKILL.md; capability prompts are goal-stated with defensible domain knowledge and consequence-bearing rules, no ceremony or decorative sequences.
+- **architecture**: Passes. Sound stateless topology, clean bare-path routing that resolves, justified layer ordering, and promises traced through to enforcement.
+- **determinism**: Split is largely correct — scripts do rule-matching and exact count parsing, prompt does adversarial judgment; one determinism leak in the final verdict assembly and pass computation.
+- **customization**: Stateless, correct. customize.toml deliberately absent by design; every tunable is externalized to project config.yaml psm section and read at activation via the shared resolver. No sole-mechanism violation, no abuse, no stranded template.
+- **enhancement**: Core flow and honest degrade are right-sized; three gaps sit at the headless image-pull gate, per-version flashlight infra failure, and post-verdict silence.
+- **agent-cohesion**: Persona and three-layer capability set are tightly aligned; entry, degradation, and dual-consumer output cohere. One surface framing nuance in the description.
+
+## Experience
+
+- **Budi validates before release** — invoke on module path → clarify module/versions if ambiguous → L1 static (always) → L2 flashlight if Docker → L3 adversarial → conversational per-version pass/fail with blocking errors + fixes, plus JSON report
+- **Workflow calls as quality gate (headless)** — psm-cross-version / psm-develop / psm-scaffold pass module-path + versions → three layers run non-interactively → structured JSON written → one-line summary + path returned; CI exits on overall pass
+- Headless: Real headless story: skips clarifying questions, takes module-path/versions from args, emits machine-readable JSON, exits on overall pass. Gap: the flashlight image-download confirmation has no defined headless policy, risking a silent multi-GB pull.
+
+## Findings
+
+### Medium (3)
+
+#### determinism-1 — Final verdict JSON assembly and pass computation done by prompt
+
+- Lens: determinism
+- Location: `SKILL.md:Vonis dan output (lines 34-38)`
+- Evidence: The model hand-merges static.json + flashlight.json + its own adversarial findings and hand-recomputes per-version and overall pass by counting error-severity findings, on every invocation. Both scripts already emit per-version pass deterministically (ps-static-scan lines 154-162, ps-flashlight-run lines 105-106).
+- Recommendation: Add a small aggregate script that takes the two script JSONs plus the model's adversarial findings as an input file and emits the merged report with per-version and overall pass computed natively; the prompt keeps only the judgment it owns — generating the adversarial findings and the human-facing summary.
+
+#### enhancement-1 — Headless mode has no answer for the flashlight image-download confirmation gate
+
+- Lens: enhancement
+- Location: `SKILL.md — 'Lapis 2' vs 'Mode headless'`
+- Evidence: Layer 2 tells the agent to confirm before downloading the image, but headless mode skips clarifying questions and ps-flashlight-run.py pulls by default. A headless CI run with no local image silently triggers a multi-GB pull — the exact interaction the confirmation exists to prevent, with no human to answer.
+- Recommendation: State the headless image policy explicitly: pass --no-pull and treat a missing image as per-version flashlight skipped (degrade to Layer 1 for that version), or require an explicit opt-in flag to allow pulling.
+
+#### enhancement-2 — Honest-degrade rule covers global Docker-absent but not per-version flashlight infra failure
+
+- Lens: enhancement
+- Location: `SKILL.md — 'Vonis dan output'; scripts/ps-flashlight-run.py run_one_version`
+- Evidence: The honesty instruction names only two escape hatches: Layer 2 skipped (Docker absent) and parse_ok=false. But run_one_version also returns pass=false for pull failure, container timeout, and PSM_NO_CONSOLE — cases where the version was never tested. Rolled into the verdict as-is, a version whose install couldn't run gets reported as a blocking failure, inverting the agent's own promise not to claim a result on the untested.
+- Recommendation: Extend the honest-degrade instruction: when a version's flashlight result carries errors[] from pull/timeout/no_console, report it as 'flashlight not conclusive for this version' and fall back to the Layer-1 verdict for it, rather than a Layer-2 blocking error.
+
+### Low (4)
+
+#### determinism-2 — Prompt narrates degrade/parse-failure conditions the scripts already encode as fields
+
+- Lens: determinism
+- Location: `SKILL.md:Lapis 2 / Vonis (lines 30, 36)`
+- Evidence: The model is asked to read status:skipped and parse_ok:false and reflect them into the verdict. These are structured flags a script consumes deterministically.
+- Recommendation: Folds into determinism-1: the same aggregate script should propagate docker_available/status:skipped and parse_ok into the merged report's per-version state and refuse to mark a layer passed when untested. Prompt still owns phrasing the honest-degrade note to Budi.
+
+#### enhancement-3 — Agent goes silent after a failing verdict instead of offering the next move
+
+- Lens: enhancement
+- Location: `SKILL.md — 'Vonis dan output' (Budi conversational summary)`
+- Evidence: After a 'gagal' verdict with blocking errors + fixes, the natural next action is to fix them, but the agent stops at the report. A one-line offer to hand the blocking findings to psm-develop would turn a dead-end into a workflow.
+- Recommendation: When the conversational verdict is a fail, close with a soft next-move offer (hand blocking findings to psm-develop). Keep it a single offer, not a prompt loop, and suppress it in headless mode.
+
+#### agent-cohesion-1 — Description headlines flashlight, the one layer that may not run
+
+- Lens: agent-cohesion
+- Location: `SKILL.md:3 (description) vs Validate:Lapis 2`
+- Evidence: Description says 'Validasi module PrestaShop terhadap 1.7/8/9 di flashlight', framing flashlight as the central mechanism. But Layer 2 is conditional on Docker and returns status:skipped when absent, while Layer 1 (static) is the only always-on layer. The body handles this honestly, so the risk is only the framing, not the behavior.
+- Recommendation: Reword the description to lead with the three-layer identity (deterministic + flashlight-when-available + adversarial) rather than 'di flashlight', so the promise matches what always runs. No behavior change needed.
+
+#### lint-1 — Builder process log at skill root (.memlog.md) — documented carve-out
+
+- Lens: path-standards
+- Location: `.memlog.md`
+- Evidence: The path-standards scanner flags .memlog.md at root as a stray prompt file and 11 absolute-path hits, but all 11 live inside the prior .analysis/2026-06-25-1817/ generated report artifacts, and .memlog.md is the builder's own append-only process log — explicitly separate from the agent's runtime files. The prior analyze session already recorded this as a false positive.
+- Recommendation: No action on the agent. These are builder/report artifacts, not skill source; excluded from the grade. Left as an informational note only.
