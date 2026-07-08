@@ -61,6 +61,12 @@ def parse_args():
         "Matching values are used as fallback defaults, then legacy files are deleted.",
     )
     parser.add_argument(
+        "--project-root",
+        help="Actual project root. When given, path-type config values (output_folder, "
+        "the module.yaml 'directories' list, and any value starting with '{project-root}/') "
+        "have their token resolved against it and the directories are created (mkdir -p).",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Print detailed progress to stderr",
@@ -177,6 +183,44 @@ def cleanup_legacy_configs(
             legacy_path.unlink()
             deleted.append(str(legacy_path))
     return deleted
+
+
+def collect_output_dirs(config: dict, module_code: str, module_yaml: dict) -> list:
+    """Collect path-type values that name directories to create.
+
+    Pulls output_folder and any config value (core or in this module's section)
+    starting with the literal ``{project-root}/`` token, plus the module.yaml
+    ``directories`` list. Returns the raw token-bearing values, deduped in order.
+    """
+    dirs: list = []
+
+    def add(value):
+        if isinstance(value, str) and value.startswith("{project-root}/") and value not in dirs:
+            dirs.append(value)
+
+    add(config.get("output_folder"))
+    for value in config.get(module_code, {}).values():
+        add(value)
+    for entry in module_yaml.get("directories", []) or []:
+        add(entry)
+
+    return dirs
+
+
+def create_output_dirs(dirs: list, project_root: str, verbose: bool = False) -> list:
+    """Resolve the {project-root} token in each dir value and mkdir -p it.
+
+    Returns the list of resolved absolute paths that now exist.
+    """
+    created = []
+    for value in dirs:
+        resolved = value.replace("{project-root}", project_root.rstrip("/"))
+        path = Path(resolved)
+        if verbose:
+            print(f"Creating output dir: {path}", file=sys.stderr)
+        path.mkdir(parents=True, exist_ok=True)
+        created.append(str(path))
+    return created
 
 
 def extract_module_metadata(module_yaml: dict) -> dict:
@@ -421,6 +465,15 @@ def main():
     if user_settings:
         write_config(updated_user_config, args.user_config_path, args.verbose)
 
+    # Create configured output directories (only when --project-root is given)
+    module_code = module_yaml["code"]
+    output_dirs_created = []
+    if args.project_root:
+        output_dirs = collect_output_dirs(updated_config, module_code, module_yaml)
+        output_dirs_created = create_output_dirs(
+            output_dirs, args.project_root, args.verbose
+        )
+
     # Legacy cleanup: delete old per-module config files
     legacy_deleted = []
     if args.legacy_dir:
@@ -429,7 +482,6 @@ def main():
         )
 
     # Output result summary as JSON
-    module_code = module_yaml["code"]
     result = {
         "status": "success",
         "config_path": _rel_or_abs(Path(args.config_path).resolve()),
@@ -438,6 +490,7 @@ def main():
         "core_updated": bool(answers.get("core")),
         "module_keys": list(updated_config.get(module_code, {}).keys()),
         "user_keys": list(user_settings.keys()),
+        "output_dirs_created": output_dirs_created,
         "legacy_configs_found": legacy_files_found,
         "legacy_configs_deleted": legacy_deleted,
     }

@@ -110,6 +110,36 @@ class TestMergeConfig(unittest.TestCase):
             mc.reject_unresolved_paths([("--config-path", "{project-root}/_bmad/config.yaml")])
         assert ctx.exception.code == 1
 
+    def test_collect_output_dirs_gathers_path_values(self):
+        module_yaml = {
+            "code": "psm",
+            "directories": ["{project-root}/_bmad/psm/memory/tech"],
+        }
+        config = {
+            "output_folder": "{project-root}/_bmad-output",
+            "document_output_language": "English",  # non-path, ignored
+            "psm": {
+                "psm_modules_dir": "{project-root}/modules",
+                "psm_target_versions": "1.7.8,8.1",  # non-path, ignored
+            },
+        }
+        dirs = mc.collect_output_dirs(config, "psm", module_yaml)
+        assert "{project-root}/_bmad-output" in dirs
+        assert "{project-root}/modules" in dirs
+        assert "{project-root}/_bmad/psm/memory/tech" in dirs
+        assert "1.7.8,8.1" not in dirs
+        assert "English" not in dirs
+        assert len(dirs) == len(set(dirs)), "dirs should be deduped"
+
+    def test_create_output_dirs_resolves_and_makes(self):
+        dirs = ["{project-root}/_bmad-output", "{project-root}/modules"]
+        created = mc.create_output_dirs(dirs, str(self.root))
+        assert (self.root / "_bmad-output").is_dir()
+        assert (self.root / "modules").is_dir()
+        assert str(self.root / "_bmad-output") in created
+        # Idempotent: running again does not raise
+        mc.create_output_dirs(dirs, str(self.root))
+
 
 if __name__ == "__main__":
     unittest.main()

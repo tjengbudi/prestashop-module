@@ -28,13 +28,13 @@ Satu agent konsultan + lima workflow + satu setup skill, berbagi knowledge base 
    ```
    /psm-setup
    ```
-   Setup akan menanyakan 4 nilai konfigurasi (semua punya default masuk akal — tekan terima saja bila cocok), mendaftarkan capability ke help system, dan membuat folder knowledge base `_bmad/psm/memory/`.
+   Setup akan menanyakan 4 nilai konfigurasi (semua punya default masuk akal — tekan terima saja bila cocok), mendaftarkan capability ke help system, dan membuat folder knowledge base `{project-root}/_bmad/psm/memory/`.
 
 2. **Seed knowledge base** — jalankan agent sekali agar pengetahuannya terisi:
    ```
    /psm-agent-expert
    ```
-   First run mengisi `_bmad/psm/memory/` dari riset & katalog yang sudah disiapkan: **9 file `tech/`** (breaking changes 8 & 9, pola cross-version, hooks, services-di, persistence, composer-structure, validator-rules, flashlight) + **3 file `ecommerce/`** (function-catalog, elicitation-lenses, adversarial-checks). Folder `projects/` terisi seiring kamu menggarap module. Lihat [Knowledge base](#knowledge-base) di bawah.
+   First run mengisi `{project-root}/_bmad/psm/memory/` dari riset & katalog yang sudah disiapkan: **9 file `tech/`** (breaking changes 8 & 9, pola cross-version, hooks, services-di, persistence, composer-structure, validator-rules, flashlight) + **3 file `ecommerce/`** (function-catalog, elicitation-lenses, adversarial-checks). Folder `projects/` terisi seiring kamu menggarap module. Lihat [Knowledge base](#knowledge-base) di bawah.
 
 3. **Pastikan Docker ada** — uji `psm-validate` & `psm-optimize` berjalan di dalam container `prestashop/prestashop-flashlight`. Cek `docker --version`; image flashlight ditarik otomatis saat workflow uji pertama dijalankan, lalu di-cache lokal. Setiap tag versi ditarik terpisah sesuai `psm_flashlight_tag_map` (mis. `nightly` untuk 9.0 sudah cukup besar ±1.3 GB; tag `1.7.8.11` & `8.1` ditarik saat pertama kali menguji versi itu).
 
@@ -47,7 +47,7 @@ Satu agent konsultan + lima workflow + satu setup skill, berbagi knowledge base 
 | `psm_modules_dir` | Folder tempat module PrestaShop kamu | `{project-root}/modules` |
 | `psm_reports_dir` | Output laporan validasi/optimasi | `{project-root}/_bmad-output/psm-validate` |
 
-Ubah kapan saja dengan menjalankan ulang `/psm-setup` atau menyunting `_bmad/config.yaml`.
+Ubah kapan saja dengan menjalankan ulang `/psm-setup` atau menyunting `{project-root}/_bmad/config.yaml`.
 
 ---
 
@@ -151,7 +151,7 @@ psm-optimize <module>        # profil (Blackfire/Xdebug) → rencana → terapka
 
 ## Knowledge base
 
-Pengetahuan PrestaShop yang sulit & berulang hidup di `_bmad/psm/memory/` — **milik bersama semua workflow psm**, dibaca tiap kali sebuah workflow butuh konteks lintas versi, dan dirawat oleh `psm-agent-expert`. Tujuannya: kamu tak perlu menjelaskan ulang standar yang sama.
+Pengetahuan PrestaShop yang sulit & berulang hidup di `{project-root}/_bmad/psm/memory/` — **milik bersama semua workflow psm**, dibaca tiap kali sebuah workflow butuh konteks lintas versi, dan dirawat oleh `psm-agent-expert`. Tujuannya: kamu tak perlu menjelaskan ulang standar yang sama.
 
 ```
 _bmad/psm/memory/
@@ -201,7 +201,7 @@ _bmad/psm/memory/        # knowledge base bersama → lihat section "Knowledge b
 ## Troubleshooting
 
 - **"Docker tidak tersedia"** saat validasi/optimasi → uji flashlight dilewati; validasi tetap jalan dengan aturan statis saja, tapi uji perilaku di core asli butuh Docker. Pasang Docker lalu ulangi.
-- **Knowledge base kosong** (`_bmad/psm/memory/tech` & `ecommerce` tak ada isi) → jalankan `/psm-agent-expert` sekali untuk men-seed-nya dari riset & katalog.
+- **Knowledge base kosong** (`{project-root}/_bmad/psm/memory/tech` & `ecommerce` tak ada isi) → jalankan `/psm-agent-expert` sekali untuk men-seed-nya dari riset & katalog.
 - **Image flashlight lama diunduh** → image besar (GB); unduhan pertama per tag versi makan waktu, setelahnya di-cache lokal. Cek tag yang sudah ada: `docker images | grep flashlight`.
 - **Uji versi tertentu dilewati** → tag untuk versi itu belum di-pull. Tarik manual sesuai `psm_flashlight_tag_map`, mis. `docker pull prestashop/prestashop-flashlight:1.7.8.11`.
-- **Mau ubah versi target** → jalankan ulang `/psm-setup` atau sunting `psm_target_versions` di `_bmad/config.yaml`.
+- **Mau ubah versi target** → jalankan ulang `/psm-setup` atau sunting `psm_target_versions` di `{project-root}/_bmad/config.yaml`.
