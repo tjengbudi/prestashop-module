@@ -12,6 +12,3 @@
 [core]
 user_name = "Budi"
 communication_language = "indonesian"
-
-[modules.bmm]
-user_skill_level = "intermediate"

@@ -5,10 +5,12 @@ Diseed 2026-06-29. Image: `prestashop/prestashop-flashlight` (Docker Hub).
 ## Status lokal (per 2026-06-29)
 - Docker 29.6.0 terpasang ✓
 - Image tersedia: `prestashop/prestashop-flashlight:nightly` (untuk 9.0) ✓
-- BELUM ada: tag `1.7.8.11` (untuk 1.7.8) dan `8.1` — perlu `docker pull` saat uji versi itu.
+- Ditarik 2026-06-29: `1.7.8.11` (1.7.8) & `8.1.6-nginx` (8.1).
 
 ## Tag map (dari config psm_flashlight_tag_map)
-`1.7.8=1.7.8.11`, `8.1=8.1`, `9.0=nightly`.
+`1.7.8=1.7.8.11`, `8.1=8.1.6-nginx`, `9.0=nightly`.
+
+**CATATAN tag scheme (2026-06-29):** skema tag flashlight berubah — tag `8.1` polos **tidak ada lagi**. Sekarang per-patch + varian, mis. `8.1.6-nginx`, `8.2.7-nginx`. Untuk lini 8.1 pakai patch tertinggi yang ada (`8.1.6-nginx`). `1.7.8.11` masih valid. Verifikasi tag via Docker Hub API sebelum pull: `curl .../tags/<tag>` → HTTP 200.
 
 ## ENV kunci
 `INSTALL_MODULES_DIR`, `PS_DOMAIN`, `XDEBUG_ENABLED`, `BLACKFIRE_ENABLED`, `ON_INSTALL_MODULES_FAILURE=continue`, `DEBUG_MODE`.
