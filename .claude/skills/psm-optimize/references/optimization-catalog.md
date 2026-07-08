@@ -34,16 +34,3 @@ optimasi spekulatif yang menambah kompleksitas tanpa bukti.
 
 - Daftarkan aset via `registerJavascript`/`registerStylesheet` (1.7+) dengan prioritas tepat; hindari inline besar.
 - Defer/async JS non-kritis. Hindari memuat aset di halaman yang tak butuh.
-
-## Profil (ukur sebelum & sesudah)
-
-- **Blackfire** — di flashlight, set ENV `BLACKFIRE_ENABLED=true`. Profil request yang memuat fungsi module untuk menemukan hotspot (wall-time, query count, memory).
-- **Xdebug** — ENV `XDEBUG_ENABLED=true` untuk trace/profil bila Blackfire tak tersedia.
-- **Query count** — bandingkan jumlah query sebelum/sesudah; target turun pada alur yang dioptimasi.
-- Selalu catat baseline sebelum perubahan dan ukur ulang sesudah — optimasi tanpa pengukuran adalah tebakan.
-
-## Pagar wajib
-
-- Setiap optimasi tetap memakai cabang versi bila menyentuh area legacy/modern; jangan pecahkan kompatibilitas 1.7/8/9 demi kecepatan.
-- Optimasi tak boleh mengubah perilaku fungsional — hasil harus identik, hanya lebih cepat.
-- Verifikasi ulang lewat psm-validate setelah menerapkan.

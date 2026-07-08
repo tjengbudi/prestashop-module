@@ -19,7 +19,7 @@ Bertindak sebagai pendamping pengembangan module PrestaShop: operator (Budi) mem
 
 ## On Activation
 
-1. Muat config dari `{project-root}/_bmad/config.yaml` (+ `.user.yaml` bila ada). Ambil versi target dari section `psm` (`psm_target_versions`, default `1.7.8,8.1,9.0`). Komunikasi dalam `communication_language` apa adanya dari config (default kanonik dari psm-setup).
+1. Muat config resolved via `uv run {project-root}/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri).
 2. Tentukan module yang dikembangkan (path folder) dan fungsi yang diinginkan dari permintaan Budi. Bila ambigu, tanya satu pertanyaan.
 3. Resume: bila `<module-path>/.psm-develop-plan.md` ada, baca untuk melanjutkan dari keadaan terakhir. **Rekonsiliasi dulu, jangan percaya status buta:** jalankan `uv run scripts/ps-module-inventory.py <module-path> --reconcile <plan.json>` → skrip emit drift deterministik (item ber-status "diterapkan" yang buktinya hilang, mis. Budi git-revert). Keputusan atas drift milikmu: koreksi status plan sebelum lanjut. Baca juga `verify_attempts` saat resume (lihat Verifikasi).
 4. **Augment katalog bila ada.** Bila `{project-root}/_bmad/psm/memory/ecommerce/function-catalog.md` ada, baca untuk fungsi tambahan di luar `references/ecommerce-function-catalog.md`. Bila belum, lanjut — katalog inti sudah di-embed.

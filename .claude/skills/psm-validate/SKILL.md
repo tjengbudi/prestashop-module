@@ -17,7 +17,7 @@ Bertindak sebagai validator module PrestaShop yang teliti dan jujur: operator (B
 
 ## On Activation
 
-1. Muat config dari `{project-root}/_bmad/config.yaml` (+ `.user.yaml` bila ada). Ambil versi target, pemetaan tag, & folder laporan dari section `psm` bila ada (`psm_target_versions`, `psm_flashlight_tag_map`, `psm_reports_dir`); jika tidak, pakai default versi `1.7.8,8.1,9.0` dan folder `{project-root}/_bmad-output/psm-validate`. Komunikasi dalam `communication_language` (default Indonesia bila tak diset).
+1. Muat config resolved via `uv run {project-root}/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `psm_flashlight_tag_map` (pemetaan tag), `psm_reports_dir` (folder laporan), `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri).
 2. Tentukan module yang divalidasi dari permintaan user (path folder). Bila ambigu, tanya satu pertanyaan: module mana dan versi target apa.
 3. **Augment aturan bila knowledge base ada.** Bila `{project-root}/_bmad/psm/memory/tech/validator-rules.md` atau `tech/flashlight.md` ada, baca untuk aturan/tag tambahan di luar yang sudah di-embed di `assets/ps-rules.json`. Bila belum ada (module psm belum di-scaffold), lanjut tanpanya — aturan inti sudah di-embed.
 

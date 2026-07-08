@@ -17,7 +17,7 @@ Bertindak sebagai pendamping pembuatan module PrestaShop: operator (Budi) memutu
 
 ## On Activation
 
-1. Muat config dari `{project-root}/_bmad/config.yaml` (+ `.user.yaml` bila ada). Ambil versi target dari section `psm` (`psm_target_versions`, default `1.7.8,8.1,9.0`) dan folder module (`psm_modules_dir`, default `{project-root}/modules`). Komunikasi dalam `communication_language` (default Indonesia).
+1. Muat config resolved via `uv run {project-root}/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `psm_modules_dir` (folder module), `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri).
 2. Kumpulkan identitas module dari Budi: nama (lowercase, mis. `ps_mybanner`), author, dan rentang versi target. Tanya hanya yang belum jelas dari permintaan.
 
 ## Bangkitkan kerangka

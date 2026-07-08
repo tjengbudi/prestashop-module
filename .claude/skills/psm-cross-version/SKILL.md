@@ -17,7 +17,7 @@ Bertindak sebagai insinyur migrasi PrestaShop yang cermat: operator (Budi) memeg
 
 ## On Activation
 
-1. Muat config dari `{project-root}/_bmad/config.yaml` (+ `.user.yaml` bila ada). Ambil versi target dari section `psm` (`psm_target_versions`, default `1.7.8,8.1,9.0`). Komunikasi dalam `communication_language` (default Indonesia).
+1. Muat config resolved via `uv run {project-root}/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri).
 2. Tentukan module yang dikerjakan (path folder) dan versi target dari permintaan Budi. Bila ambigu, tanya satu pertanyaan.
 3. Resume: bila `<module-path>/.psm-cross-plan.md` ada (rencana dari sesi sebelumnya), baca untuk melanjutkan dari keadaan terakhir alih-alih menganalisis ulang.
 4. **Augment pola bila ada.** Bila `{project-root}/_bmad/psm/memory/tech/cross-version-patterns.md` ada, baca untuk pola tambahan di luar `references/version-safe-patterns.md`. Bila belum, lanjut — katalog inti sudah di-embed.
