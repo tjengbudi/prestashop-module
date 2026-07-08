@@ -56,7 +56,7 @@ def iter_files(module_dir, glob_filters):
                     yield p
         return
     for p in module_dir.rglob("*"):
-        if p.is_file() and p.suffix.lower() in SCANNED_SUFFIXES and "vendor/" not in str(p.relative_to(module_dir)):
+        if p.is_file() and p.suffix.lower() in SCANNED_SUFFIXES and not any(part == "vendor" for part in p.relative_to(module_dir).parts):
             yield p
 
 
@@ -133,7 +133,11 @@ def main():
         all_rules.extend(rules.get(grp, []))
 
     versions = norm_versions(args.versions.split(","))
-    result = {"module": module_dir.name, "module_path": str(module_dir), "main_file_found": main_file is not None, "versions": {}}
+    try:
+        rel_module_path = str(module_dir.relative_to(Path.cwd()))
+    except ValueError:
+        rel_module_path = str(module_dir)
+    result = {"module": module_dir.name, "module_path": rel_module_path, "main_file_found": main_file is not None, "versions": {}}
     overall_errors = 0
 
     for full_ver, major in versions:

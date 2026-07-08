@@ -80,9 +80,14 @@ def main():
     file_list = sorted(str(p.relative_to(module_dir)) for p in module_dir.rglob("*")
                        if p.is_file() and not any(d in p.relative_to(module_dir).parts for d in SKIP_DIRS))
 
+    try:
+        rel_path = str(module_dir.relative_to(Path.cwd()))
+    except ValueError:
+        rel_path = str(module_dir)
+
     result = {
         "module": module_dir.name,
-        "module_path": str(module_dir),
+        "module_path": rel_path,
         "module_version": module_version,
         "registered_hooks": sorted(registered_hooks),
         "implemented_hooks": sorted(implemented_hooks),

@@ -1,0 +1,77 @@
+{
+  "schema_version": 2,
+  "subject": "skills/psm-scaffold",
+  "generated": "2026-07-08T09:37:00+00:00",
+  "verdict": "Skill passes all lenses cleanly; one low-impact script fix (absolute path in JSON output) and the usual artifact false positives.",
+  "grade": "excellent",
+  "summary": "psm-scaffold is the leanest and cleanest of the psm skills reviewed. The deterministic generator approach is well-executed: same inputs produce the same scaffold, and the Verifikasi gate is correctly enforced. One low finding mirrors the ps-module-inventory.py fix: ps-scaffold.py emits an absolute path in its JSON output.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "Absolute path in script JSON output",
+      "root_cause": "ps-scaffold.py resolves module_dir to absolute path (line 121) and writes it directly to output JSON (line 147). Saved artifacts will be flagged by scan-path-standards.py, same issue fixed in ps-module-inventory.py.",
+      "finding_ids": ["determinism-1"],
+      "action": "Same fix as ps-module-inventory.py: use module_dir.relative_to(Path.cwd()) with fallback to str(module_dir)."
+    },
+    {
+      "title": "Path-scanner false positives on artifacts",
+      "root_cause": "scan-path-standards.py scans .analysis/ and .memlog.md. All 12 highs are in generated artifacts and process memory.",
+      "finding_ids": ["architecture-1"],
+      "action": "No skill change needed."
+    }
+  ],
+  "strengths": [
+    "Deterministic generator: same name+author+versions → same scaffold. Model never hand-writes PHP — eliminates whole class of kerangka errors.",
+    "Proven correct: memlog records SKILL.md that kerangka output passes ps-static-scan at all three versions with 0 errors 0 warnings.",
+    "Telanjang-by-design is the right call: scaffold + validate first, then psm-develop adds functions. Clean separation of concerns.",
+    "Headless mode is complete: skip interactive e-commerce offer, memlog assumptions, structured return with psm-validate verdict.",
+    "Soft fallback for e-commerce catalog: 'bila belum, andalkan pengetahuan e-commerce umum' — skill does not dead-end if KB is absent."
+  ],
+  "recommendations": [
+    {
+      "rank": 1,
+      "action": "In ps-scaffold.py line 147, change '\"path\": str(module_dir)' to relative path using module_dir.relative_to(Path.cwd()) with fallback to str(module_dir), same pattern as ps-module-inventory.py fix.",
+      "resolves": ["determinism-1"]
+    }
+  ],
+  "experience": {
+    "journeys": [
+      {"name": "Normal flow", "steps": "Activation → config load → gather name/author/versions → ps-scaffold.py → composer reminder → offer e-commerce functions → psm-validate → summary"},
+      {"name": "Headless flow", "steps": "Args parse → ps-scaffold.py → psm-validate → structured return (skip e-commerce offer unless provided)"}
+    ],
+    "headless": "Fully headless-ready — dedicated Mode headless section, memlog.py wiring, structured return with psm-validate verdict path."
+  },
+  "findings": [
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Path-scanner false positives on .analysis/ artifacts and .memlog.md",
+      "location": ".analysis/2026-06-25-1927/, .memlog.md",
+      "evidence": "12 highs from scan-path-standards.py — all in generated artifacts and process memory. Source files (SKILL.md, scripts/ps-scaffold.py) are path-clean.",
+      "recommendation": "No skill change. Scope scan-path-standards.py to exclude .analysis/ and .memlog.md."
+    },
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "low",
+      "title": "ps-scaffold.py emits absolute module path in JSON output",
+      "location": "scripts/ps-scaffold.py:147",
+      "evidence": "'\"path\": str(module_dir)' — module_dir is resolved to absolute on line 121. If output is saved as artifact, scan-path-standards.py flags it. Same issue as ps-module-inventory.py line 86, recently fixed.",
+      "recommendation": "Change to: try relative_to(Path.cwd()), fall back to str(module_dir). One-liner, same fix applied to ps-module-inventory.py."
+    },
+    {
+      "id": "customization-1",
+      "lens": "customization",
+      "severity": "low",
+      "title": "No customize.toml — no persistent_facts for project context",
+      "location": "skills/psm-scaffold/ (no customize.toml)",
+      "evidence": "psm_modules_dir and psm_target_versions are correctly read from config.yaml — right mechanism. No persistent_facts glob to load project-context.md at activation.",
+      "recommendation": "Low priority. Add customize.toml with persistent_facts glob if project context becomes relevant across scaffold invocations."
+    }
+  ]
+}

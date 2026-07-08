@@ -1,0 +1,99 @@
+# Analysis Report: skills/psm-setup
+
+Generated: 2026-07-08T09:42:00+00:00 · Schema: 2
+
+**Grade: Good**
+
+> Skill is coherent and defensive; primary gap is three scripts with no unit tests covering filesystem operations that are destructive and hard to reverse.
+
+psm-setup is well-designed: the {project-root} token warning is critical and earns its place, the anti-zombie pattern is correct, and legacy migration is properly handled. The main actionable gap is missing unit tests for all three scripts — these scripts write and delete files, making test coverage especially valuable. One low finding: merge-config.py emits absolute resolved paths in its JSON output.
+
+| Severity | Count |
+| --- | --- |
+| Critical | 0 |
+| High | 1 |
+| Medium | 2 |
+| Low | 2 |
+
+## Themes
+
+### 1. Missing unit tests for destructive scripts
+
+- Root cause: All three scripts (merge-config.py, merge-help-csv.py, cleanup-legacy.py) write or delete files with no test coverage. These are the highest-risk scripts in the psm module — they run once per install and are hardest to reverse.
+- Fix: Create scripts/tests/ with test files for each script. Priority: merge-config.py (most complex, anti-zombie logic, legacy migration), then merge-help-csv.py, then cleanup-legacy.py (already has safety verification inside).
+- Findings:
+  - `determinism-1` No unit tests for merge-config.py — `scripts/merge-config.py (no tests/test-merge-config.py)`
+  - `determinism-2` No unit tests for merge-help-csv.py — `scripts/merge-help-csv.py (no tests/test-merge-help-csv.py)`
+  - `determinism-3` No unit tests for cleanup-legacy.py — `scripts/cleanup-legacy.py (no tests/test-cleanup-legacy.py)`
+
+### 2. Absolute paths in merge-config.py JSON output
+
+- Root cause: merge-config.py calls .resolve() on config_path and user_config_path before putting them in the result JSON (lines 428-429). Output is consumed by the skill (not saved as artifact), but breaks portability if output is ever redirected.
+- Fix: Same pattern as ps-module-inventory.py: use relative_to(Path.cwd()) with fallback to str(path.resolve()).
+- Findings:
+  - `architecture-1` merge-config.py emits absolute paths in JSON output — `scripts/merge-config.py:428-429`
+
+## Strengths
+
+- reject_unresolved_paths() pattern in merge-config.py is excellent defensive design — loudly fails before silently creating '{project-root}/' on disk.
+- Anti-zombie pattern (delete existing module section before rewriting) prevents stale config accumulation across re-runs.
+- Legacy migration path is complete: reads old values as fallback defaults, writes to new format, then deletes old files. Idempotent.
+- cleanup-legacy.py safety check (verify every skill exists at .claude/skills/ before removing) protects against premature deletion.
+- SKILL.md token warning section (line 18) earns its place — the {project-root} dual meaning (literal in config values vs resolved in script args) is a genuine trap that the skill correctly pre-empts.
+
+## Recommendations
+
+1. Create scripts/tests/test-merge-config.py covering: (1) fresh install writes both files, (2) update preserves other module sections, (3) anti-zombie removes old module section, (4) user keys go to config.user.yaml not config.yaml, (5) legacy defaults are applied then deleted, (6) unresolved {project-root} token exits non-zero. (resolves: determinism-1)
+2. Create scripts/tests/test-merge-help-csv.py covering: (1) fresh merge adds rows, (2) re-run replaces rows (anti-zombie), (3) legacy CSV is deleted after merge. (resolves: determinism-2)
+3. Create scripts/tests/test-cleanup-legacy.py covering: (1) skill verification passes when skills exist at install path, (2) fails safely when skill is missing from install path, (3) idempotent on second run (missing dirs are not errors). (resolves: determinism-3)
+4. In merge-config.py lines 428-429, replace str(Path(args.config_path).resolve()) with relative path using Path(args.config_path).resolve().relative_to(Path.cwd()) with fallback. (resolves: architecture-1)
+
+## Experience
+
+- **Fresh install** — Activation → read module.yaml → no existing config → collect 4 values → write config.yaml + config.user.yaml → create output dirs → cleanup legacy → seed KB reminder → confirm + greeting
+- **Re-run / update** — Activation → detect existing section → inform user this is update → collect values (show current as defaults) → anti-zombie rewrite → confirm
+- **Legacy migration** — Activation → detect per-module config files → read as defaults → collect (pre-filled) → merge-config writes new format + deletes legacy → cleanup-legacy removes old dirs → confirm
+- Headless: Partially headless-ready — 'accept all defaults' / '--headless' / inline values skip prompting. Still shows confirmation summary.
+
+## Findings
+
+### High (1)
+
+#### determinism-1 — No unit tests for merge-config.py
+
+- Lens: determinism
+- Location: `scripts/merge-config.py (no tests/test-merge-config.py)`
+- Evidence: merge-config.py is the most complex script in the module: anti-zombie pattern, legacy migration, user_setting separation, result template application. No tests. Script runs once per install on real config files.
+- Recommendation: Create scripts/tests/test-merge-config.py with at minimum 6 cases: fresh install, update, anti-zombie, user-key separation, legacy defaults, unresolved-token rejection.
+
+### Medium (2)
+
+#### determinism-2 — No unit tests for merge-help-csv.py
+
+- Lens: determinism
+- Location: `scripts/merge-help-csv.py (no tests/test-merge-help-csv.py)`
+- Evidence: merge-help-csv.py writes module-help.csv entries with anti-zombie pattern and handles legacy CSV migration. No tests.
+- Recommendation: Create scripts/tests/test-merge-help-csv.py covering: fresh merge, re-run (anti-zombie replaces rows), legacy CSV deletion.
+
+#### determinism-3 — No unit tests for cleanup-legacy.py
+
+- Lens: determinism
+- Location: `scripts/cleanup-legacy.py (no tests/test-cleanup-legacy.py)`
+- Evidence: cleanup-legacy.py deletes directories. Has internal safety verification (checks skills exist at install path) but no tests confirm that guard actually works.
+- Recommendation: Create scripts/tests/test-cleanup-legacy.py covering: safety pass when skills exist, safety fail when skill is missing, idempotent on second run.
+
+### Low (2)
+
+#### architecture-1 — merge-config.py emits absolute paths in JSON output
+
+- Lens: architecture
+- Location: `scripts/merge-config.py:428-429`
+- Evidence: str(Path(args.config_path).resolve()) and str(Path(args.user_config_path).resolve()) write absolute paths to result JSON. Low risk since output is consumed by skill, not saved, but inconsistent with the portable-path pattern applied to other scripts.
+- Recommendation: Use relative_to(Path.cwd()) with fallback to str(path.resolve()), same pattern as ps-module-inventory.py fix.
+
+#### customization-1 — Frontmatter name value is quoted string
+
+- Lens: customization
+- Location: `SKILL.md:2`
+- Evidence: name: "psm-setup" — quotes around the value are unnecessary in YAML and deviate from the convention used in all other psm skills (unquoted).
+- Recommendation: Change to name: psm-setup (no quotes). Cosmetic only — parsed identically.

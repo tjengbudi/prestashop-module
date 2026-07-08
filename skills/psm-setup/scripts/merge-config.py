@@ -364,6 +364,13 @@ def reject_unresolved_paths(named_paths: list[tuple[str, str]]) -> None:
             sys.exit(1)
 
 
+def _rel_or_abs(p: Path) -> str:
+    try:
+        return str(p.relative_to(Path.cwd()))
+    except ValueError:
+        return str(p)
+
+
 def main():
     args = parse_args()
 
@@ -425,8 +432,8 @@ def main():
     module_code = module_yaml["code"]
     result = {
         "status": "success",
-        "config_path": str(Path(args.config_path).resolve()),
-        "user_config_path": str(Path(args.user_config_path).resolve()),
+        "config_path": _rel_or_abs(Path(args.config_path).resolve()),
+        "user_config_path": _rel_or_abs(Path(args.user_config_path).resolve()),
         "module_code": module_code,
         "core_updated": bool(answers.get("core")),
         "module_keys": list(updated_config.get(module_code, {}).keys()),

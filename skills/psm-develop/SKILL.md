@@ -27,7 +27,7 @@ Bertindak sebagai pendamping pengembangan module PrestaShop: operator (Budi) mem
 
 Petakan apa yang sudah ada sebelum menambah apa pun. Jalankan dua skrip deterministik dan baca hasilnya, jangan parse PHP mentah dengan tangan:
 - `uv run scripts/ps-module-inventory.py <module-path>` (lihat `--help`) → JSON inventaris: hook terdaftar & terimplementasi, ObjectModel + nama tabel, controller, versi module, ada/tidaknya folder `upgrade/`, daftar file. Ini peta titik sisip.
-- `uv run {project-root}/skills/psm-validate/scripts/ps-static-scan.py <module-path> --versions <target>` → peta API berisiko per versi, supaya fungsi baru tak menambah masalah lama.
+- `uv run {project-root}/skills/psm-validate/scripts/ps-static-scan.py <module-path> --versions <target>` → peta API berisiko per versi, supaya fungsi baru tak menambah masalah lama. Bila script tidak ditemukan, beri tahu Budi bahwa psm-validate harus terinstal di `{project-root}/skills/psm-validate/` lalu hentikan.
 
 Sisakan untuk dirimu hanya penilaian *di mana sisip yang aman* — itu judgment, bukan pengulangan kedua skrip.
 

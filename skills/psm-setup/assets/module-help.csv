@@ -1,7 +1,7 @@
 module,skill,display-name,menu-code,description,action,args,phase,preceded-by,followed-by,required,output-location,outputs
-psm,psm-agent-expert,PrestaShop Module Expert,EX,Konsultasi PrestaShop cross-version & brainstorm fungsi e-commerce; pintu masuk module,consult,[],anytime,,,false,,jawaban & arahan
-psm,psm-validate,Validasi Module,VA,Validasi module terhadap 1.7/8/9 di flashlight + review adversarial e-commerce,validate,[-H] [module-path],anytime,,,false,psm_reports_dir,laporan validasi JSON per versi
-psm,psm-cross-version,Cross-Version Module,CV,Buat satu codebase module kompatibel 1.7/8/9 sekaligus,cross-version,[-H] [module-path],anytime,psm-validate:validate,,false,psm_modules_dir,module cross-version + .psm-cross-plan.md
-psm,psm-scaffold,Scaffold Module Baru,SC,Bikin module PrestaShop baru cross-version dari nol,scaffold,[-H] [nama],anytime,psm-validate:validate,,false,psm_modules_dir,kerangka module baru
-psm,psm-develop,Kembangkan Module,DV,Tambah fungsi e-commerce ke module existing tanpa regresi,develop,[-H] [module-path],anytime,psm-validate:validate,,false,psm_modules_dir,module + fitur baru + .psm-develop-plan.md
-psm,psm-optimize,Optimasi Performa,OP,Percepat module via cache/service tanpa memecah kompatibilitas,optimize,[-H] [module-path],anytime,psm-validate:validate,,false,psm_modules_dir,module teroptimasi + .psm-optimize-plan.md
+psm,psm-agent-expert,PrestaShop Module Expert,EX,Konsultasi PrestaShop cross-version & brainstorm fungsi e-commerce; pintu masuk module + kurator knowledge base & pengarah workflow psm,consult,[],anytime,,,false,,jawaban & arahan
+psm,psm-validate,Validasi Module,VA,Validasi module terhadap 1.7/8/9 di flashlight + review adversarial e-commerce,validate,[--headless] [module-path],anytime,,,false,psm_reports_dir,laporan validasi JSON per versi
+psm,psm-cross-version,Cross-Version Module,CV,Buat satu codebase module kompatibel 1.7/8/9 sekaligus,cross-version,[--headless] [module-path],anytime,psm-validate:validate,psm-validate:validate,false,,module cross-version + .psm-cross-plan.md
+psm,psm-scaffold,Scaffold Module Baru,SC,Bikin module PrestaShop baru cross-version dari nol,scaffold,[--headless] [nama],anytime,,psm-validate:validate,false,psm_modules_dir,kerangka module baru
+psm,psm-develop,Kembangkan Module,DV,Tambah fungsi e-commerce ke module existing tanpa regresi,develop,[--headless] [module-path],anytime,psm-validate:validate,psm-validate:validate,false,,module + fitur baru + .psm-develop-plan.md
+psm,psm-optimize,Optimasi Performa,OP,Percepat module via cache/service tanpa memecah kompatibilitas,optimize,[--headless] [module-path],anytime,psm-validate:validate,psm-validate:validate,false,,module teroptimasi + .psm-optimize-plan.md

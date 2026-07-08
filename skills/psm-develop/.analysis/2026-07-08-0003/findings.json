@@ -1,0 +1,101 @@
+{
+  "schema_version": 2,
+  "subject": "skills/psm-develop",
+  "generated": "2026-07-08T09:34:00+00:00",
+  "verdict": "Skill is lean and well-structured; one medium finding mirrors psm-cross-version — missing guard for the ps-static-scan.py cross-module dependency leaves users stranded at step one of a destructive workflow.",
+  "grade": "good",
+  "summary": "psm-develop is a clean, well-reasoned workflow with a working ps-module-inventory.py script and matching tests. The plan→confirm→apply→verify invariant is correctly enforced. One medium gap: no guard for the psm-validate dependency in the Pahami section, same pattern as psm-cross-version.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "Undocumented cross-module dependency failure path",
+      "root_cause": "ps-static-scan.py lives in psm-validate; psm-develop has no guard for when it is absent. User installing psm-develop standalone hits a Python error at the first substantive step of a destructive workflow.",
+      "finding_ids": ["architecture-1", "enhancement-1"],
+      "action": "Add one guard sentence after the ps-static-scan.py uv run call in 'Pahami module existing': 'Bila script tidak ditemukan, beri tahu Budi bahwa psm-validate harus terinstal di {project-root}/skills/psm-validate/ lalu hentikan.'"
+    },
+    {
+      "title": "Path-scanner false positives on artifacts",
+      "root_cause": "scan-path-standards.py scans .analysis/ and .memlog.md. All 8 highs are in generated artifacts and process memory.",
+      "finding_ids": ["architecture-2"],
+      "action": "No skill change needed."
+    }
+  ],
+  "strengths": [
+    "Two-script analysis design is sound: deterministic fact extraction (ps-module-inventory.py + ps-static-scan.py) cleanly separated from judgment (where to insert safely). No model parsing PHP by hand.",
+    "Plan validation against inventory before confirm is a concrete, behavioral gate — not just a suggestion.",
+    "ps-module-inventory.py is correct and well-tested (8 assertions), covers hooks/ObjectModel/controllers/version/upgrade-dir.",
+    "ecommerce-function-catalog.md is self-contained: domain coverage, hook hints, and adding-to-existing rules all in one reference.",
+    "Headless mode is complete: memlog wiring, no interactive gates, structured return documented."
+  ],
+  "recommendations": [
+    {
+      "rank": 1,
+      "action": "In SKILL.md 'Pahami module existing', after the ps-static-scan.py uv run line, add: 'Bila script tidak ditemukan, beri tahu Budi bahwa psm-validate harus terinstal di {project-root}/skills/psm-validate/ lalu hentikan.' Same guard pattern as psm-cross-version fix.",
+      "resolves": ["architecture-1", "enhancement-1"]
+    },
+    {
+      "rank": 2,
+      "action": "In ps-module-inventory.py line 86, change 'module_path': str(module_dir) to 'module_path': str(module_dir.relative_to(Path.cwd())) with a fallback to str(module_dir) if relative_to fails. Prevents absolute path in JSON output from triggering scan-path-standards.py on saved artifacts.",
+      "resolves": ["determinism-1"]
+    }
+  ],
+  "experience": {
+    "journeys": [
+      {"name": "Normal flow", "steps": "Activation → config → module path + feature → resume check → augment KB → inventory scan → static scan → offer functions → plan → validate plan vs inventory → confirm → apply → psm-validate → summary"},
+      {"name": "Resume flow", "steps": "Activation → detect .psm-develop-plan.md → read last state → continue from last pending function"},
+      {"name": "Headless flow", "steps": "Args parse → both scans → plan to artifact → apply → psm-validate → structured return with memlog"}
+    ],
+    "headless": "Fully headless-ready — dedicated Mode headless section, memlog.py wiring, structured return documented."
+  },
+  "findings": [
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Cross-module script dependency with no missing-dep guard (psm-validate)",
+      "location": "SKILL.md:Pahami module existing — uv run {project-root}/skills/psm-validate/scripts/ps-static-scan.py",
+      "evidence": "The Pahami section requires ps-static-scan.py from psm-validate. No guard or message documents what to do if the script is missing. User installing psm-develop standalone encounters a Python error at step one of a destructive workflow.",
+      "recommendation": "After the ps-static-scan.py uv run line, add: 'Bila script tidak ditemukan, beri tahu Budi bahwa psm-validate harus terinstal di {project-root}/skills/psm-validate/ lalu hentikan.'"
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Path-scanner false positives on .analysis/ artifacts and .memlog.md",
+      "location": ".analysis/2026-06-25-2003/, .memlog.md",
+      "evidence": "8 highs from scan-path-standards.py — all in generated artifacts and process memory. Source files are path-clean.",
+      "recommendation": "No skill change. Scope scan-path-standards.py to exclude .analysis/ and .memlog.md."
+    },
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "low",
+      "title": "ps-module-inventory.py emits absolute module_path in JSON output",
+      "location": "scripts/ps-module-inventory.py:86",
+      "evidence": "'module_path': str(module_dir) — module_dir is resolved to absolute path on line 39. If output is saved as a working artifact, scan-path-standards.py flags it as a portable-path violation.",
+      "recommendation": "Change to relative path where possible: use module_dir.relative_to(Path.cwd()) with fallback to str(module_dir) if outside cwd. Low impact — only affects saved artifact scans."
+    },
+    {
+      "id": "customization-1",
+      "lens": "customization",
+      "severity": "low",
+      "title": "No customize.toml — missing persistent_facts for project context",
+      "location": "skills/psm-develop/ (no customize.toml)",
+      "evidence": "No customize.toml, so no persistent_facts glob loads project-context.md at activation.",
+      "recommendation": "Low priority. Add customize.toml with [workflow] persistent_facts = [\"file:{project-root}/**/project-context.md\"] if project context becomes useful across invocations."
+    },
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Missing: dependency-check pattern for cross-module script",
+      "location": "SKILL.md:Pahami module existing",
+      "evidence": "Same pattern as psm-cross-version: ps-static-scan.py dependency is load-bearing and undocumented. First-time user without psm-validate gets a traceback at step one of a destructive workflow with no recovery path.",
+      "recommendation": "Same fix as architecture-1: add one guard sentence after the uv run command."
+    }
+  ]
+}

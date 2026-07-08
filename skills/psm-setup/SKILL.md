@@ -1,5 +1,5 @@
 ---
-name: "psm-setup"
+name: psm-setup
 description: Sets up PrestaShop Module Builder module in a project. Use when the user requests to 'install psm module', 'configure PrestaShop Module Builder', or 'setup PrestaShop Module Builder'.
 ---
 

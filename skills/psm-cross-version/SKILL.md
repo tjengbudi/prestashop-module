@@ -24,7 +24,7 @@ Bertindak sebagai insinyur migrasi PrestaShop yang cermat: operator (Budi) memeg
 
 ## Analisis: peta risiko per versi
 
-Jalankan mesin analisis yang sudah ada alih-alih membangun ulang: `uv run {project-root}/skills/psm-validate/scripts/ps-static-scan.py <module-path> --versions <target>` (lihat `--help`). Hasilnya peta JSON per versi — kelas/method/hook/konstanta/dependency yang pecah, plus `ps_versions_compliancy` & struktur. Ini fakta deterministik; jangan menilai ulang dengan tangan. Bila perlu, lengkapi dengan membaca source untuk memahami *bagaimana* API berisiko itu dipakai — konteks yang dibutuhkan untuk merancang perbaikan, bukan pengulangan scan.
+Jalankan mesin analisis yang sudah ada alih-alih membangun ulang: `uv run {project-root}/skills/psm-validate/scripts/ps-static-scan.py <module-path> --versions <target>` (lihat `--help`). Bila script tidak ditemukan, beri tahu Budi bahwa psm-validate harus terinstal di `{project-root}/skills/psm-validate/` lalu hentikan — jangan lanjut tanpa peta risiko. Hasilnya peta JSON per versi — kelas/method/hook/konstanta/dependency yang pecah, plus `ps_versions_compliancy` & struktur. Ini fakta deterministik; jangan menilai ulang dengan tangan. Bila perlu, lengkapi dengan membaca source untuk memahami *bagaimana* API berisiko itu dipakai — konteks yang dibutuhkan untuk merancang perbaikan, bukan pengulangan scan.
 
 ## Rencana perubahan
 

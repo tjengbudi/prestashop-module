@@ -37,8 +37,7 @@ def to_class_name(module_name):
     return "".join(part.capitalize() for part in re.split(r"[_\-]", module_name) if part)
 
 
-def main_file_php(module_name, class_name, namespace, author, display_name, ps_min, ps_max):
-    ns_line = f"\nuse {namespace}\\;\n" if False else ""  # namespace dipakai via composer, bukan di main file
+def main_file_php(module_name, class_name, author, display_name, ps_min, ps_max):
     return f"""<?php
 /**
  * {display_name}
@@ -131,7 +130,7 @@ def main():
 
     php_require = php_require_for(args.ps_min)
     files = {
-        module_dir / f"{name}.php": main_file_php(name, class_name, namespace, args.author, display_name, args.ps_min, args.ps_max),
+        module_dir / f"{name}.php": main_file_php(name, class_name, args.author, display_name, args.ps_min, args.ps_max),
         module_dir / "composer.json": composer_json(name, namespace, args.author, php_require),
     }
     for path, content in files.items():
@@ -142,9 +141,14 @@ def main():
     for d in index_dirs:
         (d / "index.php").write_text(INDEX_PHP, encoding="utf-8")
 
+    try:
+        rel_module_dir = str(module_dir.relative_to(Path.cwd()))
+    except ValueError:
+        rel_module_dir = str(module_dir)
+
     result = {
         "module": name, "class": class_name, "namespace": namespace,
-        "path": str(module_dir), "php_require": php_require,
+        "path": rel_module_dir, "php_require": php_require,
         "ps_compliancy": {"min": args.ps_min, "max": args.ps_max},
         "files_created": sorted(str(p.relative_to(module_dir)) for p in module_dir.rglob("*") if p.is_file()),
         "next": "Jalankan 'composer dump-autoload' di folder module, lalu psm-validate.",

@@ -1,0 +1,57 @@
+{
+  "subject": "psm-validate",
+  "run_id": "2026-07-08-0007",
+  "grade": "good",
+  "summary": "1 HIGH (absolute path di ps-static-scan.py JSON output) + 1 LOW (vendor skip inconsistency) — SEMUA FIXED. SKILL.md bersih. ps-flashlight-run.py solid.",
+  "findings": [
+    {
+      "id": "VAL-H1",
+      "severity": "high",
+      "lens": "architecture",
+      "location": "scripts/ps-static-scan.py:136",
+      "title": "Absolute path di JSON output field module_path",
+      "detail": "`result[\"module_path\"] = str(module_dir)` — module_dir dari `Path(args.module_path).resolve()`, jadi selalu absolute. Pola konsisten dengan fix yang sudah dilakukan di ps-module-inventory.py, ps-scaffold.py, dan merge-config.py.",
+      "fix": "Gunakan relative_to(Path.cwd()) + ValueError fallback: `try: rel = str(module_dir.relative_to(Path.cwd())); except ValueError: rel = str(module_dir); result[\"module_path\"] = rel`"
+    },
+    {
+      "id": "VAL-L1",
+      "severity": "low",
+      "lens": "determinism",
+      "location": "scripts/ps-static-scan.py:59",
+      "title": "Vendor skip via substring match bisa false-positive",
+      "detail": "`\"vendor/\" not in str(p.relative_to(module_dir))` — substring match. Folder bernama `non-vendor/` atau `third-vendor/` akan ter-skip salah karena mengandung `\"vendor/\"` dalam path relatifnya saat subfolder adalah `vendor/`. Di baris 101 (scan_structure_rule), skip sudah benar pakai `\"vendor\" not in p.parts`.",
+      "fix": "Ganti ke parts-based check: `if any(part == \"vendor\" for part in p.relative_to(module_dir).parts): continue` — konsisten dengan baris 101."
+    }
+  ],
+  "lenses": {
+    "leanness": {
+      "verdict": "PASS",
+      "notes": "1631 tokens, dalam budget. Tidak ada ceremony, ALL-CAPS, atau restatement. Tiga lapis summary di awal Validate adalah primer, bukan duplikasi."
+    },
+    "architecture": {
+      "verdict": "FAIL",
+      "notes": "VAL-H1: absolute path di module_path field. Degrade Docker (status:skipped) dan guard parse_ok:false solid."
+    },
+    "determinism": {
+      "verdict": "FAIL",
+      "notes": "VAL-H1 menyebabkan output non-deterministik lintas mesin. VAL-L1: vendor skip inconsistency. Script logika sendiri deterministik — pure regex."
+    },
+    "customization": {
+      "verdict": "PASS",
+      "notes": "psm_target_versions/psm_flashlight_tag_map/psm_reports_dir dari config. Knowledge base augment punya fallback clean. --headless solid."
+    },
+    "enhancement": {
+      "verdict": "PASS",
+      "notes": "Tiga lapis (statis + flashlight + adversarial) coverage sudah comprehensive. parse_phpcs() extract exact error count dari JSON, bukan substring — sudah diperkuat dari sesi build."
+    }
+  },
+  "prepass": {
+    "token_count": 1631,
+    "section_count": 6,
+    "workflow_integrity": "PASS",
+    "path_scanner_highs": 12,
+    "path_scanner_false_positives": "ALL — semua di .analysis/2026-06-25-1817/ artifacts dan scanner meta-output",
+    "script_scan": "PASS",
+    "prior_memlog_grade": "excellent (0 crit/1 high/2 med/2 low — SEMUA diperbaiki di sesi build)"
+  }
+}
