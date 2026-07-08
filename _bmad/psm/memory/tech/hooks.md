@@ -22,6 +22,14 @@ public function install() {
 ```
 Implementasikan KEDUA method bila perlu; yang tak terdaftar di suatu versi cukup tak dipanggil. Hook yang dihapus PS9 → [[breaking-changes-9]].
 
+## Hook baru PS9.1.x (diaudit 2026-07-08)
+Hanya ada di 9.1+; cabang versi bila daftarkan (jangan register di 1.7/8/9.0 — hook tak dikenal).
+- `actionModuleEnable` / `actionModuleDisable` / `actionModuleUpgradeAfter` — lifecycle: setelah module di-enable/disable/upgrade.
+- `actionConfigurationUpdateValueBefore` — sebelum `Configuration::updateValue()` dipanggil.
+- `displayModalContent` (theme Hummingbird) — inject konten ke container modal.
+
+**Catatan Hummingbird (default theme instalasi baru 9.1):** `displaySearch` **dihapus** (bukan sekadar deprecated) — jangan andalkan untuk 9.1+. `displayOrderDetail` menggantikan variable hook `$HOOK_DISPLAYORDERDETAIL`. Detail → [[breaking-changes-9]].
+
 ## Hook umum per fungsi e-commerce
 - Upsell/cross-sell: `displayProductAdditionalInfo`, `displayShoppingCartFooter`, `displayFooterProduct`.
 - Abandoned cart: `actionCartSave`.

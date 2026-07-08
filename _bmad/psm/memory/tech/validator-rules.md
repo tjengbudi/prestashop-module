@@ -29,4 +29,7 @@ Variabel tak di-escape → error sejak v5.14.1. Pakai `{$var|escape:'html':'UTF-
 - Web Validator butuh login akun seller (PrestaShop Account) → tak bisa otomatis tanpa kredensial.
 - Alternatif lokal di flashlight: **PHPStan level 5** (jalan terhadap 1.7.8.7, 8.0.0, 9) + **PrestaShop coding standard** (php-dev-tools). → [[flashlight]].
 
-Sumber: validator.prestashop.com/changelog (v5.x), ps-rules.json.
+## Status changelog (diaudit 2026-07-08)
+Latest **v5.14.2 (2026-06-09)** — hanya nambah test, tak ada rule baru. Ruleset KB masih current: rule terakhir yang berdampak adalah v5.14.0/5.14.1 (theme name hardcoded, `displaySearch`, `displayOrderDetail`, Smarty unescaped→error) — semua sudah kecatat di atas & di [[breaking-changes-9]].
+
+Sumber: validator.prestashop.com/changelog (v5.x s/d v5.14.2), ps-rules.json.

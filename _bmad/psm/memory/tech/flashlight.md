@@ -2,15 +2,17 @@
 
 Diseed 2026-06-29. Image: `prestashop/prestashop-flashlight` (Docker Hub).
 
-## Status lokal (per 2026-06-29)
+## Status lokal (diverifikasi 2026-07-08)
 - Docker 29.6.0 terpasang ✓
-- Image tersedia: `prestashop/prestashop-flashlight:nightly` (untuk 9.0) ✓
-- Ditarik 2026-06-29: `1.7.8.11` (1.7.8) & `8.1.6-nginx` (8.1).
+- Image lokal tersedia: `1.7.8.11`, `8.1.6-nginx`, `9.1.4-nginx`, `nightly` ✓ (semua target ada)
+- `9.1.4-nginx` ditarik 2026-07-08 (1.53 GB, digest `sha256:3d8ad849…`).
 
-## Tag map (dari config psm_flashlight_tag_map)
-`1.7.8=1.7.8.11`, `8.1=8.1.6-nginx`, `9.0=nightly`.
+## Tag map (dari config psm_flashlight_tag_map, diperbarui 2026-07-08)
+`1.7.8=1.7.8.11`, `8.1=8.1.6-nginx`, `9.1=9.1.4-nginx`.
 
-**CATATAN tag scheme (2026-06-29):** skema tag flashlight berubah — tag `8.1` polos **tidak ada lagi**. Sekarang per-patch + varian, mis. `8.1.6-nginx`, `8.2.7-nginx`. Untuk lini 8.1 pakai patch tertinggi yang ada (`8.1.6-nginx`). `1.7.8.11` masih valid. Verifikasi tag via Docker Hub API sebelum pull: `curl .../tags/<tag>` → HTTP 200.
+Target dinaikkan dari 9.0→**9.1** (stable kini 9.1.4, rilis 6/3/2026). Tag `9.1=9.1.4-nginx` **pinned** menggantikan `nightly` — reproducible, tak bergerak. Breaking 9.1 (Hummingbird/Bootstrap 5) → [[breaking-changes-9]].
+
+**CATATAN tag scheme (diverifikasi 2026-07-08 via Docker Hub API):** skema tag per-patch + varian. Tag polos `9.1`/`9.1.4`/`9.0` **404** — wajib pakai bentuk `<patch>-nginx`. Terverifikasi HTTP 200: `1.7.8.11`, `8.1.6-nginx`, `8.2.7-nginx`, `9.1.4-nginx`, `nightly`. Selalu cek tag sebelum pull: `curl -s -o /dev/null -w "%{http_code}" https://hub.docker.com/v2/repositories/prestashop/prestashop-flashlight/tags/<tag>` → 200.
 
 ## ENV kunci
 `INSTALL_MODULES_DIR`, `PS_DOMAIN`, `XDEBUG_ENABLED`, `BLACKFIRE_ENABLED`, `ON_INSTALL_MODULES_FAILURE=continue`, `DEBUG_MODE`.
@@ -22,4 +24,4 @@ Diseed 2026-06-29. Image: `prestashop/prestashop-flashlight` (Docker Hub).
 
 Detail operasional ada di skill psm-validate (`{project-root}/skills/psm-validate/SKILL.md`).
 
-Sumber: flashlight README (Docker Hub).
+Sumber: flashlight README (Docker Hub). Status & tag diverifikasi 2026-07-08.
