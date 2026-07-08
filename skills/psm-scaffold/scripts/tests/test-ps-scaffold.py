@@ -74,6 +74,27 @@ def main():
         rc3, res3, _ = gen(tmp, "ps_modern", "--ps-min", "8.0.0")
         ok &= check("ps-min 8.x -> php require >=8.1", res3 and res3["php_require"] == ">=8.1")
 
+        # --target-versions -> min/max diturunkan deterministik (bukan oleh model)
+        rc4, res4, _ = gen(tmp, "ps_targeted", "--target-versions", "1.7.8,8.1,9.0")
+        ok &= check("target-versions -> min 1.7.8.0", res4 and res4["ps_compliancy"]["min"] == "1.7.8.0")
+        ok &= check("target-versions -> max 9.99.99", res4 and res4["ps_compliancy"]["max"] == "9.99.99")
+
+        # urutan input acak tetap benar (sort semver, bukan string) + major 10 tak salah urut
+        rc5, res5, _ = gen(tmp, "ps_future", "--target-versions", "10.0,8.1,1.7.8")
+        ok &= check("target-versions urut acak -> min 1.7.8.0", res5 and res5["ps_compliancy"]["min"] == "1.7.8.0")
+        ok &= check("major 10 tak salah urut -> max 10.99.99", res5 and res5["ps_compliancy"]["max"] == "10.99.99")
+
+        # --ps-min override menang atas turunan target-versions
+        rc6, res6, _ = gen(tmp, "ps_override", "--target-versions", "1.7.8,9.0", "--ps-min", "8.0.0.0")
+        ok &= check("ps-min override menang atas target-versions", res6 and res6["ps_compliancy"]["min"] == "8.0.0.0")
+
+        # dest tak valid (berupa file) -> error bersih rc=2, bukan traceback mentah
+        badfile = tmp / "not_a_dir"
+        badfile.write_text("x")
+        rc7, res7, err7 = gen(badfile, "ps_baddest")
+        ok &= check("dest tak valid ditolak bersih (rc=2)", rc7 == 2 and res7 is None)
+        ok &= check("dest tak valid tanpa traceback mentah", "Traceback" not in err7 and err7.startswith("error:"))
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

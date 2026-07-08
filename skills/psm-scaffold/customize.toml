@@ -1,0 +1,29 @@
+# DO NOT EDIT -- overwritten on every update.
+#
+# Agent customization surface for psm-scaffold.
+# Team overrides:     {project-root}/_bmad/custom/psm-scaffold.toml
+# Personal overrides: {project-root}/_bmad/custom/psm-scaffold.user.toml
+
+[agent]
+
+# --- Metadata (install-time roster contract) ---
+# Consumed by module.yaml:agents[] and `[agents.<code>]` in central config.
+# name/title/icon read-only at runtime (dipakai roster install); override via
+# _bmad/custom/ tak berefek pada persona — persona ada di SKILL.md.
+
+code = "psm-scaffold"
+name = "PrestaShop Module Scaffolder"
+title = "Pendamping Scaffold Module PrestaShop Cross-Version"
+icon = "🏗️"
+description = "Bangkitkan kerangka module PrestaShop baru yang dijamin lolos standar di 1.7/8/9 sejak baris pertama."
+agent_type = "stateless"
+
+# Override surface declined: agent membaca konfigurasi dari section `psm` di
+# {project-root}/_bmad/config.yaml (psm_target_versions, psm_modules_dir,
+# communication_language) dan berbagi version-safe-patterns dengan psm-cross-version.
+# Tak ada surface override build-time tambahan.
+#
+# persistent_facts sengaja tidak dipakai: konteks project datang dari section
+# `psm` config.yaml + KB bersama {project-root}/_bmad/psm/memory/, bukan preload
+# project-context.md generik. Bila kelak butuh preload brief org-level, tambahkan:
+#   persistent_facts = [ { code = "project-context", file = "file:{project-root}/**/project-context.md" } ]
