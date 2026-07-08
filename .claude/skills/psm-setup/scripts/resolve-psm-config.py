@@ -53,10 +53,14 @@ _PSM_KEYS = tuple(PSM_DEFAULTS.keys())
 _CORE_KEYS = tuple(CORE_DEFAULTS.keys())
 
 
-def load_yaml_file(path: Path, required: bool = False) -> dict:
-    """Load a YAML file. Empty dict if absent (unless required)."""
+def load_yaml_file(path: Path, required: bool = False, graceful: bool = False) -> dict:
+    """Load a YAML file. Empty dict if absent (unless required).
+
+    Bila required tapi absen: exit 1 (default), atau — bila graceful — kembalikan
+    dict kosong agar pemanggil bisa terapkan default & tandai config hilang.
+    """
     if not path.exists():
-        if required:
+        if required and not graceful:
             print(f"Error: config tak ditemukan: {path}", file=sys.stderr)
             sys.exit(1)
         return {}
@@ -69,10 +73,17 @@ def load_yaml_file(path: Path, required: bool = False) -> dict:
     return content if isinstance(content, dict) else {}
 
 
-def resolve(project_root: Path) -> dict:
-    """Baca config.yaml (+ overlay user), terapkan default, kembalikan objek resolved."""
+def resolve(project_root: Path, graceful: bool = False) -> dict:
+    """Baca config.yaml (+ overlay user), terapkan default, kembalikan objek resolved.
+
+    Bila graceful dan config.yaml hilang: emit default kanonik penuh dengan
+    `config_missing: true` alih-alih exit 1 — untuk pemanggil yang mau
+    degradasi anggun (mis. psm-agent-expert menyarankan bmad-bmb-setup).
+    """
     bmad_dir = project_root / "_bmad"
-    base = load_yaml_file(bmad_dir / "config.yaml", required=True)
+    config_path = bmad_dir / "config.yaml"
+    config_missing = graceful and not config_path.exists()
+    base = load_yaml_file(config_path, required=True, graceful=graceful)
     user = load_yaml_file(bmad_dir / "config.user.yaml")
 
     psm_section = base.get("psm") or {}
@@ -91,6 +102,9 @@ def resolve(project_root: Path) -> dict:
         else:
             resolved[key] = CORE_DEFAULTS[key]
 
+    if graceful:
+        resolved["config_missing"] = config_missing
+
     return resolved
 
 
@@ -107,9 +121,15 @@ def main():
         "--key",
         help="Emit satu nilai key ini alih-alih seluruh objek JSON.",
     )
+    parser.add_argument(
+        "--graceful",
+        action="store_true",
+        help="Bila config.yaml hilang, emit default penuh + config_missing:true "
+        "(exit 0) alih-alih exit 1. Untuk pemanggil dengan degradasi anggun.",
+    )
     args = parser.parse_args()
 
-    resolved = resolve(Path(args.project_root).resolve())
+    resolved = resolve(Path(args.project_root).resolve(), graceful=args.graceful)
 
     if args.key:
         if args.key not in resolved:

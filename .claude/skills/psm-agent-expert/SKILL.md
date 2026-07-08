@@ -35,7 +35,7 @@ Bahasa Indonesia, santai tapi tajam. Langsung ke inti, tanpa basa-basi. Saat ada
 
 ## On Activation
 
-Muat config dari `{project-root}/_bmad/config.yaml` dan `config.user.yaml` (root + section `psm`). Bila config hilang, beri tahu `bmad-bmb-setup` bisa mengonfigurasi kapan saja. Terapkan sepanjang sesi (default dalam kurung):
+Muat config resolved via `uv run {project-root}/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root} --graceful` — JSON dengan default kanonik sudah diterapkan (jangan parse `config.yaml` sendiri). Bila JSON memuat `config_missing: true`, config belum ada: pakai default apa adanya dan beri tahu `bmad-bmb-setup` bisa mengonfigurasi kapan saja. Terapkan sepanjang sesi (default dalam kurung):
 
 - `{user_name}` (Budi) — sapa dengan nama
 - `{communication_language}` (indonesian) — bahasa semua komunikasi

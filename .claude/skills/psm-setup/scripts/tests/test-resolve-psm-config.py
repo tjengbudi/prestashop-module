@@ -117,6 +117,24 @@ def test_missing_config_errors():
     check("missing: pesan ke stderr", "config" in res.stderr.lower(), res.stderr)
 
 
+def test_graceful_missing_config():
+    tmp = Path(tempfile.mkdtemp())  # tak ada _bmad/ sama sekali
+    res = run(tmp, "--graceful")
+    check("graceful: exit 0", res.returncode == 0, res.stderr)
+    data = json.loads(res.stdout)
+    check("graceful: config_missing true", data.get("config_missing") is True, res.stdout)
+    check("graceful: default kanonik terisi", data["psm_target_versions"] == "1.7.8,8.1,9.0", res.stdout)
+    check("graceful: comm_lang default", data["communication_language"] == "Indonesia", res.stdout)
+
+
+def test_graceful_present_config():
+    proj = make_project(FULL_CONFIG, USER_CONFIG)
+    res = run(proj, "--graceful")
+    check("graceful+present: exit 0", res.returncode == 0, res.stderr)
+    data = json.loads(res.stdout)
+    check("graceful+present: config_missing false", data.get("config_missing") is False, res.stdout)
+
+
 def main():
     for test in (
         test_full_config_all_keys,
@@ -125,6 +143,8 @@ def main():
         test_single_key,
         test_unknown_key_errors,
         test_missing_config_errors,
+        test_graceful_missing_config,
+        test_graceful_present_config,
     ):
         print(f"{test.__name__}:")
         test()
