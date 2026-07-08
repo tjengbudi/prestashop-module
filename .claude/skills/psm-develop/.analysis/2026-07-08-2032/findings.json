@@ -1,0 +1,204 @@
+{
+  "schema_version": 2,
+  "subject": "psm-develop",
+  "generated": "2026-07-08",
+  "verdict": "Agen stateless yang solid dengan alur pahami→konfirmasi→verifikasi yang koheren; peluang terbesar adalah ketahanan operasional — preflight, batas iterasi, dan rekonsiliasi resume — bukan pemangkasan persona.",
+  "grade": "good",
+  "summary": "Kekuatan utama psm-develop adalah persona pendamping yang mendorong tiap kapabilitas dengan bersih dan gerbang keselamatan (konfirmasi + psm-validate lintas 3 versi) yang tepat untuk operasi tak-mudah-dibalik. Peluang utama adalah ketahanan jalur kegagalan: skill mengasumsikan module ada, git tersedia, dan validasi akhirnya lolos — tanpa preflight, batas iterasi, atau rekonsiliasi resume terhadap kode nyata. Persona diperlakukan sebagai investasi, bukan pemborosan; tak ada temuan yang meminta suaranya diratakan.",
+  "agent_profile": {
+    "name": "psm-develop",
+    "title": "Pendamping Pengembangan Module PrestaShop",
+    "icon": "🧱",
+    "agent_type": "stateless",
+    "mission": "Tambah fungsi e-commerce ke module PrestaShop yang sudah berjalan tanpa memecah yang lama, tetap kompatibel di 1.7.x/8.x/9.x."
+  },
+  "capabilities": [
+    { "name": "Pahami module existing", "kind": "prompt + script", "note": "Jalankan ps-module-inventory.py + ps-static-scan.py, baca JSON sebagai peta titik sisip." },
+    { "name": "Rancang fungsi & rencana", "kind": "prompt + reference", "note": "Tawarkan fungsi dari katalog e-commerce, rancang version-safe, tulis .psm-develop-plan.md, validasi terhadap inventaris." },
+    { "name": "Konfirmasi (gerbang)", "kind": "prompt", "note": "Tampilkan rencana ke Budi, minta persetujuan sebelum menyentuh file." },
+    { "name": "Terapkan", "kind": "prompt", "note": "Terapkan sesuai rencana in-place, tambah tanpa merusak, tandai status per fungsi." },
+    { "name": "Verifikasi (gerbang wajib)", "kind": "external skill", "note": "Panggil psm-validate lintas 3 versi; siap hanya bila hijau semua." },
+    { "name": "Mode headless", "kind": "prompt", "note": "Non-interaktif untuk pemanggil; asumsi dicatat ke memlog." }
+  ],
+  "detailed_analysis": {
+    "leanness": "Padat dan tepat sasaran; hanya dua pengulangan aturan kecil bernilai truncate, persona/katalog utuh sebagai investasi.",
+    "architecture": "Topologi progressive-disclosure sehat; dua skrip independen belum dibatch dan resolusi sibling-skill bergantung mirror {project-root}/skills/ yang laten.",
+    "determinism": "Intelligence umumnya di tempat yang benar; sebagian validasi rencana-vs-inventaris masih set/list-membership deterministik yang dikerjakan prompt.",
+    "customization": "Satu mekanisme config (section psm di config.yaml) koheren lintas sibling; hanya divergensi default bahasa yang perlu diselaraskan.",
+    "enhancement": "Happy-path kuat; jalur kegagalan (module tak ada, skrip error, verifikasi gagal berulang, resume basi) belum ditangani.",
+    "agent-cohesion": "Persona mendorong tiap kapabilitas dan batas vs psm-scaffold jelas; jaring pengaman undo (git) dan guard target masih diasumsikan."
+  },
+  "experience": {
+    "journeys": [
+      { "name": "Tambah fungsi interaktif", "steps": "Budi sebut module+fungsi → inventaris → rancang rencana → konfirmasi → apply → psm-validate 3 versi → ringkas" },
+      { "name": "Resume sesi", "steps": "Baca .psm-develop-plan.md → lanjut dari status terakhir (belum rekonsiliasi ke kode nyata)" },
+      { "name": "Headless (dipanggil agen lain)", "steps": "Ambil arg → alur normal tanpa gerbang interaktif → asumsi ke memlog → kembalikan status lolos per versi" }
+    ],
+    "headless": "Mode headless sudah ada dengan jejak memlog untuk asumsi; namun butuh batas iterasi dan status 'butuh intervensi' agar tak berputar tanpa operator."
+  },
+  "themes": [
+    {
+      "title": "Ketahanan jalur kegagalan & serah-terima",
+      "root_cause": "Skill dirancang untuk happy path dan mengasumsikan prasyarat (module ada, git ada, validasi akhirnya lolos) tanpa preflight, batas, atau jalur eskalasi. Paling berisiko di mode headless tanpa operator.",
+      "finding_ids": ["enhancement-1", "enhancement-2", "enhancement-4", "cohesion-1", "cohesion-2"],
+      "action": "Tambah preflight di awal 'Pahami module existing' (module ada & berisi → kalau tidak arahkan ke psm-scaffold; git bersih → kalau tidak peringatkan); tetapkan batas rancang-ulang 2-3 dengan jalur 'butuh intervensi' saat verifikasi gagal terus; bedakan konflik mekanis (auto-fix) dari konflik pengubah-cakupan (angkat sebagai keputusan Budi / catat ke memlog)."
+    },
+    {
+      "title": "Resume mempercayai artefak, bukan kode nyata",
+      "root_cause": "Prinsip inti skill 'pahami existing dulu' tak diterapkan pada jalur resume — status plan dipercaya tanpa dicocokkan ke inventaris aktual, padahal git-revert/edit manual bisa membuatnya basi.",
+      "finding_ids": ["enhancement-3"],
+      "action": "Pada resume, jalankan ulang ps-module-inventory.py dan rekonsiliasi item ber-status 'diterapkan' dengan bukti aktual sebelum lanjut; koreksi status plan bila tak cocok."
+    },
+    {
+      "title": "Validasi rencana deterministik dikerjakan prompt",
+      "root_cause": "Pencocokan hook-di-registered_hooks dan file-di-daftar adalah set/list-membership dengan satu jawaban benar per input, tapi dikerjakan model tiap run; docstring skrip juga meng-overclaim 'validasi rencana'.",
+      "finding_ids": ["determinism-1"],
+      "action": "Tambah mode plan-validate ke ps-module-inventory.py yang menerima item rencana terstruktur + inventaris lalu emit mismatch per item; sisakan untuk prompt hanya penilaian bermaksud (apakah $definition ObjectModel terpakai). Selaraskan docstring dengan kemampuan nyata."
+    },
+    {
+      "title": "Resolusi path & config antar-skill",
+      "root_cause": "Ref-sendiri resolve install-relative tapi sibling-skill dialamatkan {project-root}/skills/ (mirror laten); default bahasa dinyatakan berbeda dari kanon config.",
+      "finding_ids": ["architecture-2", "customization-1"],
+      "action": "Samakan basis resolusi sibling dengan lokasi install (atau tambah aturan resolusi sibling eksplisit yang menyebut lokasi skills sebenarnya); selaraskan pernyataan default communication_language dengan kanon psm-setup atau hapus klaim default."
+    },
+    {
+      "title": "Pemangkasan kecil & batching",
+      "root_cause": "Beberapa aturan scarred (upgrade script, cabang versi, GDPR, anti-parse) dinyatakan ulang lintas file/section, dan dua skrip inventaris independen belum dibatch.",
+      "finding_ids": ["leanness-1", "leanness-2", "architecture-1"],
+      "action": "Jadikan blok aturan menambah-ke-existing di katalog satu-satunya kanon dan rujuk dari SKILL.md alih-alih menyalin; truncate klausa meta anti-parse; instruksikan menjalankan kedua skrip inventaris dalam satu batch paralel."
+    }
+  ],
+  "strengths": [
+    "Persona pendamping pengembangan yang jelas (Budi memutuskan fitur, skill memegang katalog + pola version-safe) mendorong tiap kapabilitas secara koheren — investasi, bukan pemborosan.",
+    "Gerbang keselamatan tepat untuk operasi tak-mudah-dibalik: konfirmasi sebelum menyentuh file + verifikasi psm-validate lintas 3 versi sebagai vonis, bukan penilaian sendiri.",
+    "Diferensiasi bersih vs psm-scaffold (tumbuhkan existing vs buat kerangka baru) dinyatakan eksplisit di Overview.",
+    "Delegasi kerja deterministik ke skrip (ps-module-inventory.py + ps-static-scan.py) dengan penilaian judgment disisakan untuk model — penempatan intelligence yang benar.",
+    "Katalog fungsi e-commerce ter-embed sebagai institutional knowledge dengan augment opsional dari KB — domain framing bernilai yang harus dipertahankan."
+  ],
+  "recommendations": [
+    { "rank": 1, "action": "Tambah blok ketahanan: preflight (module ada + git bersih, else arahkan psm-scaffold/peringatkan), batas rancang-ulang 2-3 dengan status 'butuh intervensi', dan pembedaan konflik mekanis vs pengubah-cakupan.", "resolves": ["enhancement-1", "enhancement-2", "enhancement-4", "cohesion-1", "cohesion-2"] },
+    { "rank": 2, "action": "Rekonsiliasi resume: jalankan ulang inventaris dan cocokkan status 'diterapkan' ke kode nyata sebelum lanjut.", "resolves": ["enhancement-3"] },
+    { "rank": 3, "action": "Perbaiki resolusi sibling-skill dan selaraskan default communication_language dengan kanon config.", "resolves": ["architecture-2", "customization-1"] },
+    { "rank": 4, "action": "Tambah mode plan-validate ke ps-module-inventory.py untuk pencocokan hook/file deterministik; selaraskan docstring.", "resolves": ["determinism-1"] },
+    { "rank": 5, "action": "Batch dua skrip inventaris dalam satu pesan; pusatkan aturan menambah-ke-existing di katalog dan rujuk dari SKILL.md; truncate klausa meta.", "resolves": ["architecture-1", "leanness-1", "leanness-2"] }
+  ],
+  "findings": [
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Tambah: preflight & penanganan gagal saat module tak ada / skrip inventaris error",
+      "location": "SKILL.md:Pahami module existing",
+      "evidence": "On Activation #2 menentukan <module-path> dari permintaan Budi, lalu 'Pahami module existing' langsung menjalankan ps-module-inventory.py <module-path> tanpa memverifikasi folder module ada/valid. Bila path salah, module belum ada, atau skrip gagal (PHP malformed, uv tak ada, permission), skill dead-end tanpa langkah berikutnya — padahal seluruh alur bergantung pada JSON inventaris sebagai peta titik sisip.",
+      "recommendation": "Tambahkan preflight di awal 'Pahami module existing': pastikan <module-path> ada dan berisi .php module. Bila tidak ada → arahkan ke psm-scaffold. Bila skrip exit non-zero → tampilkan error apa adanya dan minta klarifikasi, jangan merancang di atas peta kosong. Headless: kembalikan status gagal + alasan."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Tambah: batas iterasi & jalur eskalasi saat verifikasi gagal berulang",
+      "location": "SKILL.md:Verifikasi (gerbang wajib)",
+      "evidence": "'Verifikasi' memerintahkan bila ada error tersisa 'rancang ulang dari artefak — jangan menyatakan selesai', tapi tanpa batas iterasi atau jalur keluar. Loop rancang-ulang→apply→validate bisa berputar tanpa henti tanpa menyerahkan keputusan ke manusia — paling berbahaya di mode headless tanpa operator.",
+      "recommendation": "Tetapkan batas rancang-ulang (2-3). Bila masih gagal di versi manapun: berhenti, tulis diagnosis error bertahan ke .psm-develop-plan.md, surface ke Budi (interaktif) atau kembalikan status 'butuh intervensi' + memlog (headless)."
+    },
+    {
+      "id": "enhancement-3",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Tambah: rekonsiliasi status rencana vs kondisi file aktual saat resume",
+      "location": "SKILL.md:On Activation #3",
+      "evidence": "Resume hanya 'baca .psm-develop-plan.md untuk melanjutkan', mempercayai status plan tanpa mencocokkan ke kode nyata. Bila Budi git-revert, edit manual, atau apply gagal separuh, plan bisa berkata 'diterapkan' padahal kode tak ada → skill melewati/menerapkan ulang fungsi secara salah.",
+      "recommendation": "Pada resume, jalankan ulang ps-module-inventory.py dan cocokkan item ber-status 'diterapkan' dengan bukti aktual (hook terdaftar, tabel/ObjectModel, titik sisip). Bila tak cocok, koreksi status plan sebelum lanjut."
+    },
+    {
+      "id": "enhancement-4",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Tambah: soft-gate saat konflik rencana butuh keputusan operator, bukan auto-fix diam",
+      "location": "SKILL.md:Rancang fungsi & rencana",
+      "evidence": "'Validasi rencana terhadap inventaris' memerintahkan 'Perbaiki konflik di rencana dulu' — tapi sebagian konflik memikul trade-off yang layak diputuskan Budi (mis. ubah $definition ObjectModel terpakai butuh migrasi tabel existing). Auto-fix diam bisa mengubah cakupan yang diminta tanpa Budi sadar sebelum gerbang konfirmasi.",
+      "recommendation": "Bedakan konflik mekanis (auto-fix: tambah upgrade script, koreksi nama hook) dari konflik pengubah-cakupan/menyentuh data existing. Untuk yang kedua, angkat sebagai pilihan singkat ke Budi sebelum menuliskannya. Headless: catat trade-off + asumsi ke memlog."
+    },
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Dua skrip inventaris independen tidak dibatch",
+      "location": "SKILL.md:Pahami module existing",
+      "evidence": "Bagian 'Pahami module existing' menyuruh menjalankan dua skrip deterministik independen (ps-module-inventory.py dan ps-static-scan.py) sebagai bullet berurutan tanpa instruksi menjalankannya bersamaan. Keduanya murni pengumpulan data atas <module-path> yang sama, tanpa dependensi output satu ke lainnya.",
+      "recommendation": "Instruksikan eksplisit menjalankan kedua skrip dalam satu pesan (paralel/batch) sebelum membaca hasilnya, sesuai aturan parallelization untuk operasi independen."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Root resolusi self-ref vs sibling-ref tidak konsisten (dangling laten)",
+      "location": "SKILL.md:Resolution rules + Pahami module existing / Rancang",
+      "evidence": "Skill ter-install di .claude/skills/psm-develop/ dan meresolve ref sendiri via references/... (install-relative). Namun skill sibling dialamatkan sebagai {project-root}/skills/psm-validate/ dan {project-root}/skills/psm-cross-version/ — mengasumsikan mirror skills/ di root project. Di repo ini kedua pohon ada sehingga resolve, tetapi instalasi Claude Code standar hanya menaruh skill di .claude/skills/, sehingga {project-root}/skills/psm-validate/ akan menggantung.",
+      "recommendation": "Samakan basis resolusi sibling dengan lokasi install (rujuk lewat direktori skills yang sama tempat psm-develop berada), atau tambahkan aturan resolusi sibling eksplisit di 'Resolution rules' yang menyebut lokasi skills sebenarnya, agar tak bergantung pada mirror {project-root}/skills/."
+    },
+    {
+      "id": "cohesion-1",
+      "lens": "agent-cohesion",
+      "severity": "medium",
+      "title": "Jalur pembatalan bergantung asumsi git yang tak diverifikasi",
+      "location": "SKILL.md:Terapkan",
+      "evidence": "Overview & persona menegaskan operasi 'tak mudah dibalik' sebagai alasan seluruh alur konfirmasi. Tapi di 'Terapkan' satu-satunya mekanisme undo cuma diasumsikan: 'asumsikan Budi memakai git untuk pembatalan'. Tak ada cek pra-apply bahwa <module-path> di repo git atau working tree bersih. Bila module tak diversion-control, gerbang konfirmasi meloloskan perubahan permanen tanpa jaring pengaman.",
+      "recommendation": "Sebelum menyentuh file di 'Terapkan', verifikasi ringan bahwa <module-path> di repo git dengan working tree bersih (git status); bila tidak, peringatkan Budi / tawarkan backup folder."
+    },
+    {
+      "id": "cohesion-2",
+      "lens": "agent-cohesion",
+      "severity": "low",
+      "title": "Tak ada guard bila target bukan module existing berisi (batas dengan psm-scaffold)",
+      "location": "SKILL.md:On Activation #2 / Pahami module existing",
+      "evidence": "Premis inti adalah module 'sudah ada dan berjalan', pembeda utama vs psm-scaffold. Namun On Activation #2 hanya 'Tentukan module (path folder)' tanpa memastikan folder itu benar module PrestaShop terisi. 'Pahami module existing' langsung inventaris; bila path kosong/bukan module, alur tetap lanjut ke rancang.",
+      "recommendation": "Setelah ps-module-inventory.py, bila inventaris menunjukkan module absen/kosong (tak ada versi/hook/ObjectModel), hentikan dan arahkan Budi ke psm-scaffold alih-alih merancang di atas ketiadaan."
+    },
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Validasi rencana vs inventaris sebagian deterministik tapi dikerjakan prompt",
+      "location": "SKILL.md:Rancang fungsi & rencana + scripts/ps-module-inventory.py docstring",
+      "evidence": "SKILL.md 'Rancang' (validasi rencana): 'cocokkan tiap item rencana dengan JSON inventaris — hook baru belum ada di registered_hooks; file/titik sisip benar-benar ada.' Docstring ps-module-inventory.py mengklaim skrip dipakai untuk 'validasi rencana pra-apply', padahal skrip hanya emit inventaris — pencocokan set/list-membership tetap dikerjakan model tiap run.",
+      "recommendation": "Tambah mode plan-validate di ps-module-inventory.py (atau skrip kecil) yang menerima item rencana terstruktur + inventaris lalu emit mismatch per item. Sisakan untuk prompt hanya penilaian bermaksud (apakah perubahan menyentuh $definition ObjectModel terpakai). Selaraskan docstring dengan kemampuan nyata."
+    },
+    {
+      "id": "customization-1",
+      "lens": "customization",
+      "severity": "low",
+      "title": "Default communication_language menyimpang dari default kanonik config",
+      "location": "SKILL.md:On Activation #1",
+      "evidence": "SKILL.md menyatakan 'communication_language (default Indonesia)', sama seperti sibling psm-*. Namun mekanisme config kanonik (psm-setup SKILL.md) mendefinisikan default = English. Nilai default hardcode 'Indonesia' bertentangan dengan default sebenarnya dari surface config; kini tak memecah runtime karena config.user.yaml menyetel 'Indonesia' eksplisit.",
+      "recommendation": "Selaraskan pernyataan default: rujuk default kanonik dari psm-setup (English) atau hapus klaim default dan baca communication_language apa adanya — satu sumber kebenaran."
+    },
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Pengulangan aturan 'jangan parse PHP tangan' + meta-narasi sisa tugas",
+      "location": "SKILL.md:Pahami module existing (baris 28 vs 32)",
+      "evidence": "Baris 28 sudah menegaskan 'jangan parse PHP mentah dengan tangan'. Baris 32 mengulang maksud sama dengan bungkus meta: 'Sisakan untuk dirimu hanya penilaian di mana sisip yang aman — itu judgment, bukan pengulangan kedua skrip.' Klausa 'bukan pengulangan kedua skrip' adalah negative-space yang sudah tercakup instruksi baris 28.",
+      "recommendation": "Truncate baris 32 jadi klausa positif saja dan buang klausa meta.",
+      "proposed_smallest": "Sisamu: menilai di mana titik sisip aman.",
+      "predicted_delta": "Tidak ada — instruksi anti-parse sudah dinyatakan sekali di baris 28; klausa meta tak mengubah tindakan model."
+    },
+    {
+      "id": "leanness-2",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Aturan scarred (upgrade script, cabang versi, GDPR) diulang lintas file/section",
+      "location": "references/ecommerce-function-catalog.md:76-81 vs SKILL.md:Validasi rencana/Terapkan",
+      "evidence": "Trio aturan sama muncul berkali: upgrade script untuk hook/kolom baru (catalog & SKILL); cabang versi untuk legacy/modern (catalog & SKILL); pertimbangkan GDPR untuk data pelanggan (catalog). Fakta sama dinyatakan ulang di beberapa tempat.",
+      "recommendation": "Jadikan blok 'Aturan menambah fungsi ke module existing' (catalog) satu-satunya kanon, lalu SKILL.md merujuk ke sana alih-alih menyalin ulang. Pertahankan pemisahan design-time vs validate/apply-time hanya bila membawa cek konkret berbeda.",
+      "proposed_smallest": "Di SKILL.md Terapkan: 'Terapkan sesuai rencana; patuhi Aturan menambah-ke-existing di catalog (upgrade script, cabang versi, GDPR).'",
+      "predicted_delta": "Tidak ada — aturan tetap dibaca sekali; menghilangkan salinan mengurangi risiko drift antar file."
+    }
+  ],
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/agent-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/script-standards.md"
+  }
+}

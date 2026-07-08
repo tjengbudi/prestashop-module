@@ -5,8 +5,9 @@ bisnis, dengan pertimbangan teknis lintas versi. Dipakai untuk **menawarkan** id
 fungsi yang relevan dengan maksud module dan **merancang** implementasinya.
 
 Pasangkan dengan pola teknis di
-`{project-root}/skills/psm-cross-version/references/version-safe-patterns.md`
-(cara aman pakai hook/service/persistence lintas 1.7/8/9). File ini = *fungsi apa*;
+`<skills-dir>/psm-cross-version/references/version-safe-patterns.md`
+(`<skills-dir>` = direktori install skill ini, tempat sibling psm-* berada;
+cara aman pakai hook/service/persistence lintas 1.7/8/9). File ini = *fungsi apa*;
 file itu = *cara aman membangunnya*.
 
 Pertimbangan umum lintas versi: prefer **hook display/action** + **ObjectModel**
