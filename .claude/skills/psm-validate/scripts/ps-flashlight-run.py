@@ -5,25 +5,85 @@
 """Jalankan validasi module di dalam Docker prestashop-flashlight, per versi.
 
 Lapisan akurasi #2: menguji module terhadap PrestaShop core ASLI tiap versi —
-instalasi module + coding standard (php-cs / phpstan bila tersedia di image).
+instalasi module + analisis statis (phpstan) di dalam core yang benar-benar boot.
 Deterministik per (module, versi, image). Output JSON per versi.
 
-Memetakan versi target -> tag image flashlight, menjalankan container dengan
-module di-mount ke INSTALL_MODULES_DIR, lalu mengumpulkan status install &
-hasil coding-standard. Bila Docker tak tersedia, keluar dengan status terstruktur
-'skipped' (bukan crash) supaya pemanggil bisa degrade ke ps-static-scan saja.
+PENTING — flashlight butuh DATABASE. Image `prestashop/prestashop-flashlight`
+adalah web-tier saja (nginx + php-fpm), TANPA server MySQL: entrypoint-nya menunggu
+host DB bernama `mysql`/sesuai `MYSQL_HOST` selamanya. Karena itu skrip ini TIDAK
+menjalankan `docker run` telanjang (yang pasti gagal "no database"), melainkan
+membangun DB + flashlight berpasangan:
+  - orchestrator `compose` : generate docker-compose ephemeral (mariadb + flashlight,
+    di-gate lewat healthcheck DB) lalu `docker compose up -d`.
+  - orchestrator `manual`  : `docker network` + dua `docker run` (mariadb lalu
+    flashlight) pada network yang sama; hanya butuh CLI `docker`.
+  - `auto` (default)       : compose bila tersedia, jika tidak manual.
 
+Env runtime flashlight yang dibaca: MYSQL_HOST/PORT/USER/PASSWORD/DATABASE + PS_DOMAIN
+(bukan DB_SERVER/DB_NAME — itu milik image produksi prestashop/prestashop, diabaikan).
+Kesiapan diukur dari HEALTHCHECK container flashlight (status `healthy`), bukan port.
+
+Coding-standard: image punya `phpstan` (canonical PrestaShop), BUKAN `phpcs`. Bila
+module membawa `phpstan.neon`(.dist) sendiri, hasilnya KONKLUSIF (memblok bila error).
+Bila tidak, skrip meng-auto-generate neon minimal (scanDirectories ke core) yang
+bersifat ADVISORY saja (errors=0, tak memblok) karena tanpa bootstrap module bisa
+false-positive.
+
+Bila Docker/compose tak tersedia, keluar dengan status terstruktur (`skipped` /
+`skipped_image`) — bukan crash — supaya pemanggil bisa degrade ke ps-static-scan.
 Pemetaan tag default mengikuti tag resmi Docker Hub prestashop/prestashop-flashlight.
 """
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
+import uuid
 from pathlib import Path
 
 DEFAULT_TAG_MAP = {"1.7.8": "1.7.8.11", "8.1": "8.1.6-nginx", "9.1": "9.1.4-nginx"}
 IMAGE = "prestashop/prestashop-flashlight"
+DEFAULT_DB_IMAGE = "mariadb:lts"
+DEFAULT_PS_DOMAIN = "localhost:8000"
+DEFAULT_STARTUP_TIMEOUT = 180  # detik menunggu container jadi healthy
+# Kredensial DB — harus cocok di sisi flashlight & DB; nilai internal, bukan setelan.
+DB_USER = "prestashop"
+DB_PASSWORD = "prestashop"
+DB_NAME = "prestashop"
+
+# Skrip yang dijalankan DI DALAM container flashlight setelah healthy: salin module,
+# install via PS console, lalu phpstan (neon module bila ada, else auto-generate).
+# Memakai $MOD_NAME dari env (dilewatkan lewat `docker ... -e MOD_NAME=...`).
+INNER_SH = r'''
+if ! cp -r /ps-module-src "/var/www/html/modules/$MOD_NAME" 2>&1; then echo PSM_COPY_FAIL; fi
+cd /var/www/html || echo PSM_NO_PSROOT
+if php -d memory_limit=-1 bin/console prestashop:module --no-interaction install "$MOD_NAME" 2>&1; then
+  echo PSM_INSTALL_OK
+else
+  echo PSM_INSTALL_FAIL
+fi
+NEON=""
+for c in "modules/$MOD_NAME/phpstan.neon" "modules/$MOD_NAME/phpstan.neon.dist"; do
+  if [ -f "$c" ]; then NEON="$c"; break; fi
+done
+GEN=0
+if [ -z "$NEON" ]; then
+  GEN=1
+  NEON=/tmp/psm-phpstan.neon
+  printf 'parameters:\n    level: 2\n    paths:\n        - /var/www/html/modules/%s\n    scanDirectories:\n        - /var/www/html/classes\n        - /var/www/html/src\n        - /var/www/html/vendor/prestashop\n' "$MOD_NAME" > "$NEON"
+fi
+if command -v phpstan >/dev/null 2>&1; then
+  echo "PSM_PHPSTAN_GEN=$GEN"
+  echo PSM_PHPSTAN_JSON_START
+  phpstan analyse --no-progress --error-format=json --memory-limit=-1 -c "$NEON" "modules/$MOD_NAME" 2>/dev/null || true
+  echo PSM_PHPSTAN_JSON_END
+else
+  echo PSM_PHPSTAN_ABSENT
+fi
+'''
 
 
 def docker_available():
@@ -31,6 +91,15 @@ def docker_available():
         return False
     try:
         r = subprocess.run(["docker", "info"], capture_output=True, timeout=20)
+        return r.returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+def compose_available():
+    """True bila plugin `docker compose` (v2) tersedia."""
+    try:
+        r = subprocess.run(["docker", "compose", "version"], capture_output=True, timeout=20)
         return r.returncode == 0
     except (subprocess.SubprocessError, OSError):
         return False
@@ -58,115 +127,296 @@ def parse_tag_map(raw):
     return out or dict(DEFAULT_TAG_MAP)
 
 
-def run_one_version(module_dir, full_ver, tag, pull, timeout, allow_pull=True):
-    """Spin container flashlight untuk satu versi, install module, jalankan CS.
+def parse_install(out):
+    """Baca penanda hasil install dari output inner-script."""
+    if "PSM_COPY_FAIL" in out:
+        return {"ok": False, "no_console": False, "copy_fail": True}
+    return {"ok": "PSM_INSTALL_OK" in out, "no_console": "PSM_NO_CONSOLE" in out, "copy_fail": False}
 
-    Strategi: jalankan container dengan module di-mount, gunakan PrestaShop CLI
-    untuk instalasi dan jalankan coding-standard bila tooling ada di image.
 
-    Gerbang unduh image: bila image belum ada lokal dan `allow_pull` False,
-    degrade jujur (skipped_image, bukan error) supaya pemanggil non-interaktif
-    tak diam-diam menarik image multi-GB.
+def parse_phpstan(out):
+    """Ambil hitungan error EXACT dari laporan JSON phpstan (bukan tebak substring).
+
+    phpstan --error-format=json -> {"totals":{"file_errors":N,...}, "files":{...}, "errors":[...]}.
+    Neon auto-generate (GEN=1) bersifat ADVISORY: errors dipetakan ke warnings agar
+    TAK memblok vonis (tanpa bootstrap module, phpstan bisa false-positive). Neon milik
+    module (GEN=0) bersifat konklusif: errors tetap errors (memblok).
+    """
+    if "PSM_PHPSTAN_ABSENT" in out:
+        return {"available": False}
+    if "PSM_PHPSTAN_JSON_START" not in out or "PSM_PHPSTAN_JSON_END" not in out:
+        return {"available": True, "parse_ok": False, "note": "penanda laporan phpstan tak ditemukan"}
+    generated = "PSM_PHPSTAN_GEN=1" in out
+    raw = out.split("PSM_PHPSTAN_JSON_START", 1)[1].split("PSM_PHPSTAN_JSON_END", 1)[0].strip()
+    start = raw.find("{")
+    if start == -1:
+        return {"available": True, "parse_ok": False, "generated_config": generated,
+                "note": "JSON phpstan kosong/tak valid"}
+    try:
+        report = json.loads(raw[start:])
+    except json.JSONDecodeError:
+        return {"available": True, "parse_ok": False, "generated_config": generated,
+                "note": "gagal parse JSON phpstan"}
+    totals = report.get("totals", {}) or {}
+    generic = report.get("errors", []) or []  # error non-file (mis. neon/bootstrap)
+    files = report.get("files", {}) or {}
+    messages = []
+    for path, fdata in files.items():
+        for m in (fdata.get("messages", []) or []):
+            messages.append({"line": m.get("line"), "source": "phpstan",
+                             "message": (m.get("message") or "")[:160], "file": path})
+    for g in generic:
+        messages.append({"line": 0, "source": "phpstan", "message": str(g)[:160]})
+    count = totals.get("file_errors", 0) + len(generic)
+    if generated:
+        return {"available": True, "parse_ok": True, "generated_config": True,
+                "errors": 0, "warnings": count, "error_messages": messages[:50],
+                "note": "phpstan pakai neon auto-generate (advisory — tak memblok)"}
+    return {"available": True, "parse_ok": True, "generated_config": False,
+            "errors": count, "warnings": 0, "error_messages": messages[:50]}
+
+
+def _health_status(container):
+    """Status health container: 'healthy'|'unhealthy'|'starting'|'nohealth'|'gone'."""
+    r = subprocess.run(
+        ["docker", "inspect", "--format",
+         "{{if .State.Health}}{{.State.Health.Status}}{{else}}nohealth{{end}}", container],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        return "gone"
+    return (r.stdout or "").strip() or "unknown"
+
+
+def wait_healthy(container, timeout, poll=3.0):
+    """Poll status health sampai 'healthy' / 'unhealthy' / timeout. Return (ok, status)."""
+    deadline = time.monotonic() + timeout
+    last = "unknown"
+    while time.monotonic() < deadline:
+        last = _health_status(container)
+        if last == "healthy":
+            return True, "healthy"
+        if last in ("unhealthy", "gone"):
+            return False, last
+        time.sleep(poll)
+    return False, f"timeout ({last})"
+
+
+def _logs(container):
+    r = subprocess.run(["docker", "logs", container], capture_output=True, text=True)
+    return (r.stdout or "") + (r.stderr or "")
+
+
+def _compose_file_text(db_image, image_ref, ps_domain, module_dir):
+    """docker-compose ephemeral: mariadb (healthcheck) + flashlight (depends_on healthy)."""
+    return (
+        "services:\n"
+        "  db:\n"
+        f"    image: {db_image}\n"
+        "    healthcheck:\n"
+        '      test: ["CMD", "healthcheck.sh", "--connect"]\n'
+        "      interval: 5s\n"
+        "      timeout: 10s\n"
+        "      retries: 20\n"
+        "    environment:\n"
+        f"      MYSQL_USER: {DB_USER}\n"
+        f"      MYSQL_PASSWORD: {DB_PASSWORD}\n"
+        f"      MYSQL_ROOT_PASSWORD: {DB_PASSWORD}\n"
+        f"      MYSQL_DATABASE: {DB_NAME}\n"
+        "  ps:\n"
+        f"    image: {image_ref}\n"
+        "    depends_on:\n"
+        "      db:\n"
+        "        condition: service_healthy\n"
+        "    environment:\n"
+        f"      PS_DOMAIN: {ps_domain}\n"
+        "      MYSQL_HOST: db\n"
+        '      MYSQL_PORT: "3306"\n'
+        f"      MYSQL_USER: {DB_USER}\n"
+        f"      MYSQL_PASSWORD: {DB_PASSWORD}\n"
+        f"      MYSQL_DATABASE: {DB_NAME}\n"
+        "    volumes:\n"
+        f"      - {module_dir}:/ps-module-src:ro\n"
+    )
+
+
+def _project_name(full_ver):
+    v = re.sub(r"[^a-z0-9]", "", full_ver.lower())
+    return f"psmfl{v}{uuid.uuid4().hex[:8]}"
+
+
+def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout):
+    proj = _project_name(full_ver)
+    tmpdir = tempfile.mkdtemp(prefix="psm-fl-")
+    compose_path = Path(tmpdir) / "docker-compose.yml"
+    compose_path.write_text(_compose_file_text(db_image, image_ref, ps_domain, module_dir), encoding="utf-8")
+    session = {"mode": "compose", "project": proj, "compose_file": str(compose_path),
+               "tmpdir": tmpdir, "ps_container": None}
+    up = subprocess.run(["docker", "compose", "-f", str(compose_path), "-p", proj, "up", "-d"],
+                        capture_output=True, text=True, timeout=op_timeout)
+    if up.returncode != 0:
+        return session, f"docker compose up gagal: {up.stderr.strip()[-300:]}"
+    q = subprocess.run(["docker", "compose", "-f", str(compose_path), "-p", proj, "ps", "-q", "ps"],
+                       capture_output=True, text=True)
+    cid = [c for c in (q.stdout or "").strip().splitlines() if c]
+    if not cid:
+        return session, "tak bisa resolve container flashlight dari compose"
+    session["ps_container"] = cid[0]
+    return session, None
+
+
+def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout):
+    uid = uuid.uuid4().hex[:8]
+    session = {"mode": "manual", "network": f"psm-fl-net-{uid}",
+               "db": f"psm-fl-db-{uid}", "ps_container": f"psm-fl-ps-{uid}"}
+    n = subprocess.run(["docker", "network", "create", session["network"]], capture_output=True, text=True)
+    if n.returncode != 0:
+        return session, f"gagal buat network: {n.stderr.strip()[-200:]}"
+    db = subprocess.run(
+        ["docker", "run", "-d", "--name", session["db"], "--network", session["network"],
+         "--network-alias", "db",
+         "-e", f"MYSQL_USER={DB_USER}", "-e", f"MYSQL_PASSWORD={DB_PASSWORD}",
+         "-e", f"MYSQL_ROOT_PASSWORD={DB_PASSWORD}", "-e", f"MYSQL_DATABASE={DB_NAME}",
+         "--health-cmd", "healthcheck.sh --connect", "--health-interval", "5s",
+         "--health-timeout", "10s", "--health-retries", "20", db_image],
+        capture_output=True, text=True)
+    if db.returncode != 0:
+        return session, f"gagal start DB: {db.stderr.strip()[-200:]}"
+    ok, status = wait_healthy(session["db"], startup_timeout)
+    if not ok:
+        return session, f"DB tak jadi healthy ({status})"
+    ps = subprocess.run(
+        ["docker", "run", "-d", "--name", session["ps_container"], "--network", session["network"],
+         "-e", f"PS_DOMAIN={ps_domain}", "-e", "MYSQL_HOST=db", "-e", "MYSQL_PORT=3306",
+         "-e", f"MYSQL_USER={DB_USER}", "-e", f"MYSQL_PASSWORD={DB_PASSWORD}",
+         "-e", f"MYSQL_DATABASE={DB_NAME}",
+         "-v", f"{module_dir}:/ps-module-src:ro", image_ref],
+        capture_output=True, text=True)
+    if ps.returncode != 0:
+        return session, f"gagal start flashlight: {ps.stderr.strip()[-200:]}"
+    return session, None
+
+
+def _exec(session, env, inner, timeout):
+    env_args = []
+    for k, v in env.items():
+        env_args += ["-e", f"{k}={v}"]
+    if session["mode"] == "compose":
+        cmd = ["docker", "compose", "-f", session["compose_file"], "-p", session["project"],
+               "exec", "-T", *env_args, "ps", "sh", "-c", inner]
+    else:
+        cmd = ["docker", "exec", *env_args, session["ps_container"], "sh", "-c", inner]
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def _teardown(session):
+    if not session:
+        return
+    if session.get("mode") == "compose":
+        if session.get("compose_file"):
+            subprocess.run(["docker", "compose", "-f", session["compose_file"],
+                            "-p", session["project"], "down", "-v"], capture_output=True, text=True)
+        if session.get("tmpdir"):
+            shutil.rmtree(session["tmpdir"], ignore_errors=True)
+    else:
+        for c in (session.get("ps_container"), session.get("db")):
+            if c:
+                subprocess.run(["docker", "rm", "-f", c], capture_output=True, text=True)
+        if session.get("network"):
+            subprocess.run(["docker", "network", "rm", session["network"]], capture_output=True, text=True)
+
+
+def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_image,
+                    ps_domain, startup_timeout, op_timeout, allow_pull):
+    """Bangun DB+flashlight untuk satu versi, install module, jalankan phpstan.
+
+    Kegagalan infrastruktur (image absen tanpa izin pull, compose/DB/boot gagal,
+    timeout) → degrade jujur lewat `errors`/`skipped_image` (tak konklusif, tak
+    memblok). Install ditolak / phpstan-error (neon module) → sinyal konklusif.
     """
     image_ref = f"{IMAGE}:{tag}"
-    res = {"version": full_ver, "tag": tag, "image": image_ref, "pull": None,
-           "install": None, "coding_standard": None, "errors": [], "pass": False}
+    res = {"version": full_ver, "tag": tag, "image": image_ref, "orchestrator": None,
+           "db_image": db_image, "install": None, "coding_standard": None,
+           "errors": [], "pass": False}
 
-    if not image_present(image_ref):
+    mode = orchestrator
+    if mode == "auto":
+        mode = "compose" if compose_available() else "manual"
+    elif mode == "compose" and not compose_available():
+        res["errors"].append("orchestrator=compose diminta tapi 'docker compose' tak tersedia")
+        return res
+    res["orchestrator"] = mode
+
+    # Gerbang unduh image (flashlight multi-GB + DB) — degrade jujur bila tak diizinkan.
+    missing = [i for i in (image_ref, db_image) if not image_present(i)]
+    if missing:
         if not allow_pull:
             res["skipped_image"] = True
             res["errors"].append(
-                f"image {image_ref} belum ada lokal & pull tak diizinkan — lewati versi ini")
+                f"image belum ada lokal & pull tak diizinkan: {', '.join(missing)} — lewati versi ini")
             return res
-        if pull:
-            p = subprocess.run(["docker", "pull", image_ref], capture_output=True, text=True, timeout=timeout)
-            res["pull"] = {"ok": p.returncode == 0, "stderr": p.stderr.strip()[-500:]}
+        for i in missing:
+            try:
+                p = subprocess.run(["docker", "pull", i], capture_output=True, text=True, timeout=op_timeout)
+            except subprocess.TimeoutExpired:
+                res["errors"].append(f"timeout pull {i}")
+                return res
             if p.returncode != 0:
-                res["errors"].append(f"gagal pull {image_ref}")
+                res["errors"].append(f"gagal pull {i}: {p.stderr.strip()[-300:]}")
                 return res
 
-    # Script di dalam container: install module via PS CLI, lalu coding standard.
-    # PS CLI ada di /var/www/html/bin/console (PS8/9) atau ./bin/console.
-    inner = (
-        'set -e; MOD="$(basename /ps-module-src)"; '
-        'cp -r /ps-module-src "/var/www/html/modules/$MOD"; '
-        'cd /var/www/html; '
-        'CONSOLE=""; [ -f bin/console ] && CONSOLE="bin/console"; '
-        'if [ -n "$CONSOLE" ]; then '
-        '  php $CONSOLE prestashop:module install "$MOD" 2>&1 && echo "PSM_INSTALL_OK" || echo "PSM_INSTALL_FAIL"; '
-        'else echo "PSM_NO_CONSOLE"; fi; '
-        # coding standard: phpcs PrestaShop dengan report JSON (hitungan exact, bukan tebak)
-        'if command -v phpcs >/dev/null 2>&1; then '
-        '  echo "PSM_CS_JSON_START"; '
-        '  phpcs --standard=PrestaShop --report=json "modules/$MOD" 2>/dev/null || true; '
-        '  echo "PSM_CS_JSON_END"; '
-        'else echo "PSM_CS_ABSENT"; fi'
-    )
-    cmd = [
-        "docker", "run", "--rm",
-        "-v", f"{module_dir}:/ps-module-src:ro",
-        "-e", "DRY_RUN=true",  # jangan boot web server penuh; kita hanya butuh CLI + FS
-        "--entrypoint", "/bin/sh",
-        image_ref, "-c", inner,
-    ]
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        res["errors"].append(f"timeout menjalankan container {image_ref}")
+    if mode == "compose":
+        session, err = _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout)
+    else:
+        session, err = _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout)
+    if err:
+        res["errors"].append(err)
+        _teardown(session)
         return res
-    out = (p.stdout or "") + (p.stderr or "")
-    res["install"] = {
-        "ok": "PSM_INSTALL_OK" in out,
-        "no_console": "PSM_NO_CONSOLE" in out,
-        "log": out[-2000:],
-    }
-    res["coding_standard"] = parse_phpcs(out)
-    cs = res["coding_standard"]
-    res["pass"] = bool(res["install"] and res["install"]["ok"]) and \
-        (not cs.get("available") or cs.get("parse_ok") is False or cs.get("errors", 0) == 0)
-    return res
 
-
-def parse_phpcs(out):
-    """Ambil hitungan error EXACT dari laporan JSON phpcs (bukan tebak substring).
-
-    phpcs --report=json mengeluarkan {"totals":{"errors":N,"warnings":M}, "files":{...}}.
-    Bila JSON tak terparse, jangan menebak — tandai parse_ok=False dan jangan gating.
-    """
-    if "PSM_CS_ABSENT" in out:
-        return {"available": False}
-    if "PSM_CS_JSON_START" not in out or "PSM_CS_JSON_END" not in out:
-        return {"available": True, "parse_ok": False, "note": "penanda report phpcs tak ditemukan"}
-    raw = out.split("PSM_CS_JSON_START", 1)[1].split("PSM_CS_JSON_END", 1)[0].strip()
-    start = raw.find("{")
-    if start == -1:
-        return {"available": True, "parse_ok": False, "note": "JSON phpcs kosong/tak valid"}
     try:
-        report = json.loads(raw[start:])
-        totals = report.get("totals", {})
-        files = report.get("files", {})
-        messages = []
-        for fdata in files.values():
-            for m in fdata.get("messages", []):
-                if m.get("type") == "ERROR":
-                    messages.append({"line": m.get("line"), "source": m.get("source"), "message": m.get("message", "")[:160]})
-        return {"available": True, "parse_ok": True,
-                "errors": totals.get("errors", 0), "warnings": totals.get("warnings", 0),
-                "error_messages": messages[:50]}
-    except json.JSONDecodeError:
-        return {"available": True, "parse_ok": False, "note": "gagal parse JSON phpcs"}
+        ok, status = wait_healthy(session["ps_container"], startup_timeout)
+        if not ok:
+            res["errors"].append(
+                f"flashlight tak jadi 'healthy' ({status}) — DB/boot gagal, degrade jujur")
+            res["boot_log"] = _logs(session["ps_container"])[-2000:]
+            return res
+        try:
+            cp = _exec(session, {"MOD_NAME": mod_name}, INNER_SH, op_timeout)
+        except subprocess.TimeoutExpired:
+            res["errors"].append(f"timeout menjalankan uji di container ({image_ref})")
+            return res
+        out = (cp.stdout or "") + (cp.stderr or "")
+        inst = parse_install(out)
+        if inst.get("copy_fail"):
+            res["errors"].append("gagal menyalin module ke dalam container")
+            return res
+        res["install"] = {"ok": inst["ok"], "no_console": inst.get("no_console", False),
+                          "log": out[-2000:]}
+        res["coding_standard"] = parse_phpstan(out)
+        cs = res["coding_standard"]
+        res["pass"] = bool(res["install"]["ok"]) and \
+            (not cs.get("available") or cs.get("parse_ok") is False or cs.get("errors", 0) == 0)
+        return res
+    finally:
+        _teardown(session)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Validasi module PrestaShop di Docker flashlight, per versi.")
+    ap = argparse.ArgumentParser(
+        description="Validasi module PrestaShop di Docker flashlight (DB-backed), per versi.")
     ap.add_argument("module_path", help="Path folder module PrestaShop")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
     ap.add_argument("--tag-map", default="", help="Pemetaan versi=tag dipisah koma, mis. '9.1=9.1.4-nginx'")
-    ap.add_argument("--no-pull", action="store_true", help="Jangan docker pull (pakai image lokal)")
+    ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default="auto",
+                    help="Cara menghidupkan DB+flashlight (default: auto = compose bila ada, else manual)")
+    ap.add_argument("--db-image", default=DEFAULT_DB_IMAGE, help=f"Image server DB (default: {DEFAULT_DB_IMAGE})")
+    ap.add_argument("--ps-domain", default=DEFAULT_PS_DOMAIN, help=f"PS_DOMAIN flashlight (default: {DEFAULT_PS_DOMAIN})")
+    ap.add_argument("--startup-timeout", type=int, default=DEFAULT_STARTUP_TIMEOUT,
+                    help=f"Maks detik menunggu container healthy (default: {DEFAULT_STARTUP_TIMEOUT})")
     ap.add_argument("--allow-image-pull", action="store_true",
                     help="Izinkan unduh image bila belum ada lokal (default: lewati versi itu, degrade jujur). "
                          "Wajib utk pemanggil non-interaktif yang memang mau menarik image.")
-    ap.add_argument("--timeout", type=int, default=600, help="Timeout per versi (detik)")
+    ap.add_argument("--timeout", type=int, default=600, help="Timeout operasi per versi (detik): pull/up/exec")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -175,23 +425,28 @@ def main():
     if not module_dir.is_dir():
         print(f"error: bukan folder: {module_dir}", file=sys.stderr)
         return 2
+    mod_name = module_dir.name
 
     if not docker_available():
-        result = {"module": module_dir.name, "docker_available": False, "status": "skipped",
-                  "reason": "Docker tidak tersedia — lewati uji flashlight, andalkan ps-static-scan.", "versions": {}}
+        result = {"module": mod_name, "docker_available": False, "status": "skipped",
+                  "reason": "Docker tidak tersedia — lewati uji flashlight, andalkan ps-static-scan.",
+                  "versions": {}}
         out = json.dumps(result, indent=2, ensure_ascii=False)
         (Path(args.output).write_text(out, encoding="utf-8") if args.output else print(out))
         return 0  # bukan error: degrade terkontrol
 
     tag_map = parse_tag_map(args.tag_map)
-    result = {"module": module_dir.name, "docker_available": True, "status": "ran", "versions": {}}
+    result = {"module": mod_name, "docker_available": True, "status": "ran",
+              "orchestrator": args.orchestrator, "versions": {}}
     overall_pass = True
     for full_ver in [v.strip() for v in args.versions.split(",")]:
         tag = tag_map.get(full_ver) or tag_map.get(full_ver.rsplit(".", 1)[0]) or full_ver
         if args.verbose:
             print(f"versi {full_ver} -> {IMAGE}:{tag}", file=sys.stderr)
-        r = run_one_version(module_dir, full_ver, tag, pull=not args.no_pull,
-                            timeout=args.timeout, allow_pull=args.allow_image_pull)
+        r = run_one_version(module_dir, mod_name, full_ver, tag,
+                            orchestrator=args.orchestrator, db_image=args.db_image,
+                            ps_domain=args.ps_domain, startup_timeout=args.startup_timeout,
+                            op_timeout=args.timeout, allow_pull=args.allow_image_pull)
         result["versions"][full_ver] = r
         overall_pass = overall_pass and r["pass"]
     result["pass"] = overall_pass

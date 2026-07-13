@@ -88,19 +88,21 @@ def flashlight_layer(flash, full_ver):
                          "severity": ERROR, "message": "modul gagal install di core asli",
                          "fix": "periksa log install flashlight", "location": v.get("image", "")})
     cs = v.get("coding_standard") or {}
+    # Hanya errors konklusif yang memblok. Neon auto-generate (advisory) memetakan
+    # temuannya ke warnings (errors=0) di ps-flashlight-run, jadi tak sampai sini.
     if cs.get("available") and cs.get("parse_ok") and cs.get("errors", 0) > 0:
         for m in cs.get("error_messages", []):
-            findings.append({"source": "flashlight", "id": "flashlight-phpcs",
-                             "severity": ERROR, "message": m.get("message", "phpcs error"),
+            findings.append({"source": "flashlight", "id": "flashlight-phpstan",
+                             "severity": ERROR, "message": m.get("message", "phpstan error"),
                              "fix": m.get("source", ""), "location": f"line {m.get('line', '?')}"})
         if not cs.get("error_messages"):
-            findings.append({"source": "flashlight", "id": "flashlight-phpcs",
-                             "severity": ERROR, "message": f"{cs['errors']} phpcs error",
+            findings.append({"source": "flashlight", "id": "flashlight-phpstan",
+                             "severity": ERROR, "message": f"{cs['errors']} phpstan error",
                              "fix": "", "location": v.get("image", "")})
     # CS tak terparse: install tetap konklusif, tapi catat CS tak teruji.
     cs_note = None
     if cs.get("available") and cs.get("parse_ok") is False:
-        cs_note = cs.get("note", "laporan phpcs tak terparse — coding standard tak diuji")
+        cs_note = cs.get("note", "laporan phpstan tak terparse — coding standard tak diuji")
     errs = sum(1 for f in findings if f["severity"] == ERROR)
     layer = {"state": "fail" if errs else "pass", "conclusive": True,
              "errors": errs, "findings": findings}

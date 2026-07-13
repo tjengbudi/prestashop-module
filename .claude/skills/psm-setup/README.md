@@ -44,6 +44,10 @@ Satu agent konsultan + lima workflow + satu setup skill, berbagi knowledge base 
 |---|---|---|
 | `psm_target_versions` | Versi PrestaShop target default | `1.7.8,8.1,9.1` |
 | `psm_flashlight_tag_map` | Pemetaan versi → tag image flashlight | `1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx` |
+| `psm_flashlight_orchestrator` | Cara flashlight menghidupkan DB+web: `auto`/`compose`/`manual` | `auto` |
+| `psm_flashlight_db_image` | Image server DB (flashlight = web-tier saja, DB terpisah) | `mariadb:lts` |
+| `psm_flashlight_ps_domain` | `PS_DOMAIN` container flashlight | `localhost:8000` |
+| `psm_flashlight_startup_timeout` | Maks detik menunggu container `healthy` | `180` |
 | `psm_modules_dir` | Folder tempat module PrestaShop kamu | `{project-root}/modules` |
 | `psm_reports_dir` | Output laporan validasi/optimasi | `{project-root}/_bmad-output/psm-validate` |
 

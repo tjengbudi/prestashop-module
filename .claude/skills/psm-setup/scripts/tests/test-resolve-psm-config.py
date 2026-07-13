@@ -84,6 +84,10 @@ def test_missing_psm_keys_get_defaults():
     data = json.loads(res.stdout)
     check("default: target versions kanonik", data["psm_target_versions"] == "1.7.8,8.1,9.1", res.stdout)
     check("default: tag map kanonik", data["psm_flashlight_tag_map"] == "1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx", res.stdout)
+    check("default: flashlight orchestrator kanonik", data["psm_flashlight_orchestrator"] == "auto", res.stdout)
+    check("default: flashlight db_image kanonik", data["psm_flashlight_db_image"] == "mariadb:lts", res.stdout)
+    check("default: flashlight ps_domain kanonik", data["psm_flashlight_ps_domain"] == "localhost:8000", res.stdout)
+    check("default: flashlight startup_timeout kanonik", data["psm_flashlight_startup_timeout"] == "180", res.stdout)
     check("default: reports_dir kanonik", data["psm_reports_dir"] == "{project-root}/_bmad-output/psm-validate", res.stdout)
     check("default: communication_language kanonik", data["communication_language"] == "Indonesia", res.stdout)
 

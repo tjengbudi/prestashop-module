@@ -39,6 +39,13 @@ except ImportError:
 PSM_DEFAULTS = {
     "psm_target_versions": "1.7.8,8.1,9.1",
     "psm_flashlight_tag_map": "1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx",
+    # Setelan docker flashlight — dikenali langsung oleh psm-validate; override lewat
+    # config.yaml section psm. Flashlight = web-tier saja (butuh DB terpisah), jadi
+    # skrip uji membangun DB+flashlight berpasangan; nilai di bawah menyetel caranya.
+    "psm_flashlight_orchestrator": "auto",        # auto | compose | manual
+    "psm_flashlight_db_image": "mariadb:lts",     # image server DB untuk flashlight
+    "psm_flashlight_ps_domain": "localhost:8000",  # PS_DOMAIN container flashlight
+    "psm_flashlight_startup_timeout": "180",      # maks detik tunggu container healthy
     "psm_modules_dir": "{project-root}/modules",
     "psm_reports_dir": "{project-root}/_bmad-output/psm-validate",
 }

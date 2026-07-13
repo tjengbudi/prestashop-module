@@ -104,7 +104,7 @@ def main():
     r = mod.merge_version("8.1", static, flash_fail, None, TV)
     ok &= check("install ditolak (konklusif) -> memblok", not r["pass"] and r["flashlight_conclusive"])
 
-    # 7. Flashlight konklusif + phpcs error -> memblok dengan lokasi
+    # 7. Flashlight konklusif + phpstan error (neon module) -> memblok dengan lokasi
     flash_cs = {"module": "m", "docker_available": True, "status": "ran",
                 "versions": {"8.1": {"version": "8.1", "image": "img",
                                      "install": {"ok": True, "no_console": False, "log": ""},
@@ -113,7 +113,18 @@ def main():
                                                                             {"line": 9, "source": "Y", "message": "worse"}]},
                                      "errors": [], "pass": False}}}
     r = mod.merge_version("8.1", static, flash_cs, None, TV)
-    ok &= check("phpcs 2 error -> 2 temuan memblok", not r["pass"] and len(r["blocking"]) == 2)
+    ok &= check("phpstan 2 error (neon module) -> 2 temuan memblok", not r["pass"] and len(r["blocking"]) == 2)
+
+    # 7b. phpstan auto-neon (advisory: errors=0, warnings) -> TAK memblok meski ada temuan
+    flash_adv = {"module": "m", "docker_available": True, "status": "ran",
+                 "versions": {"8.1": {"version": "8.1", "image": "img",
+                                      "install": {"ok": True, "no_console": False, "log": ""},
+                                      "coding_standard": {"available": True, "parse_ok": True,
+                                                          "generated_config": True, "errors": 0, "warnings": 2,
+                                                          "error_messages": [{"line": 3, "source": "phpstan", "message": "mungkin"}]},
+                                      "errors": [], "pass": True}}}
+    r = mod.merge_version("8.1", static, flash_adv, None, TV)
+    ok &= check("phpstan auto-neon advisory (errors=0) tak memblok", r["pass"] and len(r["blocking"]) == 0)
 
     # 8. Adversarial error -> memblok; adversarial warning -> tak memblok
     adv = {"findings": [{"id": "adv-sqli", "severity": "error", "message": "SQL injection",
