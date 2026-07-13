@@ -22,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEFAULT_TAG_MAP = {"1.7.8": "1.7.8.11", "8.1": "8.1", "9.0": "nightly"}
+DEFAULT_TAG_MAP = {"1.7.8": "1.7.8.11", "8.1": "8.1.6-nginx", "9.1": "9.1.4-nginx"}
 IMAGE = "prestashop/prestashop-flashlight"
 
 
@@ -47,7 +47,7 @@ def image_present(image_ref):
 
 
 def parse_tag_map(raw):
-    """Format: '1.7.8=1.7.8.11,8.1=8.1,9.0=nightly' -> dict. Kosong -> default."""
+    """Format: '1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx' -> dict. Kosong -> default."""
     if not raw:
         return dict(DEFAULT_TAG_MAP)
     out = {}
@@ -160,8 +160,8 @@ def parse_phpcs(out):
 def main():
     ap = argparse.ArgumentParser(description="Validasi module PrestaShop di Docker flashlight, per versi.")
     ap.add_argument("module_path", help="Path folder module PrestaShop")
-    ap.add_argument("--versions", default="1.7.8,8.1,9.0", help="Versi target dipisah koma")
-    ap.add_argument("--tag-map", default="", help="Pemetaan versi=tag dipisah koma, mis. '9.0=nightly'")
+    ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
+    ap.add_argument("--tag-map", default="", help="Pemetaan versi=tag dipisah koma, mis. '9.1=9.1.4-nginx'")
     ap.add_argument("--no-pull", action="store_true", help="Jangan docker pull (pakai image lokal)")
     ap.add_argument("--allow-image-pull", action="store_true",
                     help="Izinkan unduh image bila belum ada lokal (default: lewati versi itu, degrade jujur). "

@@ -42,8 +42,8 @@ Satu agent konsultan + lima workflow + satu setup skill, berbagi knowledge base 
 
 | Key | Arti | Default |
 |---|---|---|
-| `psm_target_versions` | Versi PrestaShop target default | `1.7.8,8.1,9.0` |
-| `psm_flashlight_tag_map` | Pemetaan versi → tag image flashlight | `1.7.8=1.7.8.11,8.1=8.1,9.0=nightly` |
+| `psm_target_versions` | Versi PrestaShop target default | `1.7.8,8.1,9.1` |
+| `psm_flashlight_tag_map` | Pemetaan versi → tag image flashlight | `1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx` |
 | `psm_modules_dir` | Folder tempat module PrestaShop kamu | `{project-root}/modules` |
 | `psm_reports_dir` | Output laporan validasi/optimasi | `{project-root}/_bmad-output/psm-validate` |
 

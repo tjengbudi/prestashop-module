@@ -29,14 +29,14 @@ def main():
     # parse_tag_map: kosong -> default
     ok &= check("tag-map kosong -> default", mod.parse_tag_map("") == mod.DEFAULT_TAG_MAP)
     # parse_tag_map: custom
-    tm = mod.parse_tag_map("9.0=nightly,8.1=8.1")
-    ok &= check("tag-map custom diparse", tm.get("9.0") == "nightly" and tm.get("8.1") == "8.1")
+    tm = mod.parse_tag_map("9.1=9.1.4-nginx,8.1=8.1.6-nginx")
+    ok &= check("tag-map custom diparse", tm.get("9.1") == "9.1.4-nginx" and tm.get("8.1") == "8.1.6-nginx")
     # parse_tag_map: entri tanpa '=' diabaikan, sisanya tetap
-    tm2 = mod.parse_tag_map("9.0=nightly,rusak")
-    ok &= check("entri tanpa '=' diabaikan", tm2 == {"9.0": "nightly"})
+    tm2 = mod.parse_tag_map("9.1=9.1.4-nginx,rusak")
+    ok &= check("entri tanpa '=' diabaikan", tm2 == {"9.1": "9.1.4-nginx"})
     # tag map default punya 3 versi inti
-    ok &= check("default tag-map punya 1.7.8/8.1/9.0",
-                all(k in mod.DEFAULT_TAG_MAP for k in ("1.7.8", "8.1", "9.0")))
+    ok &= check("default tag-map punya 1.7.8/8.1/9.1",
+                all(k in mod.DEFAULT_TAG_MAP for k in ("1.7.8", "8.1", "9.1")))
 
     # parse_phpcs: report JSON valid -> hitungan exact
     good_out = 'PSM_INSTALL_OK PSM_CS_JSON_START {"totals":{"errors":2,"warnings":1},"files":{"a.php":{"messages":[{"type":"ERROR","line":3,"source":"X","message":"bad"},{"type":"WARNING","line":5}]}}} PSM_CS_JSON_END'

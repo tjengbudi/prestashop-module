@@ -41,7 +41,7 @@ def static_result(versions):
 
 def main():
     ok = True
-    TV = ["1.7.8", "8.1", "9.0"]
+    TV = ["1.7.8", "8.1", "9.1"]
 
     # 1. Static bersih, tanpa flashlight/adversarial -> lolos, tapi flashlight tak konklusif
     static = static_result({v: [] for v in TV})
@@ -51,11 +51,11 @@ def main():
     ok &= check("static selalu memberi vonis dasar konklusif", r["conclusive"])
 
     # 2. Static punya error -> versi gagal (dihitung native, bukan model)
-    static_bad = static_result({"8.1": [("cls-attribute", "error")], "9.0": [], "1.7.8": []})
+    static_bad = static_result({"8.1": [("cls-attribute", "error")], "9.1": [], "1.7.8": []})
     r = mod.merge_version("8.1", static_bad, None, None, TV)
     ok &= check("static error -> versi gagal", not r["pass"] and len(r["blocking"]) == 1)
-    r90 = mod.merge_version("9.0", static_bad, None, None, TV)
-    ok &= check("versi lain tanpa error tetap lolos", r90["pass"])
+    r91 = mod.merge_version("9.1", static_bad, None, None, TV)
+    ok &= check("versi lain tanpa error tetap lolos", r91["pass"])
 
     # 3. Flashlight skipped (Docker absen) -> TAK memblok versi yang static-nya bersih
     flash_skipped = {"module": "m", "docker_available": False, "status": "skipped",
@@ -125,15 +125,15 @@ def main():
     ok &= check("adversarial error terkumpul 1 blocking (warning tak)", len(r["blocking"]) == 1)
     # adversarial tanpa versi -> berlaku semua versi target
     adv_all = {"findings": [{"id": "adv-x", "severity": "error", "message": "global"}]}
-    r97 = mod.merge_version("9.0", static, None, adv_all, TV)
-    ok &= check("adversarial tanpa versi -> berlaku semua target", not r97["pass"])
+    r91_all = mod.merge_version("9.1", static, None, adv_all, TV)
+    ok &= check("adversarial tanpa versi -> berlaku semua target", not r91_all["pass"])
     # regression architecture-1: versions major-form ('8') harus match full-form target ('8.1')
     adv_major = {"findings": [{"id": "adv-m", "severity": "error", "message": "major-form",
                                "versions": ["8"]}]}
     r_m = mod.merge_version("8.1", static, None, adv_major, TV)
     ok &= check("adversarial major-form '8' match target '8.1' (tak diam-diam drop)", not r_m["pass"])
-    r_m90 = mod.merge_version("9.0", static, None, adv_major, TV)
-    ok &= check("major-form '8' TAK bocor ke versi lain (9.0 tetap lolos)", r_m90["pass"])
+    r_m91 = mod.merge_version("9.1", static, None, adv_major, TV)
+    ok &= check("major-form '8' TAK bocor ke versi lain (9.1 tetap lolos)", r_m91["pass"])
     # full-form tetap match apa adanya
     adv_full = {"findings": [{"id": "adv-f", "severity": "error", "message": "full-form",
                               "versions": ["1.7.8"]}]}

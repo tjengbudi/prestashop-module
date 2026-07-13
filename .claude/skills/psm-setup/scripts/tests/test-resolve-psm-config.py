@@ -20,8 +20,8 @@ FULL_CONFIG = """\
 document_output_language: English
 psm:
   name: PrestaShop Module Builder
-  psm_target_versions: 1.7.8,8.1,9.0
-  psm_flashlight_tag_map: 1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.0=nightly
+  psm_target_versions: 1.7.8,8.1,9.1
+  psm_flashlight_tag_map: 1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx
   psm_modules_dir: '{project-root}/modules'
   psm_reports_dir: '{project-root}/_bmad-output/psm-validate'
 """
@@ -71,8 +71,8 @@ def test_full_config_all_keys():
     res = run(proj)
     check("full: exit 0", res.returncode == 0, res.stderr)
     data = json.loads(res.stdout)
-    check("full: target versions", data["psm_target_versions"] == "1.7.8,8.1,9.0", res.stdout)
-    check("full: tag map", data["psm_flashlight_tag_map"] == "1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.0=nightly", res.stdout)
+    check("full: target versions", data["psm_target_versions"] == "1.7.8,8.1,9.1", res.stdout)
+    check("full: tag map", data["psm_flashlight_tag_map"] == "1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx", res.stdout)
     check("full: modules_dir", data["psm_modules_dir"] == "{project-root}/modules", res.stdout)
     check("full: reports_dir", data["psm_reports_dir"] == "{project-root}/_bmad-output/psm-validate", res.stdout)
 
@@ -82,8 +82,8 @@ def test_missing_psm_keys_get_defaults():
     res = run(proj)
     check("default: exit 0", res.returncode == 0, res.stderr)
     data = json.loads(res.stdout)
-    check("default: target versions kanonik", data["psm_target_versions"] == "1.7.8,8.1,9.0", res.stdout)
-    check("default: tag map kanonik", data["psm_flashlight_tag_map"] == "1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.0=nightly", res.stdout)
+    check("default: target versions kanonik", data["psm_target_versions"] == "1.7.8,8.1,9.1", res.stdout)
+    check("default: tag map kanonik", data["psm_flashlight_tag_map"] == "1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx", res.stdout)
     check("default: reports_dir kanonik", data["psm_reports_dir"] == "{project-root}/_bmad-output/psm-validate", res.stdout)
     check("default: communication_language kanonik", data["communication_language"] == "Indonesia", res.stdout)
 
@@ -101,7 +101,7 @@ def test_single_key():
     proj = make_project(FULL_CONFIG, USER_CONFIG)
     res = run(proj, "--key", "psm_target_versions")
     check("key: exit 0", res.returncode == 0, res.stderr)
-    check("key: nilai tunggal", res.stdout.strip() == "1.7.8,8.1,9.0", res.stdout)
+    check("key: nilai tunggal", res.stdout.strip() == "1.7.8,8.1,9.1", res.stdout)
 
 
 def test_unknown_key_errors():
@@ -123,7 +123,7 @@ def test_graceful_missing_config():
     check("graceful: exit 0", res.returncode == 0, res.stderr)
     data = json.loads(res.stdout)
     check("graceful: config_missing true", data.get("config_missing") is True, res.stdout)
-    check("graceful: default kanonik terisi", data["psm_target_versions"] == "1.7.8,8.1,9.0", res.stdout)
+    check("graceful: default kanonik terisi", data["psm_target_versions"] == "1.7.8,8.1,9.1", res.stdout)
     check("graceful: comm_lang default", data["communication_language"] == "Indonesia", res.stdout)
 
 

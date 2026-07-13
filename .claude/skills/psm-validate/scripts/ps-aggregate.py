@@ -110,7 +110,7 @@ def flashlight_layer(flash, full_ver):
 
 
 def _major(ver):
-    """Petakan versi ke major key: 1.7.8.11 -> 1.7, 8.1 -> 8, 9.0 -> 9."""
+    """Petakan versi ke major key: 1.7.8.11 -> 1.7, 8.1 -> 8, 9.1 -> 9."""
     ver = str(ver).strip()
     return "1.7" if ver.startswith("1.7") else ver.split(".")[0]
 

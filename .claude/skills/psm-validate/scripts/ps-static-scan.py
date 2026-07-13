@@ -26,7 +26,7 @@ RULE_GROUPS = [
 
 
 def norm_versions(targets):
-    """Petakan versi penuh (1.7.8.11, 8.1, 9.0) ke major key (1.7, 8, 9)."""
+    """Petakan versi penuh (1.7.8.11, 8.1, 9.1) ke major key (1.7, 8, 9)."""
     out = []
     for t in targets:
         t = t.strip()
@@ -108,7 +108,7 @@ def scan_structure_rule(rule, module_dir, main_file):
 def main():
     ap = argparse.ArgumentParser(description="Pindai module PrestaShop terhadap aturan kompatibilitas lintas versi.")
     ap.add_argument("module_path", help="Path folder module PrestaShop")
-    ap.add_argument("--versions", default="1.7.8,8.1,9.0", help="Versi target dipisah koma (default: 1.7.8,8.1,9.0)")
+    ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma (default: 1.7.8,8.1,9.1)")
     ap.add_argument("--rules", default=str(DEFAULT_RULES), help="Path ps-rules.json (default: assets/ps-rules.json)")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     ap.add_argument("--verbose", action="store_true")

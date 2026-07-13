@@ -70,21 +70,21 @@ def main():
 
         # 1. Module bersih + compliancy -> lolos semua versi
         good = make_module(tmp, "goodmod", GOOD_MAIN, tpl="<div>{$x|escape:'html'}</div>")
-        res, rc = run_scan(good, "1.7.8,8.1,9.0")
+        res, rc = run_scan(good, "1.7.8,8.1,9.1")
         ok &= check("module bersih lolos semua versi", res["pass"] and rc == 0)
         ok &= check("compliancy ada -> tak ada struct-compliancy", all(
             "struct-compliancy" not in [f["id"] for f in v["findings"]] for v in res["versions"].values()))
 
         # 2. Module buruk: Attribute & jsonEncode -> error di 8/9, bukan 1.7
         bad = make_module(tmp, "badmod", BAD_MAIN)
-        res, rc = run_scan(bad, "1.7.8,8.1,9.0")
+        res, rc = run_scan(bad, "1.7.8,8.1,9.1")
         v87 = [f["id"] for f in res["versions"]["1.7.8"]["findings"]]
         v81 = [f["id"] for f in res["versions"]["8.1"]["findings"]]
-        v90 = [f["id"] for f in res["versions"]["9.0"]["findings"]]
-        ok &= check("Attribute kena di 8.1 & 9.0", "cls-attribute" in v81 and "cls-attribute" in v90)
+        v91 = [f["id"] for f in res["versions"]["9.1"]["findings"]]
+        ok &= check("Attribute kena di 8.1 & 9.1", "cls-attribute" in v81 and "cls-attribute" in v91)
         ok &= check("Attribute TIDAK kena di 1.7.8", "cls-attribute" not in v87)
-        ok &= check("jsonEncode kena di 8/9", "mth-tools-jsonencode" in v81 and "mth-tools-jsonencode" in v90)
-        ok &= check("login hook (method case-insensitive) kena di 9.0", "hook-admin-login" in v90)
+        ok &= check("jsonEncode kena di 8/9", "mth-tools-jsonencode" in v81 and "mth-tools-jsonencode" in v91)
+        ok &= check("login hook (method case-insensitive) kena di 9.1", "hook-admin-login" in v91)
         ok &= check("compliancy hilang kena semua versi", all(
             "struct-compliancy" in [f["id"] for f in v["findings"]] for v in res["versions"].values()))
         ok &= check("module buruk -> overall gagal + exit 1", not res["pass"] and rc == 1)

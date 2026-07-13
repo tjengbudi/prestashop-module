@@ -18,12 +18,12 @@ agents:
 
 psm_target_versions:
   prompt: "Versi PrestaShop target default (dipisah koma)?"
-  default: "1.7.8,8.1,9.0"
+  default: "1.7.8,8.1,9.1"
   result: "{value}"
 
 psm_flashlight_tag_map:
   prompt: "Pemetaan versi ke tag image prestashop-flashlight?"
-  default: "1.7.8=1.7.8.11,8.1=8.1,9.0=nightly"
+  default: "1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx"
   result: "{value}"
 
 psm_modules_dir:

@@ -37,8 +37,8 @@ except ImportError:
 # Default kanonik keluarga psm — dipakai bila key absen dari config.
 # Satu sumber kebenaran; menggantikan default yang dulu tersebar di lima prompt.
 PSM_DEFAULTS = {
-    "psm_target_versions": "1.7.8,8.1,9.0",
-    "psm_flashlight_tag_map": "1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.0=nightly",
+    "psm_target_versions": "1.7.8,8.1,9.1",
+    "psm_flashlight_tag_map": "1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx",
     "psm_modules_dir": "{project-root}/modules",
     "psm_reports_dir": "{project-root}/_bmad-output/psm-validate",
 }
