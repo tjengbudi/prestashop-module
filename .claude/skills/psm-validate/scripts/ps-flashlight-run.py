@@ -25,9 +25,10 @@ Kesiapan diukur dari HEALTHCHECK container flashlight (status `healthy`), bukan 
 
 Coding-standard: image punya `phpstan` (canonical PrestaShop), BUKAN `phpcs`. Bila
 module membawa `phpstan.neon`(.dist) sendiri, hasilnya KONKLUSIF (memblok bila error).
-Bila tidak, skrip meng-auto-generate neon minimal (scanDirectories ke core) yang
-bersifat ADVISORY saja (errors=0, tak memblok) karena tanpa bootstrap module bisa
-false-positive.
+Bila tidak, skrip meng-auto-generate neon yang menyertakan extension resmi PrestaShop
+(`ps-module-extension.neon`: stub Module/Tab + bootstrap, akurat; fallback
+scanDirectories bila absen). Hasil auto-neon bersifat ADVISORY (errors=0, tak memblok)
+— kita tak menjatuhkan rilis atas config buatan sendiri, hanya surface sebagai warning.
 
 Bila Docker/compose tak tersedia, keluar dengan status terstruktur (`skipped` /
 `skipped_image`) — bukan crash — supaya pemanggil bisa degrade ke ps-static-scan.
@@ -73,7 +74,14 @@ GEN=0
 if [ -z "$NEON" ]; then
   GEN=1
   NEON=/tmp/psm-phpstan.neon
-  printf 'parameters:\n    level: 2\n    paths:\n        - /var/www/html/modules/%s\n    scanDirectories:\n        - /var/www/html/classes\n        - /var/www/html/src\n        - /var/www/html/vendor/prestashop\n' "$MOD_NAME" > "$NEON"
+  EXT=/var/opt/prestashop/coding-standards/phpstan/ps-module-extension.neon
+  if [ -f "$EXT" ]; then
+    # Extension resmi PrestaShop (stub Module/Tab + bootstrap) -> analisis akurat.
+    printf 'includes:\n    - %s\nparameters:\n    level: 2\n    paths:\n        - /var/www/html/modules/%s\n' "$EXT" "$MOD_NAME" > "$NEON"
+  else
+    # Fallback bila extension resmi tak ada: scanDirectories (best-effort, bisa noisy).
+    printf 'parameters:\n    level: 2\n    paths:\n        - /var/www/html/modules/%s\n    scanDirectories:\n        - /var/www/html/classes\n        - /var/www/html/src\n        - /var/www/html/vendor/prestashop\n' "$MOD_NAME" > "$NEON"
+  fi
 fi
 if command -v phpstan >/dev/null 2>&1; then
   echo "PSM_PHPSTAN_GEN=$GEN"
@@ -391,7 +399,7 @@ def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_ima
             res["errors"].append("gagal menyalin module ke dalam container")
             return res
         res["install"] = {"ok": inst["ok"], "no_console": inst.get("no_console", False),
-                          "log": out[-2000:]}
+                          "log": out.split("PSM_PHPSTAN", 1)[0][-2000:]}
         res["coding_standard"] = parse_phpstan(out)
         cs = res["coding_standard"]
         res["pass"] = bool(res["install"]["ok"]) and \
