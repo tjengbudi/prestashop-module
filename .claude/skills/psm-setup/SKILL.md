@@ -59,7 +59,7 @@ After writing config, create any output directories that were configured. For fi
 
 ## Cleanup Legacy Directories
 
-After both merge scripts complete successfully, remove the installer's package directories. Skills and agents in these directories are already installed at `.claude/skills/` — the `_bmad/` directory should only contain config files.
+After both merge scripts complete successfully, remove the installer's package directories. Skills and agents in these directories are already installed at `.claude/skills/` — the `{project-root}/_bmad/` directory should only contain config files.
 
 As with the merge scripts, replace `{project-root}` in the `--bmad-dir` and `--skills-dir` path arguments with the actual project root before running.
 
