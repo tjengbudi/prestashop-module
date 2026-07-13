@@ -214,8 +214,14 @@ def _logs(container):
     return (r.stdout or "") + (r.stderr or "")
 
 
-def _compose_file_text(db_image, image_ref, ps_domain, module_dir):
-    """docker-compose ephemeral: mariadb (healthcheck) + flashlight (depends_on healthy)."""
+def _compose_file_text(db_image, image_ref, ps_domain, module_dir, publish=None):
+    """docker-compose ephemeral: mariadb (healthcheck) + flashlight (depends_on healthy).
+
+    `publish` (opsional, mis. '8000:80') memetakan port HTTP flashlight ke host —
+    dipakai pemanggil yang perlu menjangkau PS dari luar container (mis. Lapis 4
+    browser E2E lewat Playwright). Default None = tak ada port terpublish (perilaku
+    lama; uji phpstan cukup lewat `docker exec`).
+    """
     return (
         "services:\n"
         "  db:\n"
@@ -242,7 +248,8 @@ def _compose_file_text(db_image, image_ref, ps_domain, module_dir):
         f"      MYSQL_USER: {DB_USER}\n"
         f"      MYSQL_PASSWORD: {DB_PASSWORD}\n"
         f"      MYSQL_DATABASE: {DB_NAME}\n"
-        "    volumes:\n"
+        + (f'    ports:\n      - "{publish}"\n' if publish else "")
+        + "    volumes:\n"
         f"      - {module_dir}:/ps-module-src:ro\n"
     )
 
@@ -252,11 +259,12 @@ def _project_name(full_ver):
     return f"psmfl{v}{uuid.uuid4().hex[:8]}"
 
 
-def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout):
+def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout, publish=None):
     proj = _project_name(full_ver)
     tmpdir = tempfile.mkdtemp(prefix="psm-fl-")
     compose_path = Path(tmpdir) / "docker-compose.yml"
-    compose_path.write_text(_compose_file_text(db_image, image_ref, ps_domain, module_dir), encoding="utf-8")
+    compose_path.write_text(_compose_file_text(db_image, image_ref, ps_domain, module_dir, publish),
+                            encoding="utf-8")
     session = {"mode": "compose", "project": proj, "compose_file": str(compose_path),
                "tmpdir": tmpdir, "ps_container": None}
     up = subprocess.run(["docker", "compose", "-f", str(compose_path), "-p", proj, "up", "-d"],
@@ -272,7 +280,7 @@ def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_t
     return session, None
 
 
-def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout):
+def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout, publish=None):
     uid = uuid.uuid4().hex[:8]
     session = {"mode": "manual", "network": f"psm-fl-net-{uid}",
                "db": f"psm-fl-db-{uid}", "ps_container": f"psm-fl-ps-{uid}"}
@@ -297,6 +305,7 @@ def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout
          "-e", f"PS_DOMAIN={ps_domain}", "-e", "MYSQL_HOST=db", "-e", "MYSQL_PORT=3306",
          "-e", f"MYSQL_USER={DB_USER}", "-e", f"MYSQL_PASSWORD={DB_PASSWORD}",
          "-e", f"MYSQL_DATABASE={DB_NAME}",
+         *(["-p", publish] if publish else []),
          "-v", f"{module_dir}:/ps-module-src:ro", image_ref],
         capture_output=True, text=True)
     if ps.returncode != 0:

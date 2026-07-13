@@ -75,6 +75,13 @@ def main():
                    "MYSQL_HOST: db", "condition: service_healthy", "healthcheck.sh",
                    "/x/mod:/ps-module-src:ro", "PS_DOMAIN: localhost:8000"):
         ok &= check(f"compose berisi '{needle}'", needle in yml)
+    # backward-compat: tanpa publish -> TAK ada port terpublish (perilaku lama utuh)
+    ok &= check("compose default tanpa 'ports:' (backward-compat)", "ports:" not in yml)
+    # publish opsional (dipakai Lapis 4 E2E): port HTTP flashlight terpublish ke host
+    yml_pub = mod._compose_file_text("mariadb:lts", "prestashop/prestashop-flashlight:9.1.4-nginx",
+                                     "localhost:8000", "/x/mod", publish="8000:80")
+    ok &= check("compose publish -> ada 'ports:' & '8000:80'",
+                "ports:" in yml_pub and '- "8000:80"' in yml_pub)
 
     # --- wait_healthy: sinyal kesiapan dari HEALTH container (monkeypatch) ---
     orig_health = mod._health_status

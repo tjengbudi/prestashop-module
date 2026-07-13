@@ -2,11 +2,12 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-"""Satukan tiga lapis validasi jadi satu vonis terstruktur — deterministik.
+"""Satukan empat lapis validasi jadi satu vonis terstruktur — deterministik.
 
 Menerima output JSON ps-static-scan.py (Lapis 1) dan ps-flashlight-run.py
-(Lapis 2), plus file temuan adversarial buatan model (Lapis 3), lalu menghitung
-`pass` per versi dan keseluruhan secara NATIVE — bukan lewat model.
+(Lapis 2), file temuan adversarial buatan model (Lapis 3), plus output
+ps-e2e-run.py (Lapis 4, uji perilaku browser), lalu menghitung `pass` per versi
+dan keseluruhan secara NATIVE — bukan lewat model.
 
 Aturan lolos: sebuah versi lolos hanya bila TAK ADA temuan severity `error` dari
 lapis manapun yang KONKLUSIF di versi itu. Lapis yang tak konklusif (Docker absen,
@@ -111,6 +112,59 @@ def flashlight_layer(flash, full_ver):
     return layer
 
 
+def e2e_layer(e2e, full_ver):
+    """Lapis 4 — konklusif hanya bila browser+container naik bersih & module ter-install.
+
+    Tak konklusif (degrade jujur, tak memblok): Playwright/Docker absen, image belum
+    ada, binary browser belum di-`install`, container tak healthy, PS tak terjangkau,
+    module gagal install (itu wilayah vonis Lapis 2), atau timeout. Konklusif: assertion
+    browser (smoke/skenario) benar-benar dievaluasi — kegagalannya memblok.
+    """
+    if not e2e or e2e.get("status") == "skipped" or not e2e.get("e2e_available", False):
+        reason = (e2e or {}).get("reason", "Playwright/Docker tak tersedia — uji E2E dilewati.")
+        return {"state": "skipped", "conclusive": False, "errors": 0, "reason": reason, "findings": []}
+
+    v = e2e.get("versions", {}).get(full_ver)
+    if v is None:
+        return {"state": "skipped", "conclusive": False, "errors": 0,
+                "reason": "versi tak ada di hasil e2e", "findings": []}
+
+    # Kegagalan infrastruktur → tak konklusif, jangan memblok.
+    infra = list(v.get("errors", []))
+    if v.get("skipped_browser"):
+        infra.append("tak ada browser yang bisa diluncurkan (jalankan 'playwright install')")
+    if not (v.get("install") or {}).get("ok"):
+        infra.append("module tak ter-install — perilaku browser tak bisa dinilai (Lapis 2 memvonis install)")
+    if not v.get("browsers"):
+        infra.append("tak ada browser dijalankan")
+    if infra:
+        return {"state": "not_conclusive", "conclusive": False, "errors": 0,
+                "reason": "; ".join(dict.fromkeys(infra)), "findings": []}
+
+    # Konklusif (≥1 browser jalan & module ter-install): temuan browser memblok versi ini.
+    # Masalah per-browser (browser_notes) & spec authored rusak (scenario_notes) TAK
+    # membatalkan temuan konklusif — hanya coverage yang disurface sbg catatan (tak memblok).
+    findings = [
+        {"source": "e2e", "id": f.get("id", "e2e"), "severity": f.get("severity", ERROR),
+         "message": f.get("message", ""), "fix": f.get("fix", ""), "location": f.get("location", "")}
+        for f in v.get("findings", [])
+    ]
+    errs = sum(1 for f in findings if f["severity"] == ERROR)
+    layer = {"state": "fail" if errs else "pass", "conclusive": True, "errors": errs, "findings": findings}
+    notes = []
+    inc = v.get("inconclusive") or []
+    if inc:
+        notes.append(f"{len(inc)} assertion tak konklusif (mis. login BO gagal)")
+    for bn in (v.get("browser_notes") or []):
+        notes.append(f"coverage browser: {bn}")
+    sn = e2e.get("scenario_notes") or []
+    if sn:
+        notes.append(f"{len(sn)} spec E2E authored dilewati: {'; '.join(sn)}")
+    if notes:
+        layer["inconclusive_note"] = "; ".join(notes) + " — tak memblok"
+    return layer
+
+
 def _major(ver):
     """Petakan versi ke major key: 1.7.8.11 -> 1.7, 8.1 -> 8, 9.1 -> 9."""
     ver = str(ver).strip()
@@ -144,31 +198,33 @@ def adversarial_layer(adversarial, full_ver, target_versions):
     return {"ran": True, "conclusive": True, "errors": errs, "findings": findings}
 
 
-def merge_version(full_ver, static, flash, adversarial, target_versions):
+def merge_version(full_ver, static, flash, adversarial, e2e, target_versions):
     s = static_layer(static, full_ver)
     fl = flashlight_layer(flash, full_ver)
     adv = adversarial_layer(adversarial, full_ver, target_versions)
+    e = e2e_layer(e2e, full_ver)
 
-    blocking = [f for layer in (s, fl, adv) for f in layer["findings"] if f["severity"] == ERROR]
+    blocking = [f for layer in (s, fl, adv, e) for f in layer["findings"] if f["severity"] == ERROR]
     # Lolos bila tak ada error dari lapis KONKLUSIF manapun.
     passed = len(blocking) == 0
-    # Vonis konklusif hanya bila setidaknya static teruji; catat flashlight tak konklusif.
-    flashlight_conclusive = fl["conclusive"]
+    # Vonis konklusif hanya bila setidaknya static teruji; catat flashlight/e2e tak konklusif.
     conclusive = s["conclusive"]  # static selalu konklusif; jadi versi selalu punya vonis dasar
     return {
         "pass": passed,
         "conclusive": conclusive,
-        "flashlight_conclusive": flashlight_conclusive,
-        "layers": {"static": s, "flashlight": fl, "adversarial": adv},
+        "flashlight_conclusive": fl["conclusive"],
+        "e2e_conclusive": e["conclusive"],
+        "layers": {"static": s, "flashlight": fl, "adversarial": adv, "e2e": e},
         "blocking": blocking,
     }
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Satukan tiga lapis validasi jadi vonis terstruktur.")
+    ap = argparse.ArgumentParser(description="Satukan empat lapis validasi jadi vonis terstruktur.")
     ap.add_argument("--static", required=True, help="JSON output ps-static-scan.py")
     ap.add_argument("--flashlight", help="JSON output ps-flashlight-run.py (opsional bila dilewati)")
     ap.add_argument("--adversarial", help="JSON temuan adversarial buatan model (opsional)")
+    ap.add_argument("--e2e", help="JSON output ps-e2e-run.py (Lapis 4, opsional bila dilewati)")
     ap.add_argument("--versions", help="Versi target dipisah koma (default: dari hasil static)")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     args = ap.parse_args()
@@ -176,6 +232,7 @@ def main():
     static = load_json(args.static, "static-scan")
     flash = load_json(args.flashlight, "flashlight") if args.flashlight else None
     adversarial = load_json(args.adversarial, "adversarial") if args.adversarial else None
+    e2e = load_json(args.e2e, "e2e") if args.e2e else None
 
     if args.versions:
         target_versions = [v.strip() for v in args.versions.split(",")]
@@ -185,25 +242,35 @@ def main():
     versions = {}
     overall_pass = True
     all_conclusive = True
+    all_e2e_conclusive = True
     for full_ver in target_versions:
-        m = merge_version(full_ver, static, flash, adversarial, target_versions)
+        m = merge_version(full_ver, static, flash, adversarial, e2e, target_versions)
         versions[full_ver] = m
         overall_pass = overall_pass and m["pass"]
         all_conclusive = all_conclusive and m["flashlight_conclusive"]
+        all_e2e_conclusive = all_e2e_conclusive and m["e2e_conclusive"]
 
     flashlight_ran = bool(flash and flash.get("docker_available"))
+    e2e_ran = bool(e2e and e2e.get("e2e_available") and e2e.get("status") == "ran")
     result = {
         "module": static.get("module", ""),
         "target_versions": target_versions,
         "versions": versions,
         "pass": overall_pass,
         "flashlight_conclusive": all_conclusive,
+        "e2e_conclusive": all_e2e_conclusive,
         "layers_run": {
             "static": True,
             "flashlight": flashlight_ran,
             "adversarial": adversarial is not None,
+            "e2e": e2e_ran,
         },
     }
+    # Spec E2E authored yang dilewati (JSON rusak / tanpa steps) di-echo di top-level supaya
+    # TAK hilang walau semua versi tak konklusif — jangan biarkan uji authored diam-diam absen.
+    e2e_scenario_notes = (e2e or {}).get("scenario_notes") or []
+    if e2e_scenario_notes:
+        result["e2e_scenario_notes"] = e2e_scenario_notes
     out = json.dumps(result, indent=2, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(out, encoding="utf-8")
