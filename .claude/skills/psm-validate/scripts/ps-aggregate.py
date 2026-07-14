@@ -271,6 +271,11 @@ def main():
     e2e_scenario_notes = (e2e or {}).get("scenario_notes") or []
     if e2e_scenario_notes:
         result["e2e_scenario_notes"] = e2e_scenario_notes
+    # Folder screenshot E2E di-echo agar path artefak visual ('cek web asli') sampai ke laporan
+    # gabungan — supaya render bisa ditinjau, bukan cuma diproduksi lalu terlupakan.
+    e2e_shot_dir = (e2e or {}).get("screenshot_dir")
+    if e2e_shot_dir:
+        result["e2e_screenshot_dir"] = e2e_shot_dir
     out = json.dumps(result, indent=2, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(out, encoding="utf-8")

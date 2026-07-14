@@ -93,6 +93,31 @@ class FakePage:
             raise RuntimeError("screenshot gagal")
 
 
+class _FakeContext:
+    def __init__(self, page):
+        self._page = page
+
+    def new_page(self):
+        return self._page
+
+
+class _FakeBrowser:
+    """Browser-tiruan untuk menguji _drive_page tanpa Playwright. raise_on_context
+    mensimulasikan browser mati setelah launch (gap honest-degrade yang ditutup)."""
+    def __init__(self, page, raise_on_context=False):
+        self._page = page
+        self._raise = raise_on_context
+        self.closed = False
+
+    def new_context(self, **k):
+        if self._raise:
+            raise RuntimeError("browser mati setelah launch")
+        return _FakeContext(self._page)
+
+    def close(self):
+        self.closed = True
+
+
 def _ctx(bo_authed=False):
     return {"fo": "http://fo", "bo": "http://bo", "mod": "m", "bo_authed": bo_authed}
 
@@ -201,6 +226,22 @@ def main():
     nctx = {**_ctx(), "engine": "chromium", "scenario": "s"}
     mod.run_steps(FakePage(), [{"action": "screenshot"}], nctx)
     ok &= check("tanpa screenshot_dir -> tak ambil screenshot", nctx.get("_shots") is None)
+
+    # --- _drive_page: setup+drive teruji dgn browser-tiruan; per-scenario console/screenshot ---
+    dp_scn, dp_auth = mod._drive_page(_FakeBrowser(FakePage()), "chromium", [mod.universal_smoke()],
+                                      {**_ctx(), "nav_timeout": 1000})
+    ok &= check("_drive_page -> 1 skenario dgn hasil + field console_errors/screenshots",
+                len(dp_scn) == 1 and "console_errors" in dp_scn[0] and "screenshots" in dp_scn[0])
+    ok &= check("_drive_page -> bo_authed bool (login BO best-effort dijalankan utk smoke)",
+                isinstance(dp_auth, bool))
+    # gap honest-degrade yg ditutup: kegagalan SETELAH launch diangkat (drive_engine yg menangkap)
+    raised = False
+    try:
+        mod._drive_page(_FakeBrowser(FakePage(), raise_on_context=True), "chromium",
+                        [mod.universal_smoke()], {**_ctx(), "nav_timeout": 1000})
+    except Exception:  # noqa: BLE001
+        raised = True
+    ok &= check("_drive_page mengangkat kegagalan setelah launch (ditangkap drive_engine -> degrade)", raised)
 
     # --- assemble_findings: konklusif gagal -> finding; tak konklusif -> inconclusive ---
     driven = [{"browser": "chromium", "scenarios": [

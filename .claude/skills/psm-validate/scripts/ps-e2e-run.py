@@ -423,13 +423,47 @@ def _bo_login(page, ctx):
         return False
 
 
+def _drive_page(browser, engine, scenarios, ctx):
+    """Setup context/page + listener console + jalankan semua skenario. Return (scenarios, bo_authed).
+
+    Terpisah dari drive_engine agar jalur setelah-launch (new_context/new_page/listener/
+    _bo_login) teruji dengan browser-tiruan; kegagalannya diangkat & ditangani drive_engine.
+    """
+    context = browser.new_context(ignore_https_errors=True)
+    page = context.new_page()
+    page.set_default_timeout(ctx["nav_timeout"])
+    console_sink = []
+    page.on("console", lambda m: console_sink.append({"type": m.type, "text": (m.text or "")[:200]})
+            if getattr(m, "type", "") == "error" else None)
+    page.on("pageerror", lambda e: console_sink.append({"type": "pageerror", "text": str(e)[:200]}))
+    base = dict(ctx)
+    base["engine"] = engine
+    base["console_sink"] = console_sink
+    base["bo_authed"] = _bo_login(page, base) if _needs_bo(scenarios) else False
+    out = []
+    for sc in scenarios:
+        start = len(console_sink)
+        local = dict(base)
+        local["scenario"] = sc["name"]
+        local["console_base"] = start
+        local["_shots"] = []
+        results = run_steps(page, sc["steps"], local)
+        out.append({
+            "name": sc["name"], "source": sc["source"], "results": results,
+            "console_errors": console_sink[start:], "screenshots": local["_shots"],
+        })
+    return out, base["bo_authed"]
+
+
 def drive_engine(engine, scenarios, ctx, headed=False):
     """Luncurkan satu engine Playwright, jalankan semua skenario. Return hasil per engine.
 
     `headed=True` menampilkan browser (headless=False) untuk inspeksi visual manual —
     butuh display; opt-in eksplisit, JANGAN di headless/CI. Menangkap error console/JS
     (`console`+`pageerror`) per skenario. Kegagalan luncur (binary belum di-`playwright
-    install`, atau headed tanpa display) -> launch_error (upstream: skipped_browser).
+    install`, atau headed tanpa display) ATAU kegagalan SETELAH launch (browser mati/display
+    flaky) -> launch_error (upstream: skipped_browser) — degrade engine ini, JANGAN crash
+    seluruh run multi-versi.
     """
     from playwright.sync_api import sync_playwright
 
@@ -445,31 +479,15 @@ def drive_engine(engine, scenarios, ctx, headed=False):
             result["launch_error"] = str(e)[:200]
             return result
         try:
-            context = browser.new_context(ignore_https_errors=True)
-            page = context.new_page()
-            page.set_default_timeout(ctx["nav_timeout"])
-            console_sink = []
-            page.on("console", lambda m: console_sink.append({"type": m.type, "text": (m.text or "")[:200]})
-                    if getattr(m, "type", "") == "error" else None)
-            page.on("pageerror", lambda e: console_sink.append({"type": "pageerror", "text": str(e)[:200]}))
-            base = dict(ctx)
-            base["engine"] = engine
-            base["console_sink"] = console_sink
-            base["bo_authed"] = _bo_login(page, base) if _needs_bo(scenarios) else False
-            result["bo_authed"] = base["bo_authed"]
-            for sc in scenarios:
-                start = len(console_sink)
-                local = dict(base)
-                local["scenario"] = sc["name"]
-                local["console_base"] = start
-                local["_shots"] = []
-                results = run_steps(page, sc["steps"], local)
-                result["scenarios"].append({
-                    "name": sc["name"], "source": sc["source"], "results": results,
-                    "console_errors": console_sink[start:], "screenshots": local["_shots"],
-                })
+            result["scenarios"], result["bo_authed"] = _drive_page(browser, engine, scenarios, ctx)
+        except Exception as e:  # noqa: BLE001 — gagal SETELAH launch -> degrade engine ini, jangan crash
+            result["launch_error"] = f"gagal setelah launch: {str(e)[:180]}"
+            result["scenarios"] = []  # jangan percayai hasil parsial dari sesi browser yang rusak
         finally:
-            browser.close()
+            try:
+                browser.close()
+            except Exception:  # noqa: BLE001 — menutup browser mati bisa raise; abaikan
+                pass
     return result
 
 

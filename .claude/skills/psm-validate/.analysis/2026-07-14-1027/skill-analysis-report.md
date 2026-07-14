@@ -1,0 +1,38 @@
+# Analysis Report: /home/budi/dev/prestashop-module/.claude/skills/psm-validate
+
+Generated: 2026-07-14 · Schema: 2
+
+**Grade: Excellent**
+
+> Clean pass on the visual-verification delta — leanness, architecture, determinism, and customization passed outright; enhancement raised two mediums (orphaned screenshot artifact, unguarded post-launch browser setup) which were fixed and adversarially verified closed in-session. No open findings.
+
+The Lapis 4 visual-verification addition (console/JS capture, --screenshot-dir, --headed) is well-shaped: honest-degrade holds across the new paths, the console-error advisory-vs-enforced split is deterministic (advisory unless a scenario opts into expect_no_console_error), and the prior HIGH false-pass fix stays intact. The two enhancement findings — screenshots produced but not consumed by the verdict flow, and a post-launch browser-setup path that could crash the whole run — were closed: the screenshot chain now reaches interactive capture + aggregate echo + a Vonis vision-review step, and post-launch driving was extracted to a guarded _drive_page so any per-engine failure degrades one engine instead of the run.
+
+| Severity | Count |
+| --- | --- |
+| Critical | 0 |
+| High | 0 |
+| Medium | 0 |
+| Low | 0 |
+
+## Strengths
+
+- Console/JS error capture is advisory-only by default (counted into console_errors + browser_notes, never into blocking findings) and blocks only when a scenario asserts expect_no_console_error — nondeterministic browser signal quarantined behind an explicit opt-in.
+- Post-launch browser driving extracted to a guarded _drive_page: any failure after launch() (browser death, flaky --headed display) degrades that one engine via launch_error->browser_notes, preserving other engines'/versions' conclusive findings and the never-crash invariant.
+- Visual verification reaches the actual validate flow: interactive --screenshot-dir under psm_reports_dir, aggregate echoes e2e_screenshot_dir, and Vonis instructs a model-vision review of key pages — while headless is airtight-excluded (no capture, no echo, no reviewer).
+- The model-vision visual note is human-facing advisory, walled off from the script-computed verdict ('jangan menilai ulang pass/conclusive/e2e_conclusive' intact) — determinism boundary preserved.
+- New flags/actions compose consistently with existing patterns; --headed/--screenshot-dir kept as invocation flags (no config/customize surface added); QUICKSTART-e2e.md correctly placed as an operator runbook, not carved SKILL prompt content.
+
+## Recommendations
+
+1. Watch SKILL.md token headroom: at 2896/3000 it is warn-tier and load-bearing — do NOT carve the visual-review instruction (QUICKSTART isn't loaded at runtime), but trim or carve rather than append on the next change.
+
+## Experience
+
+- **Interactive validate** — resolve config -> pick module -> run 4 layers (Lapis 4 with --screenshot-dir under psm_reports_dir) -> aggregate -> human summary that names not-conclusive layers, coverage/skip notes, AND opens key screenshots for a one-line visual note
+- **Headless CI gate** — args -> run available layers without --allow-image-pull/--headed/--screenshot-dir -> JSON only -> exit on overall pass
+- Headless: Solid: no auto-pull, no browser download, no headed window, no screenshot capture (no reviewer) — degrades to available layers and surfaces partial-coverage so a partial run is never read as full.
+
+## Findings
+
+No findings: the scanners returned a clean pass.
