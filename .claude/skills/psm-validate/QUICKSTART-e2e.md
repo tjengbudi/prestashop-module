@@ -94,10 +94,30 @@ Satu file = satu skenario `{ "name", "steps":[...] }`. Aksi yang didukung:
 | `expect_text` | `text` | teks ada di halaman |
 | `click` | `selector` | klik |
 | `fill` | `selector`, `value` | isi field |
+| `expect_no_console_error` | — | tak ada error JS/console (konklusif → memblok bila ditegakkan) |
+| `screenshot` | — | ambil screenshot manual (butuh `--screenshot-dir`) |
 
 Placeholder yang disubstitusi di `path`/`url`/`text`/`value`: `{mod}` `{fo}` `{bo}`.
 Spec tak valid (JSON rusak / tanpa `steps`) dilewati dengan catatan, bukan crash.
 Rujukan otoritatif: `uv run scripts/ps-e2e-run.py --help`.
+
+### Verifikasi visual ("cek web asli" — lihat render seperti user)
+
+Assertion lolos ≠ tampilan benar ≠ tak ada error di browser. Tiga alat, semua **opt-in**:
+
+```bash
+# 1) Screenshot per halaman + pada kegagalan (artefak visual untuk dilihat mata)
+uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium \
+  --screenshot-dir ./e2e-shots -o e2e.json
+#   -> ./e2e-shots/9.1/chromium-<scenario>-*.png ; path juga di JSON (per-versi "screenshots")
+
+# 2) Error JS/console: SELALU ditangkap (advisory, non-blok) -> field "console_errors" +
+#    browser_notes. Untuk MENEGAKKAN, taruh {"action":"expect_no_console_error"} di skenario.
+
+# 3) --headed: browser TAMPIL live untuk inspeksi manual langsung (butuh display/GUI)
+uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium --headed
+#   opt-in eksplisit; JANGAN di headless/CI. Tanpa display -> skipped_browser (degrade jujur).
+```
 
 ## 4. Gotchas
 

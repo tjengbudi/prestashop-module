@@ -84,6 +84,14 @@ class FakePage:
         if "fill" in self._raise_on:
             raise RuntimeError("fill gagal")
 
+    def on(self, event, handler):
+        self.log.append(("on", event))
+
+    def screenshot(self, path=None, full_page=False):
+        self.log.append(("screenshot", path))
+        if "screenshot" in self._raise_on:
+            raise RuntimeError("screenshot gagal")
+
 
 def _ctx(bo_authed=False):
     return {"fo": "http://fo", "bo": "http://bo", "mod": "m", "bo_authed": bo_authed}
@@ -170,6 +178,30 @@ def main():
     ok &= check("aksi tak dikenal -> ok True tapi tak konklusif (dilewati)",
                 rukn[0]["ok"] is True and rukn[0]["conclusive"] is False)
 
+    # --- run_steps: expect_no_console_error (baca console_sink sejak console_base) ---
+    rce_clean = mod.run_steps(FakePage(), [{"action": "expect_no_console_error"}],
+                              {**_ctx(), "console_sink": [], "console_base": 0})
+    ok &= check("expect_no_console_error tanpa error -> ok", rce_clean[0]["ok"] is True)
+    rce_err = mod.run_steps(FakePage(), [{"action": "expect_no_console_error"}],
+                            {**_ctx(), "console_sink": [{"type": "error", "text": "Uncaught TypeError"}], "console_base": 0})
+    ok &= check("expect_no_console_error dgn error JS -> gagal", rce_err[0]["ok"] is False)
+    rce_off = mod.run_steps(FakePage(), [{"action": "expect_no_console_error"}],
+                            {**_ctx(), "console_sink": [{"type": "error", "text": "lama"}], "console_base": 1})
+    ok &= check("console_base offset: error sebelum base diabaikan", rce_off[0]["ok"] is True)
+
+    # --- run_steps: screenshot + auto-snap (butuh screenshot_dir) ---
+    with tempfile.TemporaryDirectory() as td:
+        sctx = {**_ctx(), "engine": "chromium", "scenario": "s", "screenshot_dir": td, "_shots": []}
+        mod.run_steps(FakePage(status=200), [{"action": "goto", "area": "fo", "path": "/"},
+                                             {"action": "screenshot"}], sctx)
+        ok &= check("screenshot: goto (auto-snap) + aksi screenshot -> 2 path di _shots", len(sctx["_shots"]) == 2)
+        fctx = {**_ctx(), "engine": "chromium", "scenario": "s", "screenshot_dir": td, "_shots": []}
+        mod.run_steps(FakePage(visible=False), [{"action": "expect_visible", "selector": "#x"}], fctx)
+        ok &= check("auto-snap pada kegagalan assertion", len(fctx["_shots"]) == 1)
+    nctx = {**_ctx(), "engine": "chromium", "scenario": "s"}
+    mod.run_steps(FakePage(), [{"action": "screenshot"}], nctx)
+    ok &= check("tanpa screenshot_dir -> tak ambil screenshot", nctx.get("_shots") is None)
+
     # --- assemble_findings: konklusif gagal -> finding; tak konklusif -> inconclusive ---
     driven = [{"browser": "chromium", "scenarios": [
         {"name": "psm-universal-smoke", "source": "builtin", "results": [
@@ -248,13 +280,19 @@ def main():
         mod.install_module = lambda s, m, t: ({"ok": True, "no_console": False}, None)
         mod.wait_http = lambda u, t: (True, 200)
 
-        def fake_drive(engine, scenarios, ctx):
+        captured = {}
+
+        def fake_drive(engine, scenarios, ctx, headed=False):
+            captured["headed"] = headed
+            captured["sdir"] = ctx.get("screenshot_dir")
             if engine == "firefox":
                 return {"browser": "firefox", "scenarios": [], "launch_error": "boom", "bo_authed": False}
             return {"browser": "chromium", "bo_authed": True, "launch_error": None, "scenarios": [
-                {"name": "psm-universal-smoke", "source": "builtin", "results": [
-                    {"action": "expect_no_fatal", "ok": False, "conclusive": True,
-                     "message": "fatal FO", "location": "fo"}]}]}
+                {"name": "psm-universal-smoke", "source": "builtin",
+                 "results": [{"action": "expect_no_fatal", "ok": False, "conclusive": True,
+                              "message": "fatal FO", "location": "fo"}],
+                 "console_errors": [{"type": "error", "text": "Uncaught X"}],
+                 "screenshots": ["/tmp/shot/chromium-smoke-00-goto.png"]}]}
         mod.drive_engine = fake_drive
 
         r = mod.run_one_version(Path("/tmp"), "m", "9.1", "9.1.4-nginx", ["chromium", "firefox"],
@@ -266,6 +304,12 @@ def main():
                     r["errors"] == [] and any("firefox" in n for n in r["browser_notes"]))
         ok &= check("chromium yang jalan tetap menghasilkan temuan konklusif memblok (fix false-pass)",
                     r["browsers"] == ["chromium"] and len(r["findings"]) == 1 and r["pass"] is False)
+        # rollup artefak visual: console_errors dihitung + screenshot terkumpul + advisory di browser_notes
+        ok &= check("rollup: console_errors=1 & screenshot terkumpul",
+                    r["console_errors"] == 1 and r["screenshots"] == ["/tmp/shot/chromium-smoke-00-goto.png"])
+        ok &= check("console error disurface advisory di browser_notes (tak memblok)",
+                    any("console/JS" in n for n in r["browser_notes"]))
+        ok &= check("default headed False diteruskan ke drive_engine", captured["headed"] is False)
 
         # probe-miss: firefox tak lolos probe di main -> browser_notes coverage, chromium tetap jalan
         r2 = mod.run_one_version(Path("/tmp"), "m", "9.1", "9.1.4-nginx", ["chromium"],
@@ -275,6 +319,18 @@ def main():
                                  startup_timeout=1, op_timeout=1, nav_timeout=1000, allow_pull=False)
         ok &= check("engine probe-miss (firefox) -> browser_notes coverage, tak di errors",
                     r2["errors"] == [] and any("firefox" in n for n in r2["browser_notes"]))
+
+        # --headed & --screenshot-dir diteruskan; per-versi subdir screenshot dibuat
+        with tempfile.TemporaryDirectory() as td:
+            r3 = mod.run_one_version(Path("/tmp"), "m", "9.1", "9.1.4-nginx", ["chromium"],
+                                     [mod.universal_smoke()], requested_browsers=["chromium"],
+                                     orchestrator="auto", db_image="mariadb:lts", ps_domain="localhost:8000",
+                                     admin_path="admin-dev", admin_email="a", admin_password="b",
+                                     startup_timeout=1, op_timeout=1, nav_timeout=1000, allow_pull=False,
+                                     headed=True, screenshot_dir=td)
+            ok &= check("headed=True diteruskan ke drive_engine", captured["headed"] is True)
+            ok &= check("screenshot_dir -> per-versi subdir '9.1' diteruskan ke ctx",
+                        bool(captured["sdir"]) and captured["sdir"].endswith("9.1") and Path(captured["sdir"]).is_dir())
     finally:
         for n, v in saved.items():
             setattr(mod, n, v)

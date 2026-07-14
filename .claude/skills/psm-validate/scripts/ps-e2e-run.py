@@ -31,14 +31,25 @@ login admin berhasil; bila gagal login, temuan BO jadi `inconclusive` (tak membl
 Peran lapis dijaga rapi: install/coding-standard divonis Lapis 2 (flashlight); Lapis 4
 memvonis PERILAKU browser.
 
+VERIFIKASI VISUAL ("cek web asli" — lihat render seperti user, bukan cuma assertion):
+  - `--screenshot-dir DIR` → simpan PNG per halaman (sesudah goto) & pada kegagalan;
+    path terkumpul di hasil (`screenshots`) untuk dilihat mata / dinilai model-vision.
+  - error JS/console (`console`+`pageerror`) ditangkap per skenario: dihitung & disurface
+    sebagai advisory (`console_errors`, browser_notes) — TAK memblok; pakai aksi
+    `expect_no_console_error` di skenario bila mau menegakkan (konklusif → memblok).
+  - `--headed` → browser TAMPIL live (headless=False) untuk inspeksi manual; butuh display,
+    opt-in eksplisit, JANGAN di headless/CI (tanpa display → skipped_browser).
+
 Format spec skenario authored (`<module>/tests/e2e/*.json`):
   {"name": "configure-save",
    "steps": [
      {"action": "goto", "area": "bo", "path": "/index.php?controller=AdminModules"},
      {"action": "expect_no_fatal"},
+     {"action": "expect_no_console_error"},
      {"action": "fill", "selector": "#PSM_FIELD", "value": "42"},
      {"action": "click", "selector": "button[name=submitSave]"},
      {"action": "expect_text", "text": "successful"},
+     {"action": "screenshot"},
      {"action": "goto", "area": "fo", "path": "/"},
      {"action": "expect_visible", "selector": "#header"}
    ]}
@@ -49,6 +60,7 @@ Prasyarat browser (sekali, host): `playwright install chromium firefox`.
 import argparse
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import time
@@ -218,17 +230,38 @@ def _resolve_url(step, ctx, area):
     return base + substitute(step.get("path", ""), ctx)
 
 
+def _snap(page, ctx, label):
+    """Simpan screenshot bila ctx['screenshot_dir'] diset — best-effort, tak pernah gagalkan step.
+
+    Artefak visual untuk 'cek web asli' (lihat render seperti user). Nama file:
+    <engine>-<scenario>-<label>.png; path terkumpul di ctx['_shots'].
+    """
+    sdir = ctx.get("screenshot_dir")
+    if not sdir:
+        return
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", f"{ctx.get('engine', '?')}-{ctx.get('scenario', '?')}-{label}")
+    path = str(Path(sdir) / f"{safe}.png")
+    try:
+        page.screenshot(path=path, full_page=True)
+        ctx.setdefault("_shots", []).append(path)
+    except Exception:  # noqa: BLE001 — screenshot best-effort, jangan gagalkan skenario
+        pass
+
+
 def run_steps(page, steps, ctx):
     """Eksekusi langkah skenario terhadap `page` (Playwright-like). Return list hasil.
 
     `page` cukup mengekspos goto()->response(status), content()->str, locator(sel),
     click(sel), fill(sel,val) — sehingga logika ini teruji dengan page-tiruan.
-    Assertion di area BO konklusif hanya bila ctx['bo_authed'] True.
+    Assertion di area BO konklusif hanya bila ctx['bo_authed'] True. `expect_no_console_error`
+    membaca error JS/console yang ditangkap drive_engine (ctx['console_sink'] sejak
+    ctx['console_base']). Screenshot otomatis diambil sesudah goto & pada kegagalan bila
+    ctx['screenshot_dir'] diset; aksi eksplisit `screenshot` juga tersedia.
     """
     results = []
     area = "fo"
     last_status = None
-    for step in steps:
+    for idx, step in enumerate(steps):
         action = step.get("action")
         if action == "goto":
             area = step.get("area", area)
@@ -240,6 +273,7 @@ def run_steps(page, steps, ctx):
                 last_status = getattr(resp, "status", None) if resp is not None else None
                 ok = last_status is None or last_status < 500
                 results.append(_res(action, ok, conclusive, f"status={last_status}", url))
+                _snap(page, ctx, f"{idx:02d}-goto")
             elif action == "expect_no_fatal":
                 html = page.content() or ""
                 bad = (last_status is not None and last_status >= 500) or any(s in html for s in FATAL_SIGNS)
@@ -252,16 +286,27 @@ def run_steps(page, steps, ctx):
                 txt = substitute(step.get("text", ""), ctx)
                 present = txt in (page.content() or "")
                 results.append(_res(action, present, conclusive, f"text present={present}: {txt[:50]}", area))
+            elif action == "expect_no_console_error":
+                errs = ctx.get("console_sink", [])[ctx.get("console_base", 0):]
+                sample = "; ".join((e.get("text", "") or "")[:60] for e in errs[:3])
+                results.append(_res(action, len(errs) == 0, conclusive,
+                                    f"{len(errs)} error console/JS" + (f": {sample}" if errs else ""),
+                                    "browser-console"))
             elif action == "click":
                 page.click(step.get("selector", ""))
                 results.append(_res(action, True, conclusive, "clicked", step.get("selector", "")))
             elif action == "fill":
                 page.fill(step.get("selector", ""), substitute(step.get("value", ""), ctx))
                 results.append(_res(action, True, conclusive, "filled", step.get("selector", "")))
+            elif action == "screenshot":
+                _snap(page, ctx, f"{idx:02d}-shot")
+                results.append(_res(action, True, conclusive, "screenshot diambil", ctx.get("screenshot_dir", "")))
             else:
                 results.append(_res(action or "?", True, False, "aksi tak dikenal — dilewati", ""))
         except Exception as e:  # noqa: BLE001 — selector timeout / nav gagal = assertion gagal
             results.append(_res(action or "?", False, conclusive, f"exception: {str(e)[:120]}", ""))
+        if results and not results[-1]["ok"]:
+            _snap(page, ctx, f"{idx:02d}-FAIL-{action or 'x'}")
     return results
 
 
@@ -378,11 +423,13 @@ def _bo_login(page, ctx):
         return False
 
 
-def drive_engine(engine, scenarios, ctx):
+def drive_engine(engine, scenarios, ctx, headed=False):
     """Luncurkan satu engine Playwright, jalankan semua skenario. Return hasil per engine.
 
-    Kegagalan luncur (binary browser belum di-`playwright install`) -> launch_error
-    (upstream memperlakukannya sebagai skipped_browser, degrade jujur).
+    `headed=True` menampilkan browser (headless=False) untuk inspeksi visual manual —
+    butuh display; opt-in eksplisit, JANGAN di headless/CI. Menangkap error console/JS
+    (`console`+`pageerror`) per skenario. Kegagalan luncur (binary belum di-`playwright
+    install`, atau headed tanpa display) -> launch_error (upstream: skipped_browser).
     """
     from playwright.sync_api import sync_playwright
 
@@ -393,21 +440,33 @@ def drive_engine(engine, scenarios, ctx):
             result["launch_error"] = f"engine tak dikenal: {engine}"
             return result
         try:
-            browser = btype.launch(headless=True)
-        except Exception as e:  # noqa: BLE001 — binary absent / gagal luncur
+            browser = btype.launch(headless=not headed)
+        except Exception as e:  # noqa: BLE001 — binary absent / gagal luncur / headed tanpa display
             result["launch_error"] = str(e)[:200]
             return result
         try:
             context = browser.new_context(ignore_https_errors=True)
             page = context.new_page()
             page.set_default_timeout(ctx["nav_timeout"])
-            local = dict(ctx)
-            local["bo_authed"] = _bo_login(page, local) if _needs_bo(scenarios) else False
-            result["bo_authed"] = local["bo_authed"]
+            console_sink = []
+            page.on("console", lambda m: console_sink.append({"type": m.type, "text": (m.text or "")[:200]})
+                    if getattr(m, "type", "") == "error" else None)
+            page.on("pageerror", lambda e: console_sink.append({"type": "pageerror", "text": str(e)[:200]}))
+            base = dict(ctx)
+            base["engine"] = engine
+            base["console_sink"] = console_sink
+            base["bo_authed"] = _bo_login(page, base) if _needs_bo(scenarios) else False
+            result["bo_authed"] = base["bo_authed"]
             for sc in scenarios:
+                start = len(console_sink)
+                local = dict(base)
+                local["scenario"] = sc["name"]
+                local["console_base"] = start
+                local["_shots"] = []
+                results = run_steps(page, sc["steps"], local)
                 result["scenarios"].append({
-                    "name": sc["name"], "source": sc["source"],
-                    "results": run_steps(page, sc["steps"], local),
+                    "name": sc["name"], "source": sc["source"], "results": results,
+                    "console_errors": console_sink[start:], "screenshots": local["_shots"],
                 })
         finally:
             browser.close()
@@ -416,7 +475,8 @@ def drive_engine(engine, scenarios, ctx):
 
 def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
                     requested_browsers=None, orchestrator, db_image, ps_domain, admin_path,
-                    admin_email, admin_password, startup_timeout, op_timeout, nav_timeout, allow_pull):
+                    admin_email, admin_password, startup_timeout, op_timeout, nav_timeout, allow_pull,
+                    headed=False, screenshot_dir=None):
     """Bangun flashlight (port publish) utk satu versi, install module, drive tiap browser.
 
     `browsers` = engine yang benar-benar akan di-drive (binary terpasang); `requested_browsers`
@@ -430,7 +490,8 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
     image_ref = f"{fl.IMAGE}:{tag}"
     res = {"version": full_ver, "tag": tag, "image": image_ref, "orchestrator": None,
            "browsers": [], "install": None, "findings": [], "inconclusive": [],
-           "errors": [], "browser_notes": [], "skipped_browser": False, "pass": False}
+           "errors": [], "browser_notes": [], "console_errors": 0, "screenshots": [],
+           "skipped_browser": False, "pass": False}
 
     # Engine diminta tapi binary-nya tak lolos probe (di-drop di main) — catat coverage, tak memblok.
     probe_missed = [e for e in requested_browsers if e not in browsers]
@@ -504,17 +565,25 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
             res["errors"].append(f"PS tak terjangkau di {fo} ({rstatus}) — port publish/boot gagal")
             return res
 
+        ver_shot_dir = None
+        if screenshot_dir:
+            ver_shot_dir = str(Path(screenshot_dir) / re.sub(r"[^A-Za-z0-9_.-]", "_", full_ver))
+            try:
+                Path(ver_shot_dir).mkdir(parents=True, exist_ok=True)
+            except OSError:
+                ver_shot_dir = None  # gagal buat folder -> lewati screenshot, jangan gagalkan run
         ctx = {"fo": fo, "bo": bo, "mod": mod_name, "nav_timeout": nav_timeout,
-               "admin_email": admin_email, "admin_password": admin_password, "bo_authed": False}
+               "admin_email": admin_email, "admin_password": admin_password, "bo_authed": False,
+               "screenshot_dir": ver_shot_dir}
         driven = []
         for engine in browsers:
-            eng = drive_engine(engine, scenarios, ctx)
+            eng = drive_engine(engine, scenarios, ctx, headed=headed)
             if eng.get("launch_error"):
                 # Gagal luncur SATU engine = masalah per-browser -> browser_notes (BUKAN errors).
                 # Jangan cemari kanal infra version-level: temuan konklusif engine lain harus tetap.
                 res["browser_notes"].append(
                     f"browser {engine} gagal diluncurkan: {eng['launch_error']} "
-                    f"(jalankan 'playwright install {engine}')")
+                    f"(jalankan 'playwright install {engine}'{'' if not headed else ' / --headed butuh display'})")
                 continue
             res["browsers"].append(engine)
             driven.append(eng)
@@ -523,6 +592,16 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
             # Semua engine yang diprobe lolos ternyata gagal luncur -> tak ada yg teruji.
             res["skipped_browser"] = True
             return res
+
+        # Rollup artefak visual: hitungan error console/JS (advisory, surface visibilitas) + path screenshot.
+        res["console_errors"] = sum(len(sc.get("console_errors", []))
+                                    for eng in driven for sc in eng.get("scenarios", []))
+        res["screenshots"] = [s for eng in driven for sc in eng.get("scenarios", [])
+                              for s in sc.get("screenshots", [])]
+        if res["console_errors"]:
+            res["browser_notes"].append(
+                f"{res['console_errors']} error console/JS terdeteksi di browser "
+                "(advisory; pakai aksi 'expect_no_console_error' di skenario untuk menegakkan)")
 
         findings, inconclusive = assemble_findings(full_ver, driven)
         res["findings"] = findings
@@ -564,6 +643,11 @@ def main():
                     help=f"Timeout per navigasi/aksi Playwright, detik (default: {DEFAULT_NAV_TIMEOUT_S})")
     ap.add_argument("--allow-image-pull", action="store_true",
                     help="Izinkan unduh image bila belum ada lokal (default: lewati versi itu, degrade jujur).")
+    ap.add_argument("--headed", action="store_true",
+                    help="Tampilkan browser (headless=False) utk inspeksi visual manual — butuh display. "
+                         "Opt-in eksplisit; JANGAN dipakai di headless/CI. Tanpa display -> skipped_browser.")
+    ap.add_argument("--screenshot-dir", help="Bila diset, simpan screenshot per halaman & pada kegagalan ke "
+                                             "folder ini (artefak visual '<ver>/<engine>-<scenario>-...png').")
     ap.add_argument("--timeout", type=int, default=600, help="Timeout operasi per versi (detik): pull/up/exec")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     ap.add_argument("--verbose", action="store_true")
@@ -597,6 +681,7 @@ def main():
     tag_map = fl.parse_tag_map(args.tag_map)
     result = {"module": mod_name, "e2e_available": True, "status": "ran",
               "orchestrator": args.orchestrator, "browsers": requested, "browsers_available": usable,
+              "headed": args.headed, "screenshot_dir": args.screenshot_dir,
               "scenario_sources": ["builtin:psm-universal-smoke"] + [s["source"] for s in authored],
               "scenario_notes": notes, "versions": {}}
     overall_pass = True
@@ -611,7 +696,8 @@ def main():
                             ps_domain=args.ps_domain, admin_path=args.admin_path,
                             admin_email=args.admin_email, admin_password=args.admin_password,
                             startup_timeout=args.startup_timeout, op_timeout=args.timeout,
-                            nav_timeout=args.nav_timeout * 1000, allow_pull=args.allow_image_pull)
+                            nav_timeout=args.nav_timeout * 1000, allow_pull=args.allow_image_pull,
+                            headed=args.headed, screenshot_dir=args.screenshot_dir)
         result["versions"][full_ver] = r
         overall_pass = overall_pass and r["pass"]
     result["pass"] = overall_pass
