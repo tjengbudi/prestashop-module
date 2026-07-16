@@ -37,8 +37,8 @@ def to_class_name(module_name):
     return "".join(part.capitalize() for part in re.split(r"[_\-]", module_name) if part)
 
 
-def main_file_php(module_name, class_name, namespace, author, display_name, ps_min, ps_max):
-    ns_line = f"\nuse {namespace}\\;\n" if False else ""  # namespace dipakai via composer, bukan di main file
+def main_file_php(module_name, class_name, author, display_name, ps_min, ps_max):
+    # Namespace dipakai via composer (PSR-4), bukan di main file.
     return f"""<?php
 /**
  * {display_name}
@@ -93,8 +93,8 @@ def composer_json(module_name, namespace, author, php_require):
 
 
 def php_require_for(ps_min):
-    """PS 1.7 lawas -> PHP >=7.2; bila min sudah 8.x -> >=8.1."""
-    return ">=8.1" if ps_min.startswith(("8.", "9.")) else ">=7.2"
+    """PS 1.7 lawas -> PHP >=7.2; bila min sudah 8.x/9.x -> >=8.1."""
+    return ">=8.1" if int(ps_min.split(".")[0]) >= 8 else ">=7.2"
 
 
 def main():
@@ -115,6 +115,11 @@ def main():
         print(f"error: nama module tak valid '{name}' (huruf kecil, angka, underscore; mulai huruf)", file=sys.stderr)
         return 2
 
+    for label, val in (("--ps-min", args.ps_min), ("--ps-max", args.ps_max)):
+        if not re.fullmatch(r"[0-9]+(\.[0-9]+){1,3}", val):
+            print(f"error: {label} tak valid '{val}' (versi bertitik 2-4 segmen, mis. 1.7.0.0 atau 8.1)", file=sys.stderr)
+            return 2
+
     class_name = to_class_name(name)
     namespace = args.namespace or f"PrestaShop\\Module\\{class_name}"
     display_name = args.display_name or class_name
@@ -131,7 +136,7 @@ def main():
 
     php_require = php_require_for(args.ps_min)
     files = {
-        module_dir / f"{name}.php": main_file_php(name, class_name, namespace, args.author, display_name, args.ps_min, args.ps_max),
+        module_dir / f"{name}.php": main_file_php(name, class_name, args.author, display_name, args.ps_min, args.ps_max),
         module_dir / "composer.json": composer_json(name, namespace, args.author, php_require),
     }
     for path, content in files.items():

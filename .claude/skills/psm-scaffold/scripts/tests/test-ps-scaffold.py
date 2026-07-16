@@ -74,6 +74,18 @@ def main():
         rc3, res3, _ = gen(tmp, "ps_modern", "--ps-min", "8.0.0")
         ok &= check("ps-min 8.x -> php require >=8.1", res3 and res3["php_require"] == ">=8.1")
 
+        # versi malformed ditolak (bukan ditulis verbatim ke kerangka)
+        rc4, _, _ = gen(tmp, "ps_badver", "--ps-min", "v8.1")
+        ok &= check("ps-min malformed ('v8.1') ditolak", rc4 == 2)
+
+        # bare major ditolak (dulu lolos diam sebagai php >=7.2)
+        rc5, _, _ = gen(tmp, "ps_barever", "--ps-min", "8")
+        ok &= check("ps-min bare major ('8') ditolak", rc5 == 2)
+
+        # ps-max malformed juga ditolak
+        rc6, _, _ = gen(tmp, "ps_badmax", "--ps-max", "9,99.99")
+        ok &= check("ps-max malformed ('9,99.99') ditolak", rc6 == 2)
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

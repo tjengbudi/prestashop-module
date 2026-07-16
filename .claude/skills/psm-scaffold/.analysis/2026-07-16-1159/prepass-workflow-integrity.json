@@ -1,0 +1,70 @@
+{
+  "scanner": "workflow-integrity-prepass",
+  "script": "prepass-workflow-integrity.py",
+  "version": "1.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-scaffold",
+  "timestamp": "2026-07-16T04:59:30.528390+00:00",
+  "status": "pass",
+  "metadata": {
+    "frontmatter": {
+      "name": "psm-scaffold",
+      "description": "Scaffold module PrestaShop baru cross-version 1.7/8/9. Use when the user says \"psm-scaffold\", \"bikin module PrestaShop baru\", \"scaffold module\", or \"buat module baru cross-version\"."
+    },
+    "sections": [
+      {
+        "level": 2,
+        "title": "Overview",
+        "line": 8
+      },
+      {
+        "level": 2,
+        "title": "Resolution rules",
+        "line": 12
+      },
+      {
+        "level": 2,
+        "title": "On Activation",
+        "line": 18
+      },
+      {
+        "level": 2,
+        "title": "Bangkitkan kerangka",
+        "line": 23
+      },
+      {
+        "level": 2,
+        "title": "Tawarkan fungsi e-commerce",
+        "line": 29
+      },
+      {
+        "level": 2,
+        "title": "Verifikasi (gerbang wajib)",
+        "line": 33
+      },
+      {
+        "level": 2,
+        "title": "Mode headless",
+        "line": 37
+      }
+    ],
+    "workflow_type": "simple-workflow"
+  },
+  "stage_summary": {
+    "total_stages": 0,
+    "referenced": [],
+    "actual": [],
+    "missing_stages": [],
+    "orphaned_stages": []
+  },
+  "prompt_details": [],
+  "issues": [],
+  "summary": {
+    "total_issues": 0,
+    "by_severity": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    }
+  }
+}

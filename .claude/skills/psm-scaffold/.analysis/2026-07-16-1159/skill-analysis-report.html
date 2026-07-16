@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill Analysis Report</title>
+<style>
+  :root {
+    --bg: #0f1b2d;
+    --panel: #16263d;
+    --panel-2: #1d3250;
+    --ink: #e9eef6;
+    --ink-dim: #9fb0c7;
+    --line: #294366;
+    --accent: #b66d46;
+    --accent-ink: #f4d9c8;
+    --critical: #e05656;
+    --high: #e0904a;
+    --medium: #d8c24a;
+    --low: #5aa0d0;
+    --ok: #4caf72;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 20px 80px; }
+  header h1 { font-size: 22px; margin: 0 0 4px; }
+  header .meta { color: var(--ink-dim); font-size: 13px; }
+  header .meta b { color: var(--ink); font-weight: 600; }
+
+  .banner {
+    display: none;
+    background: #3a1414;
+    border: 1px solid var(--critical);
+    color: #ffd9d9;
+    padding: 14px 16px;
+    border-radius: 8px;
+    margin: 16px 0;
+    white-space: pre-wrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+  .banner.show { display: block; }
+
+  .overview {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .grade {
+    font-size: 34px;
+    font-weight: 800;
+    margin: 0 0 8px;
+    text-transform: capitalize;
+  }
+  .grade.g-excellent { color: var(--ok); }
+  .grade.g-good { color: var(--low); }
+  .grade.g-fair { color: var(--medium); }
+  .grade.g-poor { color: var(--critical); }
+  .verdict { font-size: 16px; font-weight: 600; margin: 0 0 14px; }
+  .summary { color: var(--ink-dim); margin: 0 0 14px; }
+  .counts { display: flex; flex-wrap: wrap; gap: 10px; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .pill .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .pill .n { font-weight: 700; }
+  .dot.critical { background: var(--critical); }
+  .dot.high { background: var(--high); }
+  .dot.medium { background: var(--medium); }
+  .dot.low { background: var(--low); }
+
+  /* Generic synthesis/agent-block panel */
+  .block {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .block > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 12px;
+  }
+  .block .mono, .block code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .kv { margin: 0; display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; }
+  .kv dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .kv dd { margin: 0; }
+
+  /* Themes */
+  .theme { padding: 12px 0; border-top: 1px solid var(--line); }
+  .theme:first-of-type { border-top: none; padding-top: 0; }
+  .theme .t-head { display: flex; align-items: center; gap: 10px; }
+  .theme .t-title { font-weight: 600; flex: 1 1 auto; min-width: 0; }
+  .theme .t-cause { color: var(--ink-dim); margin-top: 4px; }
+  .theme .t-action { margin-top: 4px; }
+  .theme .t-findings { margin-top: 8px; padding-left: 12px; border-left: 2px solid var(--line); }
+  .theme .t-finding { font-size: 13px; color: var(--ink-dim); padding: 2px 0; }
+
+  /* Strengths */
+  .strength-list { margin: 0; padding-left: 20px; }
+  .strength-list li { padding: 2px 0; }
+
+  /* Recommendations */
+  .rec { padding: 8px 0; border-top: 1px solid var(--line); }
+  .rec:first-of-type { border-top: none; padding-top: 0; }
+  .rec .rank { font-weight: 700; color: var(--accent-ink); margin-right: 8px; }
+  .rec .resolves { color: var(--ink-dim); font-size: 12px; margin-left: 8px; }
+
+  /* Experience journeys */
+  .block .journey { padding: 8px 0; border-top: 1px solid var(--line); }
+  .block .journey:first-of-type { border-top: none; padding-top: 0; }
+  .block .journey .j-name { font-weight: 600; }
+  .block .journey .j-steps { color: var(--ink-dim); margin-top: 2px; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 18px 0 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar .sel-count { color: var(--ink-dim); font-size: 13px; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--ink);
+    padding: 8px 14px;
+  }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #1a0e07;
+    font-weight: 600;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.link {
+    background: none;
+    border: none;
+    color: var(--accent-ink);
+    padding: 4px 6px;
+    font-size: 13px;
+  }
+  button.small { padding: 5px 10px; font-size: 13px; flex: 0 0 auto; }
+
+  .no-findings {
+    background: var(--panel);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    padding: 28px;
+    text-align: center;
+    color: var(--ink-dim);
+  }
+  .no-findings .big { font-size: 18px; color: var(--ok); margin-bottom: 6px; }
+
+  .group { margin: 18px 0; }
+  .group > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .finding {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--line);
+    border-radius: 8px;
+    margin: 8px 0;
+    overflow: hidden;
+  }
+  .finding.sev-critical { border-left-color: var(--critical); }
+  .finding.sev-high { border-left-color: var(--high); }
+  .finding.sev-medium { border-left-color: var(--medium); }
+  .finding.sev-low { border-left-color: var(--low); }
+
+  .finding .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .finding .row .chk { width: 16px; height: 16px; flex: 0 0 auto; cursor: pointer; }
+  .finding .row .head { flex: 1 1 auto; cursor: pointer; min-width: 0; }
+  .finding .row .title { font-weight: 600; }
+  .finding .row .sub { color: var(--ink-dim); font-size: 12px; margin-top: 2px; }
+  .finding .tag {
+    flex: 0 0 auto;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+  }
+  .finding .caret { flex: 0 0 auto; color: var(--ink-dim); transition: transform 0.15s; cursor: pointer; }
+  .finding.open .caret { transform: rotate(90deg); }
+
+  .finding .body {
+    display: none;
+    padding: 0 14px 14px 42px;
+    border-top: 1px solid var(--line);
+  }
+  .finding.open .body { display: block; }
+  .finding .body dl { margin: 12px 0 0; display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; }
+  .finding .body dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .finding .body dd { margin: 0; }
+  .finding .body code, .finding .body .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%);
+    background: var(--ok);
+    color: #06160c;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  .fallback-area { margin-top: 12px; display: none; }
+  .fallback-area.show { display: block; }
+  .fallback-area textarea {
+    width: 100%;
+    min-height: 160px;
+    background: var(--panel-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Skill Analysis Report</h1>
+    <div class="meta">
+      <span>Subject: <b id="m-subject">—</b></span> &nbsp;·&nbsp;
+      <span>Generated: <b id="m-generated">—</b></span> &nbsp;·&nbsp;
+      <span>Schema: <b id="m-schema">—</b></span>
+    </div>
+  </header>
+
+  <div id="parse-banner" class="banner"></div>
+
+  <section id="overview" class="overview" hidden>
+    <div id="grade" class="grade" hidden></div>
+    <p id="verdict" class="verdict"></p>
+    <p id="summary-text" class="summary" hidden></p>
+    <div id="counts" class="counts"></div>
+  </section>
+
+  <!-- Synthesis layer (themes, strengths, recommendations). Hidden when absent. -->
+  <section id="themes" class="block" hidden></section>
+  <section id="strengths" class="block" hidden></section>
+  <section id="recommendations" class="block" hidden></section>
+
+  <!-- Experience: journeys plus headless (experience). Hidden when absent. -->
+  <section id="experience" class="block" hidden></section>
+
+  <div id="toolbar" class="toolbar" hidden>
+    <button id="btn-copy" class="primary" disabled>Copy selected as paste-back prompt</button>
+    <span id="sel-count" class="sel-count">0 selected</span>
+    <button id="btn-select-all" class="link">Select all</button>
+    <button id="btn-clear" class="link">Clear</button>
+    <button id="btn-expand-all" class="link">Expand all</button>
+    <button id="btn-collapse-all" class="link">Collapse all</button>
+  </div>
+
+  <div id="fallback" class="fallback-area">
+    <p class="sel-count">Clipboard was unavailable. Copy the text below manually:</p>
+    <textarea id="fallback-text" readonly></textarea>
+  </div>
+
+  <div id="findings-root"></div>
+</div>
+
+<div id="toast" class="toast">Copied</div>
+
+<!-- scripts/render_report.py replaces the contents of this island per run.
+     The placeholder below is intentionally unusable: the shell refuses to
+     render it, so a failed injection can never look like real findings. -->
+<script type="application/json" id="report-data">
+{
+  "schema_version": 2,
+  "subject": "/home/budi/dev/prestashop-module/.claude/skills/psm-scaffold",
+  "generated": "2026-07-16",
+  "verdict": "Lean, well-placed scaffold skill held back by two high findings: cross-skill pointers that resolve into the stale skills/ mirror, and an unguarded --force overwrite path that headless mode pre-authorizes.",
+  "grade": "good",
+  "summary": "psm-scaffold's core is in excellent shape: a deterministic, tested generator owns the skeleton, the psm-validate gate owns the verdict, and the 1224-token SKILL.md carries stance and judgment without waste — the customization lens passed it clean. The opportunities cluster in the seams: cross-skill references point at the diverged skills/ scaffold tree instead of the live .claude/skills tree, and the failure paths (module-name collision, headless errors, unreadable verdicts) are left to improvisation, including a destructive --force the headless section merely logs. One coherent edit to the collision/headless sections and one family-wide repointing decision would clear both highs.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "Failure and collision semantics are undefined",
+      "root_cause": "SKILL.md defines only the success shape. On a module-name collision the script correctly refuses, but the skill never says when --force is legitimate — and Mode headless pre-authorizes it as merely something to log, so an unattended run can overwrite an existing module's code. Headless likewise has no complete|blocked return contract for script errors, collisions, or unreadable psm-validate verdicts, leaving workflow callers to improvise.",
+      "finding_ids": [
+        "enhancement-1",
+        "enhancement-2",
+        "architecture-2"
+      ],
+      "action": "One edit across two sections: in Bangkitkan kerangka, make collision a hard stop — never pass --force without Budi's explicit confirmation, and route to psm-develop when the existing folder is a real module. In Mode headless, add the typed return: status complete|gagal|butuh-intervensi with a one-line reason and the memlog path; collision → butuh-intervensi (never autonomous --force); unreadable or missing psm-validate verdict → NOT lolos, status gagal."
+    },
+    {
+      "title": "Cross-skill pointers anchored to the stale skills/ mirror",
+      "root_cause": "SKILL.md points its mandatory gate at {project-root}/skills/psm-validate/SKILL.md and its technical reference at {project-root}/skills/psm-cross-version/references/version-safe-patterns.md — both diverged shadows of the live .claude/skills tree (the stale psm-validate copy predates the 4-layer E2E verdict schema the gate is told to read verbatim). The dead third Resolution-rules bullet is the same drift: a mis-instantiated placeholder the family has already replaced in psm-develop with the <skills-dir> rule.",
+      "finding_ids": [
+        "architecture-1",
+        "architecture-3",
+        "leanness-2"
+      ],
+      "action": "Repoint the two content references at the live tree — or better, invoke the gate by skill name (psm-validate) so the live SKILL.md always loads — and replace the dead '`psm-scaffold` → basename' bullet with psm-develop's <skills-dir> resolution rule. Then either delete the stale skills/ copies or extend the sync discipline that already covers the psm-setup resolver. Apply family-wide (psm-cross-version, psm-develop, psm-optimize carry the same pointers)."
+    },
+    {
+      "title": "Generator script hygiene: unvalidated versions and dead code",
+      "root_cause": "ps-scaffold.py guards module_name with a regex but writes --ps-min/--ps-max verbatim into ps_versions_compliancy and composer.json, deciding the PHP floor by string-prefix match — a malformed model-supplied version silently yields a wrong-but-generated skeleton the skill contracts as 'dijamin lolos standar'. The same file carries an 'if False' dead line and an unused parameter.",
+      "finding_ids": [
+        "determinism-1",
+        "leanness-3"
+      ],
+      "action": "One fix pass over scripts/ps-scaffold.py: validate --ps-min/--ps-max with a version-regex fullmatch (exit 2 on mismatch, mirroring the name guard), replace startswith((\"8.\", \"9.\")) with a parsed numeric major comparison, delete the dead ns_line and the unused namespace parameter, and add malformed-version and bare-major cases to scripts/tests/test-ps-scaffold.py."
+    },
+    {
+      "title": "Activation asks the wrong questions",
+      "root_cause": "Step 2 asks Budi for the target version range even though step 1 just loaded psm_target_versions from the resolved config — redundant friction on every run — while the module's purpose, which the e-commerce function offer and the generated display-name/description actually depend on, is never explicitly gathered.",
+      "finding_ids": [
+        "enhancement-3",
+        "enhancement-4"
+      ],
+      "action": "In On Activation step 2: drop the version-range question (default from psm_target_versions, state it in passing, ask only when the request implies a deviation) and add the module's purpose (one sentence) to the gather, still under 'tanya hanya yang belum jelas'."
+    }
+  ],
+  "strengths": [
+    "Intelligence placement is exemplary: the skeleton is generated by a tested deterministic script (never retyped by the model), config parsing is delegated to the shared psm-setup resolver, and the pass verdict is read verbatim from psm-validate's JSON — judgment stays in the prompt, mechanics in scripts.",
+    "The mandatory psm-validate gate is a real gate: nothing is declared ready without a passing verdict per target version, and e-commerce additions trigger re-validation.",
+    "Lean single-file architecture at 1224 tokens with zero waste patterns and a goal-stated Overview (stance, outcome, consumer, bar in one paragraph).",
+    "Customization economy is deliberate and clean: no customize.toml by logged decision, shared project config as the only mechanism, plausible variation points already parameterized as script arguments.",
+    "Headless mode is near-ready: every interactive question has a parameter, the interactive function-offer is correctly skipped, and non-trivial resolutions are traced to the memlog.",
+    "Pre-pass path-standards hits were judged scanner noise against analyzer-owned artifacts (.analysis/ outputs, the builder's own .memlog.md convention) — no real path defects in the skill content."
+  ],
+  "recommendations": [
+    {
+      "rank": 1,
+      "action": "Rewrite the collision and headless-failure semantics: hard stop on collision with psm-develop routing, explicit-confirmation-only --force, and a typed headless return (complete|gagal|butuh-intervensi + reason + memlog path, unreadable verdict = not passed).",
+      "resolves": [
+        "enhancement-1",
+        "enhancement-2",
+        "architecture-2"
+      ]
+    },
+    {
+      "rank": 2,
+      "action": "Repoint cross-skill references at the live .claude/skills tree (or invoke psm-validate by skill name), replace the dead Resolution-rules bullet with the <skills-dir> rule, and resolve the stale skills/ mirror family-wide.",
+      "resolves": [
+        "architecture-1",
+        "architecture-3",
+        "leanness-2"
+      ]
+    },
+    {
+      "rank": 3,
+      "action": "Harden ps-scaffold.py: validate version args, use numeric major comparison for the PHP floor, delete the dead line and unused parameter, extend the test suite with malformed-version cases.",
+      "resolves": [
+        "determinism-1",
+        "leanness-3"
+      ]
+    },
+    {
+      "rank": 4,
+      "action": "Tune On Activation: default the version range from psm_target_versions instead of asking, and gather the module's one-sentence purpose up front.",
+      "resolves": [
+        "enhancement-3",
+        "enhancement-4"
+      ]
+    },
+    {
+      "rank": 5,
+      "action": "Thin the Overview's restated scaffold enumeration and duplicate rules to the bar alone, leaving the operational statements where they act.",
+      "resolves": [
+        "leanness-1"
+      ]
+    }
+  ],
+  "experience": {
+    "journeys": [
+      {
+        "name": "Interactive scaffold",
+        "steps": "resolve psm config → gather module identity from Budi → generate skeleton via ps-scaffold.py → remind composer dump-autoload → offer relevant e-commerce functions → psm-validate gate across 1.7/8/9 → report what was built and per-version verdict"
+      },
+      {
+        "name": "Headless one-shot",
+        "steps": "take name/author/versions from args → generate → skip interactive offers (implement only explicitly supplied functions) → psm-validate → return one-line summary + module path + memlog path + per-version status, assumptions traced to memlog"
+      }
+    ],
+    "headless": "Near-ready — every question has a parameter and assumptions go to the memlog, but the return lacks the complete|blocked status contract and pre-authorizes --force, the two things findings enhancement-1/enhancement-2/architecture-2 fix."
+  },
+  "findings": [
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Add: guarded destructive path + wrong-door routing on module-name collision (plan-validate-execute)",
+      "location": "SKILL.md:23-27 (Bangkitkan kerangka), SKILL.md:39 (Mode headless); scripts/ps-scaffold.py:110,122-124",
+      "evidence": "Pattern involved: plan-validate-execute for destructive operations. The script's exists-check is the validate step ('error: ... sudah ada (pakai --force untuk timpa)'), but SKILL.md never says when --force is legitimate — and the headless section pre-authorizes autonomous use by listing 'keputusan `--force`' as merely something to log to memlog before continuing. --force overwrites the existing module's main .php, composer.json, and every index.php unattended, destroying user code with only a log entry. The sibling psm-develop treats touching-existing-work as a hard stop ('butuh intervensi', 'jangan lanjut diam menyentuh file') and has the mirror routing gate ('bukan module berisi → arahkan ke psm-scaffold'); psm-scaffold has neither direction of that gate.",
+      "recommendation": "In 'Bangkitkan kerangka' add: on collision, never pass --force without Budi's explicit confirmation; if the existing folder is a real module Budi wants to grow, route to psm-develop and stop (mirror of psm-develop's gate). In 'Mode headless' replace the log-and-continue --force clause with: collision → return status blocked/butuh-intervensi with the path as reason; --force only when the caller passed it explicitly."
+    },
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "Cross-skill references resolve to the stale skills/ scaffold, not the live .claude/skills tree",
+      "location": "SKILL.md:31 (Tawarkan fungsi e-commerce), SKILL.md:35 (Verifikasi gerbang wajib)",
+      "evidence": "SKILL.md points the mandatory quality gate at {project-root}/skills/psm-validate/SKILL.md and the technical reference at {project-root}/skills/psm-cross-version/references/version-safe-patterns.md. Both files exist but are diverged shadows of the live tree: skills/psm-validate/SKILL.md (Jun 25, 5558 bytes) describes a 3-layer validation with hand-assembled verdict JSON, while the live .claude/skills/psm-validate/SKILL.md (Jul 14, 9741 bytes) is 4-layer (E2E Lapis 4) with verdict JSON produced by ps-aggregate.py carrying pass/conclusive/e2e_conclusive keys the stale copy never mentions — so the agent the gate section sends to 'lihat' that file learns an outdated contract for the very verdict it is told to read verbatim. version-safe-patterns.md likewise differs between trees (the 'Checklist keluaran cross-version' section exists in only one copy). Only the resolver pointer at SKILL.md:20 ({project-root}/skills/psm-setup/scripts/resolve-psm-config.py) is safe today — byte-identical to the live copy, deliberately synced — but it depends on the same manual dual-tree sync. This violates the progressive-disclosure bar that every referenced file resolves to the intended content, and it is a family-wide convention (psm-cross-version, psm-develop, psm-optimize carry the same pointers).",
+      "recommendation": "Repoint the two content references at the live tree (or, for the gate, drop the file pointer entirely and instruct invoking psm-validate by skill name so the live SKILL.md always loads), and either delete the stale skills/ copies of psm-validate and psm-cross-version or add them to the sync discipline that already covers the resolver. Fix family-wide, not just in psm-scaffold."
+    },
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Version args unvalidated and classified by string-prefix match in generator",
+      "location": "scripts/ps-scaffold.py:95-97, 107-108, 132-134 (php_require_for and --ps-min/--ps-max handling)",
+      "evidence": "php_require_for() decides the PHP floor via `return \">=8.1\" if ps_min.startswith((\"8.\", \"9.\")) else \">=7.2\"`, and `--ps-min`/`--ps-max` are written verbatim into ps_versions_compliancy and composer.json with no format validation — in contrast to module_name, which is guarded by `re.fullmatch(r\"[a-z][a-z0-9_]*\", name)` with exit code 2. In headless mode the model formats the user's version intent into these args, so a plausible shorthand or typo (`--ps-min 8`, `v8.1`, `8,0.0`) silently yields php `>=7.2` plus a malformed compliancy range inside a scaffold the skill contracts as 'dijamin lolos standar'. The test suite (scripts/tests/test-ps-scaffold.py:74-75) covers only the well-formed shape `8.0.0`, confirming the mapping is fully unit-testable — i.e., deterministic work correctly living in the script but implemented as a brittle string match over unchecked input.",
+      "recommendation": "This is the intelligence-leak tell inside a script: a string-prefix match making a semantic call (PS version -> PHP floor) on input whose shape is never checked. Apply the determinism test — version validation and comparison have exactly one correct answer per input — and fix it in the script under the Validation/Post-processing opportunity categories: (1) validate `--ps-min`/`--ps-max` with a version regex fullmatch and reject malformed values with exit 2, mirroring the existing module_name guard, so model-supplied CLI args are structurally verified before generation; (2) replace `startswith((\"8.\", \"9.\"))` with a parsed numeric-tuple comparison (e.g., major >= 8), which also stays correct for future majors. Add a malformed-version case and a bare-major case to test-ps-scaffold.py alongside the existing `--ps-min 8.0.0` assertion."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add: headless stop-state contract (status complete/blocked + unreadable-verdict rule)",
+      "location": "SKILL.md:37-39 (Mode headless), SKILL.md:33-35 (Verifikasi)",
+      "evidence": "Pattern involved: headless return contract (skill-quality-principles 'Headless mode': status is complete or blocked; on blocked include a one-line reason plus the memlog path). psm-scaffold's headless return is 'ringkasan satu baris + path module + path memlog + status lolos per versi' with no defined outcome for failure cases: name invalid (script rc=2), collision, psm-validate failing to run or returning unreadable output, or validation red after explicit functions were implemented. Sibling psm-develop defines exactly this ('gagal' vs 'butuh intervensi', and 'vonis tak terbaca → BUKAN lolos'); psm-scaffold leaves the automator to improvise. Otherwise the section is genuinely headless-ready: every interactive question has a parameter, and the interactive function-offer is correctly skipped unless functions are supplied.",
+      "recommendation": "Add one sentence to Mode headless: on unrecoverable failure (script error, psm-validate absent/crash/non-JSON — treat unreadable verdict as NOT lolos) return status gagal + alasan satu baris + memlog path; on human-decision points (collision) return butuh intervensi; otherwise complete with the existing payload."
+    },
+    {
+      "id": "enhancement-3",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add: default target-version range from resolved config instead of asking (default replaces question)",
+      "location": "SKILL.md:18-21 (On Activation)",
+      "evidence": "Pattern involved: interaction-point reduction — a default replacing a question. Step 1 already loads `psm_target_versions` from the config resolver, yet step 2 instructs the model to collect 'rentang versi target' from Budi. Since a version range is almost never 'jelas dari permintaan', the model will ask on nearly every run despite the answer sitting in the config it just loaded (and in the script's own --ps-min/--ps-max defaults). The name and author questions are legitimate; this one is redundant friction on the most common path.",
+      "recommendation": "In On Activation step 2, drop 'rentang versi target' from the ask-list: default the range from `psm_target_versions`, state it in passing ('kerangka untuk 1.7–9.x sesuai config'), and ask only if Budi's request implies a deviation."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Headless mode has no blocked/failure return contract",
+      "location": "SKILL.md:39 (Mode headless)",
+      "evidence": "The headless section returns 'ringkasan satu baris + path module + path memlog + status lolos per versi' and correctly logs assumptions to the memlog, but it never specifies the BMad headless return discipline: a JSON return with status complete|blocked and a one-line reason on blocked (skill-quality-principles, Headless mode). The failure paths are real — ps-scaffold.py refuses an existing module dir without --force, and the psm-validate gate can fail per version — yet the section only describes the success shape, so a workflow caller has no testable way to distinguish 'scaffolded but gate failed' from 'blocked before generation'.",
+      "recommendation": "Add the typed return: JSON with status complete|blocked, module path, memlog path, and per-version pass from the psm-validate verdict; on blocked, include a one-line reason and still return the memlog path."
+    },
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Scaffold guarantees restated across Overview and two later sections",
+      "location": "SKILL.md:10 (Overview) vs SKILL.md:25 (Bangkitkan kerangka) and SKILL.md:35 (Verifikasi)",
+      "evidence": "Three facts are each stated twice: (1) the scaffold contents are enumerated in the Overview ('struktur file baku, composer/autoload benar, `ps_versions_compliancy` terisi, index.php di tiap folder') and again in fuller detail in Bangkitkan kerangka ('main file dengan guard `_PS_VERSION_`, `ps_versions_compliancy`, install/uninstall; `composer.json` dengan PSR-4 dan `prepend-autoloader: false`; serta `index.php` di setiap folder') — and a third time in the script's own docstring/--help, which the same section already points at; (2) 'generator, bukan diketik ulang model' (Overview) vs 'Jangan menulis ulang file-file ini dengan tangan — generator adalah sumber kebenaran' (Bangkitkan); (3) 'tidak pernah dinyatakan siap sebelum lolos psm-validate' (Overview) vs 'dinyatakan siap hanya bila JSON itu lolos' (Verifikasi). This is the canon's 'facts restated across sections' re-teach shape; the Overview stating the bar is legitimate, but the fully-detailed second enumeration adds no move the model wouldn't already make.",
+      "recommendation": "Keep the operational statement where it acts (Bangkitkan kerangka carries the don't-hand-write rule; Verifikasi carries the gate) and thin the Overview's restatements to the bar alone — e.g. 'kerangka yang dijamin lolos standar di 1.7.x/8.x/9.x, dibangkitkan skrip generator, siap hanya setelah lolos psm-validate' — dropping the duplicated file-by-file enumeration in one of the two places (the --help pointer already covers the detail)."
+    },
+    {
+      "id": "leanness-2",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Resolution-rule bullet for a token the file never uses",
+      "location": "SKILL.md:16 (Resolution rules, third bullet)",
+      "evidence": "The bullet '`psm-scaffold` → basename direktori skill' defines a resolution for a token that never appears as a path anywhere in the file — 'psm-scaffold' occurs only as the frontmatter name and title. Reader-relative test (canon, 'Who reads this'): the line changes none of the model's moves. It is family boilerplate carried over: psm-optimize and psm-cross-version have the identical stale bullet, while psm-develop (SKILL.md:16) has already replaced it with the rule this file would actually need — '<skills-dir>' for sibling resolution, with a warning against relying on the `{project-root}/skills/` mirror that psm-scaffold's own sibling references (lines 20, 31, 35) still use.",
+      "recommendation": "Cut the dead bullet; if sibling-path resolution is wanted, adopt psm-develop's current '<skills-dir>' bullet instead (that substitution is the family-consistency call, which belongs to the architecture/path lenses — the leanness defect is only that the present line buys nothing).",
+      "proposed_smallest": "## Resolution rules\n\n- Bare paths dan `{skill-root}` (mis. `scripts/ps-scaffold.py`) resolve dari direktori instal skill ini.\n- `{project-root}` → direktori kerja project.",
+      "predicted_delta": "Nothing lost — the removed token is never consumed in this file, so no run can behave differently. Route to variant eval to confirm."
+    },
+    {
+      "id": "leanness-3",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Dead line and unused parameter in the generator script",
+      "location": "scripts/ps-scaffold.py:41 (and the `namespace` parameter of main_file_php)",
+      "evidence": "Line 41 reads `ns_line = f\"\\nuse {namespace}\\\\;\\n\" if False else \"\"  # namespace dipakai via composer, bukan di main file` — an `if False` expression assigned to `ns_line`, which is never referenced in the returned template, making `main_file_php`'s `namespace` parameter dead as well. The line does not beat its absence and the `if False` construct invites confusion on future edits; the intent it preserves is already carried by the trailing comment. (scan-scripts.json passes clean — this is below its linters' radar, caught only by the every-line-competes test.)",
+      "recommendation": "Delete line 41 and the `namespace` parameter from `main_file_php` (keep the one-line comment if the 'namespace lives in composer, not the main file' note is worth preserving there); re-run scripts/tests/test-ps-scaffold.py to confirm identical output."
+    },
+    {
+      "id": "architecture-3",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Resolution rules third bullet is a mis-instantiated placeholder",
+      "location": "SKILL.md:16 (Resolution rules)",
+      "evidence": "The canonical block defines the placeholder '{skill-name} → the skill directory's basename', but here the placeholder was substituted with the literal skill name, yielding the circular rule '`psm-scaffold` → basename direktori skill', which defines nothing. The body never uses {skill-name}, so the bullet is dead either way.",
+      "recommendation": "Drop the bullet (nothing in the body needs {skill-name}) or restore the literal placeholder form from the canonical Resolution rules block."
+    },
+    {
+      "id": "enhancement-4",
+      "lens": "enhancement",
+      "severity": "low",
+      "title": "Opportunity — add: capture module purpose at activation (intent-before-ingestion, light form)",
+      "location": "SKILL.md:21 (On Activation), SKILL.md:29-31 (Tawarkan fungsi e-commerce)",
+      "evidence": "Pattern involved: intent-before-ingestion. Activation gathers only identity (nama, author, versi), but the skill's judgment core — 'Tawarkan fungsi e-commerce yang relevan dengan maksud module Budi' — depends on knowing the module's purpose, which is never explicitly collected. On a bare 'bikin module baru' invocation the model scaffolds first (display name, description baked into the generated main file) and only discovers intent when it reaches the offer stage.",
+      "recommendation": "Add 'maksud/tujuan module (satu kalimat)' to the On Activation gather (still 'tanya hanya yang belum jelas'), so the generated display-name/description and the later function offer are grounded from the first turn."
+    }
+  ]
+}
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  var SEVERITIES = ["critical", "high", "medium", "low"];
+  var SEV_LABEL = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
+  var GRADES = ["excellent", "good", "fair", "poor"];
+  var PLACEHOLDER_SUBJECT = "__PLACEHOLDER__";
+
+  var els = {
+    banner: document.getElementById("parse-banner"),
+    overview: document.getElementById("overview"),
+    grade: document.getElementById("grade"),
+    verdict: document.getElementById("verdict"),
+    summaryText: document.getElementById("summary-text"),
+    counts: document.getElementById("counts"),
+    themes: document.getElementById("themes"),
+    strengths: document.getElementById("strengths"),
+    recommendations: document.getElementById("recommendations"),
+    experience: document.getElementById("experience"),
+    toolbar: document.getElementById("toolbar"),
+    root: document.getElementById("findings-root"),
+    subject: document.getElementById("m-subject"),
+    generated: document.getElementById("m-generated"),
+    schema: document.getElementById("m-schema"),
+    selCount: document.getElementById("sel-count"),
+    btnCopy: document.getElementById("btn-copy"),
+    btnSelectAll: document.getElementById("btn-select-all"),
+    btnClear: document.getElementById("btn-clear"),
+    btnExpandAll: document.getElementById("btn-expand-all"),
+    btnCollapseAll: document.getElementById("btn-collapse-all"),
+    fallback: document.getElementById("fallback"),
+    fallbackText: document.getElementById("fallback-text"),
+    toast: document.getElementById("toast")
+  };
+
+  var selected = Object.create(null);
+  var findings = [];
+  var findingsById = Object.create(null);
+  var subjectPath = "";
+  var standards = null;
+
+  function showBanner(message) {
+    els.banner.textContent = message;
+    els.banner.classList.add("show");
+  }
+
+  function esc(value) {
+    var s = value == null ? "" : String(value);
+    return s.replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Normalize an arbitrary parsed object against schema_version 2, supplying
+  // defaults so a partial or future island still renders. Unknown fields are
+  // ignored, not fatal. Severity counts are always derived from the findings
+  // array, never read from the island, so they cannot disagree with it. The
+  // synthesis blocks (grade, summary, themes, strengths, recommendations) and
+  // the experience block are OPTIONAL: each normalizes to an empty value that
+  // renders nothing rather than an empty panel or an error.
+  function normalize(raw) {
+    var obj = raw && typeof raw === "object" ? raw : {};
+    var rawFindings = Array.isArray(obj.findings) ? obj.findings : [];
+
+    var norm = {
+      schema_version: typeof obj.schema_version === "number" ? obj.schema_version : 2,
+      subject: obj.subject != null ? String(obj.subject) : "(unspecified)",
+      generated: obj.generated != null ? String(obj.generated) : "(unspecified)",
+      verdict: obj.verdict != null ? String(obj.verdict) : "(no verdict supplied)",
+      grade: GRADES.indexOf(String(obj.grade || "").toLowerCase()) >= 0
+        ? String(obj.grade).toLowerCase() : "",
+      summary: typeof obj.summary === "string" ? obj.summary : "",
+      standards: (obj.standards && typeof obj.standards === "object") ? {
+        canon: obj.standards.canon != null ? String(obj.standards.canon) : "",
+        principles: obj.standards.principles != null ? String(obj.standards.principles) : "",
+        scripts: obj.standards.scripts != null ? String(obj.standards.scripts) : ""
+      } : null,
+      themes: normalizeThemes(obj.themes),
+      strengths: normalizeStrengths(obj.strengths),
+      recommendations: normalizeRecommendations(obj.recommendations),
+      experience: normalizeExperience(obj.experience),
+      counts: { critical: 0, high: 0, medium: 0, low: 0 },
+      findings: []
+    };
+
+    rawFindings.forEach(function (f, i) {
+      if (!f || typeof f !== "object") { return; }
+      var sev = SEVERITIES.indexOf(f.severity) >= 0 ? f.severity : "low";
+      norm.findings.push({
+        id: f.id != null ? String(f.id) : "finding-" + (i + 1),
+        lens: f.lens != null ? String(f.lens) : "(unknown)",
+        severity: sev,
+        title: f.title != null ? String(f.title) : "(untitled finding)",
+        location: f.location != null ? String(f.location) : "",
+        evidence: f.evidence != null ? String(f.evidence) : "",
+        recommendation: f.recommendation != null ? String(f.recommendation) : "",
+        proposed_smallest: f.proposed_smallest != null ? String(f.proposed_smallest) : "",
+        predicted_delta: f.predicted_delta != null ? String(f.predicted_delta) : ""
+      });
+      norm.counts[sev] += 1;
+    });
+
+    return norm;
+  }
+
+  function normalizeThemes(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (t) {
+      if (!t || typeof t !== "object") { return; }
+      var ids = [];
+      if (Array.isArray(t.finding_ids)) {
+        t.finding_ids.forEach(function (id) { if (id != null) { ids.push(String(id)); } });
+      }
+      var title = t.title != null ? String(t.title) : "";
+      if (!title && !ids.length) { return; }
+      list.push({
+        title: title || "(untitled theme)",
+        root_cause: t.root_cause != null ? String(t.root_cause) : "",
+        action: t.action != null ? String(t.action) : "",
+        finding_ids: ids
+      });
+    });
+    return list;
+  }
+
+  function normalizeStrengths(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (s) {
+      if (typeof s === "string" && s) { list.push(s); }
+      else if (s && typeof s === "object" && s.title) {
+        list.push(String(s.title) + (s.detail ? " — " + String(s.detail) : ""));
+      }
+    });
+    return list;
+  }
+
+  function normalizeRecommendations(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (r, i) {
+      if (!r || typeof r !== "object") { return; }
+      var action = r.action != null ? String(r.action) : "";
+      if (!action) { return; }
+      var resolves = "";
+      if (Array.isArray(r.resolves)) { resolves = r.resolves.map(String).join(", "); }
+      else if (typeof r.resolves === "number") { resolves = r.resolves + " findings"; }
+      else if (r.resolves != null) { resolves = String(r.resolves); }
+      list.push({
+        rank: typeof r.rank === "number" ? r.rank : i + 1,
+        action: action,
+        resolves: resolves
+      });
+    });
+    list.sort(function (a, b) { return a.rank - b.rank; });
+    return list;
+  }
+
+  // Optional experience block: journeys plus a headless note. Returns null when
+  // neither is usable.
+  function normalizeExperience(raw) {
+    if (!raw || typeof raw !== "object") { return null; }
+    var journeys = [];
+    if (Array.isArray(raw.journeys)) {
+      raw.journeys.forEach(function (j) {
+        if (!j || typeof j !== "object") { return; }
+        var name = j.name != null ? String(j.name) : "";
+        var steps = j.steps != null ? String(j.steps) : "";
+        if (!name && !steps) { return; }
+        journeys.push({ name: name, steps: steps });
+      });
+    }
+    var headless = raw.headless != null ? String(raw.headless) : "";
+    if (!journeys.length && !headless) { return null; }
+    return { journeys: journeys, headless: headless };
+  }
+
+  function renderOverview(data) {
+    els.subject.textContent = data.subject;
+    els.generated.textContent = data.generated;
+    els.schema.textContent = String(data.schema_version);
+    els.verdict.textContent = data.verdict;
+
+    if (data.grade) {
+      els.grade.textContent = data.grade;
+      els.grade.className = "grade g-" + data.grade;
+      els.grade.hidden = false;
+    }
+    if (data.summary) {
+      els.summaryText.textContent = data.summary;
+      els.summaryText.hidden = false;
+    }
+
+    els.counts.innerHTML = "";
+    SEVERITIES.forEach(function (s) {
+      var pill = document.createElement("span");
+      pill.className = "pill";
+      pill.innerHTML =
+        '<span class="dot ' + s + '"></span>' +
+        '<span class="lbl">' + SEV_LABEL[s] + '</span>' +
+        '<span class="n">' + data.counts[s] + "</span>";
+      els.counts.appendChild(pill);
+    });
+    els.overview.hidden = false;
+  }
+
+  // Every copied fix prompt opens by anchoring the fixing session to the same
+  // standards that produced the findings, so the fix is held to the bar too.
+  function standardsPreamble() {
+    if (!standards || !standards.canon) { return []; }
+    var bar = standards.canon + (standards.principles ? " and " + standards.principles : "");
+    var lines = [
+      "Hold " + bar + " as the bar for every line you change — a fix that adds ceremony is a new finding, not a fix."
+    ];
+    if (standards.scripts) {
+      lines.push("If the fix adds or changes scripts, follow " + standards.scripts + ".");
+    }
+    lines.push("");
+    return lines;
+  }
+
+  function composeThemePrompt(theme, resolved) {
+    var lines = standardsPreamble();
+    lines.push("Fix the following theme in " + subjectPath + ": " + theme.title);
+    lines.push("");
+    if (theme.root_cause) { lines.push("Root cause: " + theme.root_cause); }
+    if (theme.action) { lines.push("Fix: " + theme.action); }
+    if (resolved.length) {
+      lines.push("");
+      lines.push("Findings to address:");
+      resolved.forEach(function (f, i) {
+        lines.push((i + 1) + ". " + f.title);
+        if (f.location) { lines.push("   Location: " + f.location); }
+        if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+        if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      });
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  function renderThemes(themes) {
+    if (!themes.length) { els.themes.hidden = true; return; }
+    els.themes.innerHTML = "<h2>Themes</h2>";
+    themes.forEach(function (t) {
+      var resolved = t.finding_ids
+        .map(function (id) { return findingsById[id]; })
+        .filter(function (f) { return !!f; });
+      var items = resolved.map(function (f) {
+        return '<div class="t-finding"><span class="mono">' + esc(f.id) + "</span> " +
+          esc(f.title) +
+          (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "") +
+          "</div>";
+      }).join("");
+
+      var node = document.createElement("div");
+      node.className = "theme";
+      node.innerHTML =
+        '<div class="t-head"><span class="t-title">' + esc(t.title) + "</span>" +
+        '<button class="small t-fix">Fix This Theme</button></div>' +
+        (t.root_cause ? '<div class="t-cause">Root cause: ' + esc(t.root_cause) + "</div>" : "") +
+        (t.action ? '<div class="t-action"><b>Fix:</b> ' + esc(t.action) + "</div>" : "") +
+        (items ? '<div class="t-findings">' + items + "</div>" : "");
+      node.querySelector(".t-fix").addEventListener("click", function () {
+        copyText(composeThemePrompt(t, resolved));
+      });
+      els.themes.appendChild(node);
+    });
+    els.themes.hidden = false;
+  }
+
+  function renderStrengths(list) {
+    if (!list.length) { els.strengths.hidden = true; return; }
+    els.strengths.innerHTML =
+      "<h2>Strengths</h2><ul class=\"strength-list\">" +
+      list.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") +
+      "</ul>";
+    els.strengths.hidden = false;
+  }
+
+  function renderRecommendations(recs) {
+    if (!recs.length) { els.recommendations.hidden = true; return; }
+    var html = "<h2>Recommendations</h2>";
+    recs.forEach(function (r) {
+      html += '<div class="rec"><span class="rank">#' + esc(String(r.rank)) + "</span>" +
+        esc(r.action) +
+        (r.resolves ? '<span class="resolves">resolves: ' + esc(r.resolves) + "</span>" : "") +
+        "</div>";
+    });
+    els.recommendations.innerHTML = html;
+    els.recommendations.hidden = false;
+  }
+
+  function renderExperience(exp) {
+    if (!exp) { els.experience.hidden = true; return; }
+    var html = "<h2>Experience</h2>";
+    if (exp.journeys.length) {
+      html += exp.journeys.map(function (j) {
+        return '<div class="journey">' +
+          '<div class="j-name">' + esc(j.name || "(unnamed journey)") + "</div>" +
+          (j.steps ? '<div class="j-steps">' + esc(j.steps) + "</div>" : "") +
+          "</div>";
+      }).join("");
+    }
+    if (exp.headless) {
+      html += '<dl class="kv" style="margin-top:12px"><dt>Headless</dt><dd>' +
+        esc(exp.headless) + "</dd></dl>";
+    }
+    els.experience.innerHTML = html;
+    els.experience.hidden = false;
+  }
+
+  function renderNoFindings() {
+    els.root.innerHTML =
+      '<div class="no-findings">' +
+      '<div class="big">No findings</div>' +
+      "<div>The scanners returned a clean pass for this subject.</div>" +
+      "</div>";
+  }
+
+  function findingNode(f) {
+    var node = document.createElement("div");
+    node.className = "finding sev-" + f.severity;
+    node.setAttribute("data-id", f.id);
+
+    var sub =
+      esc(f.lens) +
+      (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "");
+
+    var rows =
+      "<dt>Lens</dt><dd>" + esc(f.lens) + "</dd>" +
+      (f.location ? "<dt>Location</dt><dd><code>" + esc(f.location) + "</code></dd>" : "") +
+      (f.evidence ? "<dt>Evidence</dt><dd>" + esc(f.evidence) + "</dd>" : "") +
+      (f.recommendation ? "<dt>Recommendation</dt><dd>" + esc(f.recommendation) + "</dd>" : "") +
+      (f.proposed_smallest ? "<dt>Proposed smallest</dt><dd>" + esc(f.proposed_smallest) + "</dd>" : "") +
+      (f.predicted_delta ? "<dt>Predicted delta</dt><dd>" + esc(f.predicted_delta) + "</dd>" : "");
+
+    node.innerHTML =
+      '<div class="row">' +
+      '<input type="checkbox" class="chk" aria-label="Select finding">' +
+      '<div class="head">' +
+      '<div class="title">' + esc(f.title) + "</div>" +
+      '<div class="sub">' + sub + "</div>" +
+      "</div>" +
+      '<span class="tag">' + SEV_LABEL[f.severity] + "</span>" +
+      '<span class="caret">▸</span>' +
+      "</div>" +
+      '<div class="body"><dl>' + rows + "</dl></div>";
+
+    var chk = node.querySelector(".chk");
+    chk.checked = !!selected[f.id];
+    chk.addEventListener("change", function () {
+      if (chk.checked) { selected[f.id] = true; } else { delete selected[f.id]; }
+      updateSelection();
+    });
+
+    var head = node.querySelector(".head");
+    var caret = node.querySelector(".caret");
+    function toggle() { node.classList.toggle("open"); }
+    head.addEventListener("click", toggle);
+    caret.addEventListener("click", toggle);
+
+    return node;
+  }
+
+  function renderFindings(list) {
+    els.root.innerHTML = "";
+    if (list.length === 0) {
+      renderNoFindings();
+      els.toolbar.hidden = true;
+      return;
+    }
+    els.toolbar.hidden = false;
+
+    SEVERITIES.forEach(function (sev) {
+      var group = list.filter(function (f) { return f.severity === sev; });
+      if (group.length === 0) { return; }
+      var wrap = document.createElement("div");
+      wrap.className = "group";
+      var h = document.createElement("h2");
+      h.innerHTML = '<span class="dot ' + sev + '"></span>' + SEV_LABEL[sev] + " (" + group.length + ")";
+      wrap.appendChild(h);
+      group.forEach(function (f) { wrap.appendChild(findingNode(f)); });
+      els.root.appendChild(wrap);
+    });
+  }
+
+  function updateSelection() {
+    var n = Object.keys(selected).length;
+    els.selCount.textContent = n + " selected";
+    els.btnCopy.disabled = n === 0;
+  }
+
+  function composePrompt() {
+    var picked = findings.filter(function (f) { return selected[f.id]; });
+    if (picked.length === 0) { return ""; }
+    var lines = standardsPreamble();
+    lines.push("Fix the following issues in " + subjectPath + ":");
+    lines.push("");
+    picked.forEach(function (f, i) {
+      lines.push((i + 1) + ". " + f.title);
+      if (f.location) { lines.push("   Location: " + f.location); }
+      if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+      if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      if (f.proposed_smallest) { lines.push("   Proposed smallest: " + f.proposed_smallest); }
+      lines.push("");
+    });
+    return lines.join("\n").replace(/\n+$/, "\n");
+  }
+
+  function showToast(text) {
+    els.toast.textContent = text;
+    els.toast.classList.add("show");
+    setTimeout(function () { els.toast.classList.remove("show"); }, 1600);
+  }
+
+  function fallbackCopy(text) {
+    els.fallbackText.value = text;
+    els.fallback.classList.add("show");
+    els.fallbackText.focus();
+    els.fallbackText.select();
+    try {
+      var ok = document.execCommand && document.execCommand("copy");
+      if (ok) {
+        showToast("Copied");
+        return;
+      }
+    } catch (e) { /* fall through to manual */ }
+    showToast("Copy the text shown below");
+  }
+
+  function copyText(text) {
+    if (!text) { return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { showToast("Copied"); },
+        function () { fallbackCopy(text); }
+      );
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function doCopy() {
+    copyText(composePrompt());
+  }
+
+  function wireToolbar() {
+    els.btnCopy.addEventListener("click", doCopy);
+    els.btnSelectAll.addEventListener("click", function () {
+      findings.forEach(function (f) { selected[f.id] = true; });
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = true; });
+      updateSelection();
+    });
+    els.btnClear.addEventListener("click", function () {
+      selected = Object.create(null);
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = false; });
+      els.fallback.classList.remove("show");
+      updateSelection();
+    });
+    els.btnExpandAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.add("open"); });
+    });
+    els.btnCollapseAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.remove("open"); });
+    });
+  }
+
+  function init() {
+    var island = document.getElementById("report-data");
+    var parsed;
+    try {
+      if (!island) { throw new Error("report-data island element not found"); }
+      parsed = JSON.parse(island.textContent);
+    } catch (err) {
+      showBanner(
+        "Could not parse the report data island.\n\n" +
+        "Error: " + (err && err.message ? err.message : String(err)) + "\n\n" +
+        "The findings could not be rendered. The JSON inside the " +
+        'report-data island (the application/json script tag) is malformed.'
+      );
+      return;
+    }
+
+    var data = normalize(parsed);
+
+    if (data.subject === PLACEHOLDER_SUBJECT) {
+      els.subject.textContent = data.subject;
+      showBanner(
+        "This is the unfilled report shell.\n\n" +
+        "The report-data island still carries the placeholder subject, so " +
+        "there are no findings here. Generate a real report with " +
+        "scripts/render_report.py."
+      );
+      return;
+    }
+
+    findings = data.findings;
+    subjectPath = data.subject;
+    standards = data.standards;
+    findingsById = Object.create(null);
+    findings.forEach(function (f) { findingsById[f.id] = f; });
+
+    renderOverview(data);
+    renderThemes(data.themes);
+    renderStrengths(data.strengths);
+    renderRecommendations(data.recommendations);
+    renderExperience(data.experience);
+    renderFindings(findings);
+    wireToolbar();
+    updateSelection();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>
