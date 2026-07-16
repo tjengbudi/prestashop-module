@@ -48,12 +48,15 @@ Format spec skenario authored (`<module>/tests/e2e/*.json`):
      {"action": "expect_no_console_error"},
      {"action": "fill", "selector": "#PSM_FIELD", "value": "42"},
      {"action": "click", "selector": "button[name=submitSave]"},
+     {"action": "click_optional", "selector": "#warn-close"},
      {"action": "expect_text", "text": "successful"},
      {"action": "screenshot"},
      {"action": "goto", "area": "fo", "path": "/"},
      {"action": "expect_visible", "selector": "#header"}
    ]}
-Placeholder yang disubstitusi di `path`/`url`/`text`: {mod} {fo} {bo}. Area default `fo`.
+Placeholder yang disubstitusi di `path`/`url`/`text`/`value`: {mod} {fo} {bo} {browser}.
+Area default `fo`. {browser} = engine aktif — pakai untuk nama data unik per-browser
+(browser berbagi satu DB per versi; duplikat data = temuan memblok palsu).
 
 Prasyarat browser (sekali, host): `playwright install chromium firefox`.
 """
@@ -79,7 +82,7 @@ _spec.loader.exec_module(fl)
 DEFAULT_BROWSERS = "chromium,firefox"
 SUPPORTED_ENGINES = ("chromium", "firefox", "webkit")
 SUPPORTED_ACTIONS = ("goto", "expect_no_fatal", "expect_visible", "expect_text",
-                     "expect_no_console_error", "click", "fill", "screenshot")
+                     "expect_no_console_error", "click", "click_optional", "fill", "screenshot")
 CONTAINER_HTTP_PORT = 80          # nginx/apache flashlight mendengarkan di 80
 DEFAULT_HOST_PORT = 8000
 # Default admin flashlight (BO folder `admin-dev`); override lewat flag. Login BO
@@ -87,7 +90,10 @@ DEFAULT_HOST_PORT = 8000
 DEFAULT_ADMIN_PATH = "admin-dev"
 DEFAULT_ADMIN_EMAIL = "admin@prestashop.com"
 DEFAULT_ADMIN_PASSWORD = "prestashop"
-DEFAULT_NAV_TIMEOUT_S = 20        # timeout per navigasi/aksi Playwright
+DEFAULT_NAV_TIMEOUT_S = 60        # timeout per navigasi/aksi Playwright; flashlight dingin
+                                  # butuh >20s di load pertama (kompilasi Smarty/Symfony)
+SETTLE_TIMEOUT_MS = 15000         # batas tunggu settle (networkidle login BO / 'load'
+                                  # sebelum expect_text) — BO polling XHR, jangan tunggu selamanya
 
 # Tanda PHP fatal / error server yang bikin "shop rusak" (white-screen / 500).
 FATAL_SIGNS = (
@@ -95,6 +101,22 @@ FATAL_SIGNS = (
     "Whoops, looks like something went wrong", "500 Internal Server Error",
     "Uncaught Error", "Parse error", "syntax error, unexpected",
 )
+_SCRIPT_RE = re.compile(r"<script\b.*?</script>", re.IGNORECASE | re.DOTALL)
+
+
+def fatal_sign_in(html):
+    """Tanda fatal pertama di markup TERLIHAT, atau None.
+
+    Konten <script>…</script> dibuang dulu: halaman PS sehat meng-embed kamus
+    terjemahan/JSON di inline script yang bisa memuat frasa ini — match di sana =
+    temuan memblok palsu atas module sehat. Blok <script> tak tertutup (fatal
+    memotong render di tengah script) sengaja TETAP terperiksa.
+    """
+    visible = _SCRIPT_RE.sub("", html or "")
+    for s in FATAL_SIGNS:
+        if s in visible:
+            return s
+    return None
 
 # Dijalankan DI DALAM container flashlight setelah healthy: salin + install module
 # (TANPA phpstan — coding-standard adalah wilayah Lapis 2). $MOD_NAME dari env.
@@ -150,12 +172,18 @@ def base_urls(ps_domain, admin_path):
 
 
 def substitute(text, ctx):
-    """Substitusi placeholder {mod}/{fo}/{bo} di string spec."""
+    """Substitusi placeholder {mod}/{fo}/{bo}/{browser} di string spec.
+
+    {browser} = engine aktif (ctx['engine']) — dipakai spec pembuat data supaya
+    nama unik per-browser: chromium & firefox berbagi satu DB per versi, data
+    duplikat dari browser pertama bikin browser kedua gagal palsu (memblok).
+    """
     if not text:
         return text
     return (text.replace("{mod}", ctx["mod"])
                 .replace("{fo}", ctx["fo"])
-                .replace("{bo}", ctx["bo"]))
+                .replace("{bo}", ctx["bo"])
+                .replace("{browser}", ctx.get("engine", "")))
 
 
 def universal_smoke():
@@ -226,10 +254,8 @@ def _res(action, ok, conclusive, message, location):
 def _fatal_message(status, html):
     if status is not None and status >= 500:
         return f"HTTP {status} (server error)"
-    for sign in FATAL_SIGNS:
-        if sign in html:
-            return f"tanda fatal: '{sign}'"
-    return "tak ada fatal"
+    sign = fatal_sign_in(html)
+    return f"tanda fatal: '{sign}'" if sign else "tak ada fatal"
 
 
 def _resolve_url(step, ctx, area):
@@ -260,8 +286,10 @@ def _snap(page, ctx, label):
 def run_steps(page, steps, ctx):
     """Eksekusi langkah skenario terhadap `page` (Playwright-like). Return list hasil.
 
-    `page` cukup mengekspos goto()->response(status), content()->str, locator(sel),
-    click(sel), fill(sel,val) — sehingga logika ini teruji dengan page-tiruan.
+    `page` cukup mengekspos goto()->response(status), content()->str, locator(sel)
+    (.first.is_visible()/.count()), click(sel), fill(sel,val) — sehingga logika ini
+    teruji dengan page-tiruan. `click_optional` = klik bila elemen ada, lewati tanpa
+    gagal bila tidak (interstitial yang muncul hanya di sebagian versi).
     Assertion di area BO konklusif hanya bila ctx['bo_authed'] True. `expect_no_console_error`
     membaca error JS/console yang ditangkap drive_engine (ctx['console_sink'] sejak
     ctx['console_base']). Screenshot otomatis diambil sesudah goto & pada kegagalan bila
@@ -285,13 +313,19 @@ def run_steps(page, steps, ctx):
                 _snap(page, ctx, f"{idx:02d}-goto")
             elif action == "expect_no_fatal":
                 html = page.content() or ""
-                bad = (last_status is not None and last_status >= 500) or any(s in html for s in FATAL_SIGNS)
+                bad = (last_status is not None and last_status >= 500) or fatal_sign_in(html) is not None
                 results.append(_res(action, not bad, conclusive, _fatal_message(last_status, html), area))
             elif action == "expect_visible":
                 sel = step.get("selector", "")
                 vis = page.locator(sel).first.is_visible()
                 results.append(_res(action, bool(vis), conclusive, f"visible={bool(vis)} sel={sel}", sel))
             elif action == "expect_text":
+                try:
+                    # Settle pasca submit/redirect: tanpa ini konten halaman LAMA
+                    # terbaca -> false-fail timing yang menggerus kepercayaan run merah.
+                    page.wait_for_load_state("load", timeout=SETTLE_TIMEOUT_MS)
+                except Exception:  # noqa: BLE001 — settle best-effort, assertion tetap dievaluasi
+                    pass
                 txt = substitute(step.get("text", ""), ctx)
                 present = txt in (page.content() or "")
                 results.append(_res(action, present, conclusive, f"text present={present}: {txt[:50]}", area))
@@ -304,6 +338,16 @@ def run_steps(page, steps, ctx):
             elif action == "click":
                 page.click(step.get("selector", ""))
                 results.append(_res(action, True, conclusive, "clicked", step.get("selector", "")))
+            elif action == "click_optional":
+                # Utk elemen yang hanya muncul di sebagian versi (mis. interstitial
+                # "Invalid security token" BO legacy 1.7/8, absen di Symfony 9):
+                # klik bila ada, lewati TANPA gagal bila tidak.
+                sel = step.get("selector", "")
+                if page.locator(sel).count() > 0:
+                    page.click(sel)
+                    results.append(_res(action, True, conclusive, "clicked (elemen ada)", sel))
+                else:
+                    results.append(_res(action, True, conclusive, "dilewati — elemen tak ada", sel))
             elif action == "fill":
                 page.fill(step.get("selector", ""), substitute(step.get("value", ""), ctx))
                 results.append(_res(action, True, conclusive, "filled", step.get("selector", "")))
@@ -420,18 +464,37 @@ def install_module(session, mod_name, timeout):
 
 
 def _bo_login(page, ctx):
-    """Login BO best-effort (form AdminLogin: email/passwd/submitLogin stabil 1.7/8/9)."""
-    try:
-        page.goto(ctx["bo"] + "/index.php?controller=AdminLogin")
-        page.fill("input[name=email]", ctx["admin_email"])
-        page.fill("input[name=passwd]", ctx["admin_password"])
-        page.click("button[name=submitLogin]")
-        page.wait_for_load_state("networkidle")
-        html = page.content() or ""
-        # Berhasil bila form login tak lagi ada (sudah masuk BO).
-        return "submitLogin" not in html
-    except Exception:  # noqa: BLE001
-        return False
+    """Login BO best-effort (form AdminLogin: input email/passwd stabil 1.7/8/9).
+
+    Tombol submit — verified vs flashlight 1.7.8.11/8.1.6/9.1.4: NAME `submitLogin`
+    di 1.7 & 8 (form legacy; dan cocok ke DUA tombol — login + "Send reset link"),
+    `submit_login` di 9 (Symfony). ID `#submit_login` sama di ketiganya — klik via id,
+    satu-satunya selector yang jalan di ketiga versi.
+
+    Sukses = sinyal STRUKTURAL ganda, bukan absen substring di HTML terserialisasi
+    (halaman 500 / interstitial token juga tanpa field passwd → cek substring lama
+    lapor sukses palsu → assertion BO jadi konklusif-memblok atas kegagalan infra):
+    field passwd hilang (locator count 0) DAN URL sudah meninggalkan AdminLogin.
+    Dicoba 2x — POST+redirect pertama flaky di cold-container 1.7/8 (verified).
+    """
+    for _ in range(2):
+        try:
+            page.goto(ctx["bo"] + "/index.php?controller=AdminLogin")
+            page.fill("input[name=email]", ctx["admin_email"])
+            page.fill("input[name=passwd]", ctx["admin_password"])
+            page.click("#submit_login")
+            try:
+                # BO punya polling XHR — networkidle bisa tak pernah tercapai; batasi,
+                # lalu fallback ke "load".
+                page.wait_for_load_state("networkidle", timeout=SETTLE_TIMEOUT_MS)
+            except Exception:  # noqa: BLE001
+                page.wait_for_load_state("load")
+            if (page.locator("input[name=passwd]").count() == 0
+                    and "controller=AdminLogin" not in (getattr(page, "url", "") or "")):
+                return True
+        except Exception:  # noqa: BLE001 — attempt gagal (nav/selector) → coba sekali lagi
+            pass
+    return False
 
 
 def _drive_page(browser, engine, scenarios, ctx):
@@ -593,6 +656,12 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
         if not reach_ok:
             res["errors"].append(f"PS tak terjangkau di {fo} ({rstatus}) — port publish/boot gagal")
             return res
+
+        # Warm-up BO sebelum browser men-drive (verified: login cold-container 1.7/8
+        # flaky karena kompilasi halaman login lambat) — best-effort, gagal tak memvonis:
+        # login tetap best-effort di _bo_login (plus satu retry di sana).
+        if _needs_bo(scenarios):
+            wait_http(f"{bo}/index.php?controller=AdminLogin", startup_timeout)
 
         ver_shot_dir = None
         if screenshot_dir:

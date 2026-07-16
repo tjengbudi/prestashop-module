@@ -151,6 +151,31 @@ def main():
     r_f = mod.merge_version("1.7.8", static, None, adv_full, None, TV)
     ok &= check("adversarial full-form '1.7.8' tetap match", not r_f["pass"])
 
+    # 8b. Validasi skema payload adversarial (determinism-4): pelanggaran tercatat KERAS,
+    # bukan diam-diam tak-memblok (severity off-enum) / ter-drop (token versi tak resolve).
+    ok &= check("validate_adversarial: payload sehat -> tanpa pelanggaran",
+                mod.validate_adversarial(adv, TV) == [])
+    ok &= check("validate_adversarial: None (tanpa file) -> tanpa pelanggaran",
+                mod.validate_adversarial(None, TV) == [])
+    adv_badsev = {"findings": [{"id": "adv-c", "severity": "critical", "message": "x"}]}
+    notes_sev = mod.validate_adversarial(adv_badsev, TV)
+    ok &= check("severity di luar enum ('critical') -> pelanggaran tercatat",
+                len(notes_sev) == 1 and "critical" in notes_sev[0] and "adv-c" in notes_sev[0])
+    adv_badver = {"findings": [{"id": "adv-v", "severity": "error", "message": "x",
+                                "versions": ["PS8"]}]}
+    notes_ver = mod.validate_adversarial(adv_badver, TV)
+    ok &= check("token versi tak resolve ('PS8') -> pelanggaran tercatat",
+                len(notes_ver) == 1 and "PS8" in notes_ver[0])
+    # token non-string: pelanggaran skema KERAS (exit 2), bukan AttributeError ->
+    # exit 1 yang bertabrakan dgn kode 'vonis gagal'
+    adv_nonstr = {"findings": [{"id": "adv-n", "severity": "error", "message": "x",
+                                "versions": [8]}]}
+    notes_nonstr = mod.validate_adversarial(adv_nonstr, TV)
+    ok &= check("token versi non-string (8) -> pelanggaran tercatat, tak crash",
+                len(notes_nonstr) == 1 and "bukan string" in notes_nonstr[0])
+    ok &= check("_version_matches: token non-string di-coerce (tak meledak)",
+                mod._version_matches(8, "8.1") is True)
+
     # --- Lapis 4 (E2E) — semantik konklusif-memblok, flaky-tak-memblok ---
 
     # 9. E2E skipped (Playwright/Docker absen) -> tak memblok, tak konklusif

@@ -13,7 +13,7 @@ Semua path di bawah relatif ke folder skill (`.claude/skills/psm-validate/`).
 # uv — menjalankan skrip PEP723 (semua ps-*.py)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Docker + compose HARUS aktif (flashlight = web-tier saja, butuh DB terpisah;
+# Docker + compose aktif (flashlight = web-tier saja, butuh DB terpisah;
 # skrip membangun DB+flashlight berpasangan otomatis)
 docker info && docker compose version
 
@@ -31,7 +31,7 @@ Catatan versi browser: `ps-e2e-run.py` memprovisi paket `playwright` via header 
 (versi terbaru). Jalankan `playwright install` dengan playwright yang sama (`uv run --with
 playwright ...` di atas sudah begitu) agar build browser cocok dengan yang di-drive skrip.
 
-## 2. Verifikasi toolchain SEBELUM menyentuh module
+## 2. Verifikasi toolchain sebelum menyentuh module
 
 Buktikan skrip + browser + Docker siap tanpa perlu module nyata:
 
@@ -53,7 +53,7 @@ Baca `e2e-probe.json`:
 
 ## 3. Loop TDD Lapis 4
 
-**Prinsip:** tulis skenario use-case DULU (merah) → drive → implement module sampai hijau
+**Prinsip:** tulis skenario use-case dulu (merah) → drive → implement module sampai hijau
 di Chromium **dan** Firefox.
 
 ```bash
@@ -91,15 +91,36 @@ Satu file = satu skenario `{ "name", "steps":[...] }`. Aksi yang didukung:
 | `goto` | `area` (`fo`\|`bo`), `path` atau `url` | navigasi; area `bo` konklusif hanya bila login admin sukses |
 | `expect_no_fatal` | — | halaman tanpa PHP fatal / white-screen / HTTP ≥ 500 |
 | `expect_visible` | `selector` | elemen tampak |
-| `expect_text` | `text` | teks ada di halaman |
+| `expect_text` | `text` | teks ada di halaman (skrip menunggu `load` settle dulu — anti false-fail pasca submit/redirect) |
 | `click` | `selector` | klik |
+| `click_optional` | `selector` | klik bila elemen ada, lewati tanpa gagal bila tidak (interstitial yang muncul hanya di sebagian versi, mis. "Invalid security token" BO 1.7/8) |
 | `fill` | `selector`, `value` | isi field |
 | `expect_no_console_error` | — | tak ada error JS/console (konklusif → memblok bila ditegakkan) |
 | `screenshot` | — | ambil screenshot manual (butuh `--screenshot-dir`) |
 
-Placeholder yang disubstitusi di `path`/`url`/`text`/`value`: `{mod}` `{fo}` `{bo}`.
+Placeholder yang disubstitusi di `path`/`url`/`text`/`value`: `{mod}` `{fo}` `{bo}` `{browser}`
+(`{browser}` = nama engine aktif — pakai untuk nama data unik per-browser).
 Spec tak valid (JSON rusak / tanpa `steps` / aksi tak dikenal) dilewati dengan catatan, bukan crash.
 Rujukan otoritatif: `uv run scripts/ps-e2e-run.py --help`.
+
+### Pola BO lintas-versi (tanpa ini, skenario configure gagal di 1.7/8)
+
+Verified vs flashlight `1.7.8.11`/`8.1.6-nginx`/`9.1.4-nginx`: `goto` ke configure legacy
+(`index.php?controller=AdminModules&configure={mod}`) memunculkan interstitial
+**"Invalid security token"** di 1.7/8 (dismiss: `a.btn-continue`) tapi tidak di 9
+(route Symfony langsung render). Skenario menuju configure men-dismiss-nya secara opsional:
+
+```json
+{"action":"goto","area":"bo","path":"/index.php?controller=AdminModules&configure={mod}"},
+{"action":"expect_no_fatal"},
+{"action":"click_optional","selector":"a.btn-continue"},
+{"action":"expect_no_fatal"}
+```
+
+Setelah di halaman configure (token sah dari interstitial atau route Symfony), link/tombol
+CRUD buatan module bekerja di ketiga versi — asalkan module memakai
+`getAdminLink('AdminModules', true, [], ['configure' => $name])` sebagai base link,
+bukan pola manual era-1.6.
 
 ### Verifikasi visual ("cek web asli" — lihat render seperti user)
 
@@ -111,12 +132,12 @@ uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium \
   --screenshot-dir ./e2e-shots -o e2e.json
 #   -> ./e2e-shots/9.1/chromium-<scenario>-*.png ; path juga di JSON (per-versi "screenshots")
 
-# 2) Error JS/console: SELALU ditangkap (advisory, non-blok) -> field "console_errors" +
-#    browser_notes. Untuk MENEGAKKAN, taruh {"action":"expect_no_console_error"} di skenario.
+# 2) Error JS/console: selalu ditangkap (advisory, non-blok) -> field "console_errors" +
+#    browser_notes. Untuk menegakkan, taruh {"action":"expect_no_console_error"} di skenario.
 
-# 3) --headed: browser TAMPIL live untuk inspeksi manual langsung (butuh display/GUI)
+# 3) --headed: browser tampil live untuk inspeksi manual langsung (butuh display/GUI)
 uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium --headed
-#   opt-in eksplisit; JANGAN di headless/CI. Tanpa display -> skipped_browser (degrade jujur).
+#   opt-in eksplisit; jangan di headless/CI. Tanpa display -> skipped_browser (degrade jujur).
 ```
 
 ## 4. Gotchas
@@ -129,6 +150,16 @@ uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium --heade
 - **Login BO.** Default flashlight `admin@prestashop.com` / `prestashop`, folder `admin-dev`
   (override: `--admin-email` / `--admin-password` / `--admin-path`). Login gagal → assertion
   area BO ditandai tak konklusif (tak memblok), assertion FO tetap konklusif.
+- **Login BO flaky di cold-container 1.7.8/8.1.** POST+redirect kadang tak selesai saat
+  container dingin — skrip sudah warm-up BO sebelum men-drive dan me-retry login sekali;
+  bila tetap gagal, langkah BO jatuh ke inconclusive (jujur) → ulangi run, container hangat stabil.
+- **DB bersama antar-browser.** Browser-browser berbagi satu container/DB per versi →
+  skenario yang membuat data menghasilkan duplikat saat browser kedua jalan. Beri nama
+  data ber-placeholder `{browser}` supaya unik per-engine, atau assertion yang toleran duplikat.
+- **Jangan percaya `overall pass` saja.** Cek: (1) `scenario_sources` memuat semua skenario
+  yang diharapkan; (2) `scenario_notes` kosong (isi = spec dilewati: aksi tak dikenal/JSON
+  rusak); (3) screenshot bertanggal run ini (folder shots menumpuk file lama); (4) pisahkan
+  `findings` konklusif vs `inconclusive` (login BO gagal → langkah BO inconclusive, bukan lolos).
 - **Config keys.** `psm_e2e_enabled` (false → lewati Lapis 4) & `psm_e2e_browsers` di section
   `psm` `{project-root}/_bmad/config.yaml`; default kanonik dari resolver. Base URL memakai ulang
   `psm_flashlight_ps_domain`.

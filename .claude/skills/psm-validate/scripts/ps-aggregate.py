@@ -176,8 +176,38 @@ def _version_matches(entry, full_ver):
 
     Model bisa menulis 'versions' dalam bentuk penuh (8.1) atau major (8);
     keduanya harus resolve supaya temuan error tak diam-diam terlewat.
+    Token non-string (mis. 8 alih-alih "8") di-coerce, bukan meledak: crash =
+    exit 1 yang bertabrakan dgn kode vonis-gagal (validate_adversarial yang
+    melaporkannya keras sbg pelanggaran skema).
     """
-    return entry.strip() == full_ver or _major(entry) == _major(full_ver)
+    entry = str(entry).strip()
+    return entry == full_ver or _major(entry) == _major(full_ver)
+
+
+def validate_adversarial(adversarial, target_versions):
+    """Validasi struktural payload adversarial buatan model. Return list pelanggaran.
+
+    Tanpa ini pelanggaran skema DIAM-DIAM melemahkan vonis: severity di luar enum
+    ('critical'/'high'/'blocker') tak pernah dihitung memblok, dan token versi yang
+    tak resolve ke target ('PS8', '1.7-9') membuat temuan di-drop dari semua versi.
+    Pelanggaran = input error (perbaiki file, jalankan ulang), bukan vonis.
+    """
+    notes = []
+    if adversarial is None:
+        return notes
+    for i, f in enumerate(adversarial.get("findings", [])):
+        fid = f.get("id", f"finding[{i}]")
+        sev = f.get("severity")
+        if sev not in ("error", "warning"):
+            notes.append(f"{fid}: severity '{sev}' di luar enum error|warning — tak akan pernah memblok")
+        for e in (f.get("versions") or []):
+            if not isinstance(e, str):
+                notes.append(f"{fid}: token versi {e!r} bukan string — tulis sebagai teks (\"8.1\")")
+                continue
+            if not any(_version_matches(e, tv) for tv in target_versions):
+                notes.append(f"{fid}: token versi '{e}' tak resolve ke target {','.join(target_versions)}"
+                             " — temuan diam-diam ter-drop")
+    return notes
 
 
 def adversarial_layer(adversarial, full_ver, target_versions):
@@ -238,6 +268,17 @@ def main():
         target_versions = [v.strip() for v in args.versions.split(",")]
     else:
         target_versions = list(static.get("versions", {}).keys())
+
+    # Gerbang skema di satu-satunya seam model->skrip: tolak KERAS (exit 2, bukan
+    # exit 1 vonis-gagal) supaya pelanggaran tak diam-diam tak-memblok / ter-drop.
+    schema_notes = validate_adversarial(adversarial, target_versions)
+    if schema_notes:
+        print("error: file adversarial tak lolos validasi skema:", file=sys.stderr)
+        for n in schema_notes:
+            print(f"  - {n}", file=sys.stderr)
+        print("perbaiki file temuan adversarial lalu jalankan ulang "
+              "(severity: error|warning; versions: token yang sama dengan --versions)", file=sys.stderr)
+        return 2
 
     versions = {}
     overall_pass = True

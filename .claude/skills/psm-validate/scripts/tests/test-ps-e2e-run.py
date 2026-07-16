@@ -41,27 +41,37 @@ class _LocFirst:
 
 
 class _Loc:
-    def __init__(self, visible):
+    def __init__(self, visible, n=1):
         self.first = _LocFirst(visible)
+        self._n = n
+
+    def count(self):
+        return self._n
 
 
 class FakePage:
     def __init__(self, *, status=200, html="<html><body>halaman ok</body></html>",
-                 visible=True, raise_on=None):
+                 visible=True, raise_on=None, loc_count=1, url_after_click=None):
         self._status = status
         self._html = html
         self._visible = visible
         self._raise_on = set(raise_on or ())
+        self._loc_count = loc_count
+        self._url_after_click = url_after_click
+        self.url = ""
         self.log = []
 
     def set_default_timeout(self, t):
         pass
 
-    def wait_for_load_state(self, *a, **k):
-        pass
+    def wait_for_load_state(self, state="load", **k):
+        self.log.append(("wait", state))
+        if state in self._raise_on:
+            raise RuntimeError(f"{state} timeout")
 
     def goto(self, url):
         self.log.append(("goto", url))
+        self.url = url
         if "goto" in self._raise_on:
             raise RuntimeError("nav gagal")
         return _Resp(self._status)
@@ -72,12 +82,14 @@ class FakePage:
     def locator(self, sel):
         if "visible" in self._raise_on:
             raise RuntimeError("locator gagal")
-        return _Loc(self._visible)
+        return _Loc(self._visible, self._loc_count)
 
     def click(self, sel):
         self.log.append(("click", sel))
         if "click" in self._raise_on:
             raise RuntimeError("click gagal")
+        if self._url_after_click is not None:
+            self.url = self._url_after_click
 
     def fill(self, sel, val):
         self.log.append(("fill", sel, val))
@@ -136,6 +148,10 @@ def main():
                 mod.parse_browsers("Chromium, FIREFOX, safari, chromium") == ["chromium", "firefox"])
     ok &= check("browsers semua invalid -> default", mod.parse_browsers("safari,ie") == ["chromium", "firefox"])
 
+    # --- default timeout navigasi: flashlight dingin butuh >20s (kompilasi Smarty/Symfony) ---
+    ok &= check("DEFAULT_NAV_TIMEOUT_S = 60 (anti false-positive 'halaman rusak' saat cold start)",
+                mod.DEFAULT_NAV_TIMEOUT_S == 60)
+
     # --- host_port_from_domain / publish_spec ---
     ok &= check("port 'localhost:8000' -> 8000", mod.host_port_from_domain("localhost:8000") == 8000)
     ok &= check("port tanpa ':' -> default 8000", mod.host_port_from_domain("localhost") == 8000)
@@ -152,6 +168,8 @@ def main():
     # --- substitute ---
     s = mod.substitute("{fo}/a {bo}/b mod={mod}", _ctx())
     ok &= check("substitute {fo}/{bo}/{mod}", s == "http://fo/a http://bo/b mod=m")
+    ok &= check("substitute {browser} -> engine aktif (nama data unik per-browser, DB bersama)",
+                mod.substitute("data-{browser}", {**_ctx(), "engine": "firefox"}) == "data-firefox")
 
     # --- universal_smoke ---
     sm = mod.universal_smoke()
@@ -183,15 +201,34 @@ def main():
     ok &= check("tanda 'Fatal error' -> expect_no_fatal gagal (konklusif)",
                 _by_action(rfatal, "expect_no_fatal")[0] == _by_action(rfatal, "expect_no_fatal")[0] and
                 _by_action(rfatal, "expect_no_fatal")[0]["ok"] is False)
+    # REGRESI determinism-2: frasa fatal generik hanya dihitung di markup TERLIHAT —
+    # kamus terjemahan/JSON di <script> halaman sehat bukan fatal (anti false-block).
+    rscript = mod.run_steps(FakePage(html='<script>var t={"e":"There was an error"};</script><body>ok</body>'),
+                            [{"action": "goto", "area": "fo", "path": "/"}, {"action": "expect_no_fatal"}], _ctx())
+    ok &= check("frasa generik DI DALAM <script> (kamus terjemahan) -> BUKAN fatal",
+                _by_action(rscript, "expect_no_fatal")[0]["ok"] is True)
+    rvisible = mod.run_steps(FakePage(html="<body>There was an error</body>"),
+                             [{"action": "goto", "area": "fo", "path": "/"}, {"action": "expect_no_fatal"}], _ctx())
+    ok &= check("frasa generik di markup terlihat -> tetap fatal",
+                _by_action(rvisible, "expect_no_fatal")[0]["ok"] is False)
+    ok &= check("fatal_sign_in: <script> tak tertutup (fatal memotong render) tetap terperiksa",
+                mod.fatal_sign_in("<script>Fatal error: boom") == "Fatal error")
 
     # --- run_steps: expect_visible / expect_text ---
     rvis = mod.run_steps(FakePage(visible=False), [{"action": "expect_visible", "selector": "#x"}], _ctx())
     ok &= check("expect_visible False -> gagal", rvis[0]["ok"] is False)
-    rtext = mod.run_steps(FakePage(html="Update successful"),
+    pg_text = FakePage(html="Update successful")
+    rtext = mod.run_steps(pg_text,
                           [{"action": "expect_text", "text": "successful"},
                            {"action": "expect_text", "text": "tak-ada"}], _ctx())
     ok &= check("expect_text ada -> ok, tak ada -> gagal",
                 rtext[0]["ok"] is True and rtext[1]["ok"] is False)
+    ok &= check("expect_text settle 'load' dulu (anti false-fail timing pasca submit/redirect)",
+                ("wait", "load") in pg_text.log)
+    rsettle = mod.run_steps(FakePage(html="x", raise_on={"load"}),
+                            [{"action": "expect_text", "text": "x"}], _ctx())
+    ok &= check("expect_text: settle raise -> best-effort, assertion tetap dievaluasi",
+                rsettle[0]["ok"] is True)
 
     # --- run_steps: click/fill sukses & exception -> gagal ---
     rcf = mod.run_steps(FakePage(), [{"action": "fill", "selector": "#a", "value": "1"},
@@ -199,6 +236,21 @@ def main():
     ok &= check("fill+click sukses -> ok", all(r["ok"] for r in rcf))
     rexc = mod.run_steps(FakePage(raise_on={"goto"}), [{"action": "goto", "area": "fo", "path": "/"}], _ctx())
     ok &= check("goto exception -> ok False (assertion gagal)", rexc[0]["ok"] is False)
+
+    # --- run_steps: click_optional — klik bila elemen ada, lewati tanpa gagal bila tidak ---
+    ok &= check("click_optional terdaftar di SUPPORTED_ACTIONS (lolos validasi spec authored)",
+                "click_optional" in mod.SUPPORTED_ACTIONS)
+    pg_opt = FakePage()
+    ropt = mod.run_steps(pg_opt, [{"action": "click_optional", "selector": "#tok-ok"}], _ctx())
+    ok &= check("click_optional elemen ada -> diklik & ok",
+                ropt[0]["ok"] is True and ("click", "#tok-ok") in pg_opt.log)
+    pg_opt0 = FakePage(loc_count=0)
+    ropt0 = mod.run_steps(pg_opt0, [{"action": "click_optional", "selector": "#tok-ok"}], _ctx())
+    ok &= check("click_optional elemen tak ada -> dilewati tanpa gagal (tak ada klik)",
+                ropt0[0]["ok"] is True and not any(e[0] == "click" for e in pg_opt0.log))
+    ropt_exc = mod.run_steps(FakePage(raise_on={"click"}),
+                             [{"action": "click_optional", "selector": "#x"}], _ctx())
+    ok &= check("click_optional elemen ada tapi klik raise -> ok False", ropt_exc[0]["ok"] is False)
     rukn = mod.run_steps(FakePage(), [{"action": "teleport"}], _ctx())
     ok &= check("aksi tak dikenal -> ok False & tak konklusif (bukan silent pass)",
                 rukn[0]["ok"] is False and rukn[0]["conclusive"] is False)
@@ -247,6 +299,43 @@ def main():
         raised = True
     ok &= check("_drive_page mengangkat kegagalan setelah launch (ditangkap drive_engine -> degrade)", raised)
 
+    # --- _bo_login: klik #submit_login (id stabil lintas 1.7/8/9; name tombol beda antar versi),
+    #     networkidle dibatasi + fallback 'load', sukses = STRUKTURAL (passwd locator 0 + URL
+    #     keluar AdminLogin), retry 1x utk cold-container 1.7/8 ---
+    lctx = {**_ctx(), "admin_email": "a@b", "admin_password": "pw"}
+    DASH = "http://bo/index.php?controller=AdminDashboard&token=x"
+    pg_in = FakePage(loc_count=0, url_after_click=DASH)  # passwd hilang + redirect dashboard
+    ok &= check("_bo_login sukses (passwd locator 0 + URL keluar AdminLogin) & klik #submit_login",
+                mod._bo_login(pg_in, lctx) is True and ("click", "#submit_login") in pg_in.log)
+    pg_form = FakePage(html='<form><input name="passwd"></form>', loc_count=1, url_after_click=DASH)
+    ok &= check("_bo_login gagal bila field passwd masih ada (locator, bukan substring)",
+                mod._bo_login(pg_form, lctx) is False)
+    # REGRESI determinism-1 (anti false-auth): halaman error/interstitial TANPA field passwd
+    # tapi URL masih AdminLogin -> False. Cek substring lama ('name="passwd"' not in html)
+    # melaporkan sukses palsu di sini -> assertion BO memblok atas kegagalan infra.
+    pg_500 = FakePage(html="<h1>500 Internal Server Error</h1>", loc_count=0)  # tanpa redirect
+    ok &= check("_bo_login: halaman 500 tanpa field passwd + URL masih AdminLogin -> False (anti false-auth)",
+                mod._bo_login(pg_500, lctx) is False)
+    pg_ni = FakePage(raise_on={"networkidle"}, loc_count=0, url_after_click=DASH)
+    ok &= check("_bo_login: networkidle timeout -> fallback 'load' (BO polling XHR), tetap sukses",
+                mod._bo_login(pg_ni, lctx) is True and ("wait", "load") in pg_ni.log)
+
+    # retry cold-container: attempt-1 POST tak redirect (URL tetap AdminLogin), attempt-2 sukses
+    class _FlakyLogin(FakePage):
+        def __init__(self):
+            super().__init__(loc_count=0)
+            self.clicks = 0
+
+        def click(self, sel):
+            super().click(sel)
+            self.clicks += 1
+            if self.clicks >= 2:
+                self.url = DASH
+
+    pg_flaky = _FlakyLogin()
+    ok &= check("_bo_login retry: attempt-1 flaky (cold 1.7/8) -> attempt-2 sukses",
+                mod._bo_login(pg_flaky, lctx) is True and pg_flaky.clicks == 2)
+
     # --- assemble_findings: konklusif gagal -> finding; tak konklusif -> inconclusive ---
     driven = [{"browser": "chromium", "scenarios": [
         {"name": "psm-universal-smoke", "source": "builtin", "results": [
@@ -274,8 +363,12 @@ def main():
         (e2e / "typo.json").write_text(json.dumps(
             {"name": "t", "steps": [{"action": "goto", "area": "fo", "path": "/"},
                                     {"action": "expect_visable", "selector": "#x"}]}), encoding="utf-8")
+        (e2e / "zz-optional.json").write_text(json.dumps(
+            {"name": "opt", "steps": [{"action": "goto", "area": "bo", "path": "/x"},
+                                      {"action": "click_optional", "selector": "#token-ok"}]}), encoding="utf-8")
         found, notes = mod.discover_scenarios(mdir)
-        ok &= check("spec valid ditemukan (1) dgn name", len(found) == 1 and found[0]["name"] == "cfg")
+        ok &= check("spec valid ditemukan (2: cfg + spec ber-click_optional) dgn name",
+                    len(found) == 2 and found[0]["name"] == "cfg" and found[1]["name"] == "opt")
         ok &= check("spec tanpa steps & JSON rusak & aksi typo dicatat (3 notes)", len(notes) == 3)
         ok &= check("note aksi tak dikenal menyebut aksinya",
                     any("expect_visable" in n for n in notes))
@@ -328,7 +421,8 @@ def main():
         mod.fl._teardown = lambda s: None
         mod.fl._logs = lambda c: ""
         mod.install_module = lambda s, m, t: ({"ok": True, "no_console": False}, None)
-        mod.wait_http = lambda u, t: (True, 200)
+        warm_urls = []
+        mod.wait_http = lambda u, t: (warm_urls.append(u) or True, 200)
 
         captured = {}
 
@@ -354,6 +448,8 @@ def main():
                     r["errors"] == [] and any("firefox" in n for n in r["browser_notes"]))
         ok &= check("chromium yang jalan tetap menghasilkan temuan konklusif memblok (fix false-pass)",
                     r["browsers"] == ["chromium"] and len(r["findings"]) == 1 and r["pass"] is False)
+        ok &= check("warm-up BO: wait_http menyentuh AdminLogin sebelum drive (cold-container 1.7/8)",
+                    any("controller=AdminLogin" in u for u in warm_urls))
         # rollup artefak visual: console_errors dihitung + screenshot terkumpul + advisory di browser_notes
         ok &= check("rollup: console_errors=1 & screenshot terkumpul",
                     r["console_errors"] == 1 and r["screenshots"] == ["/tmp/shot/chromium-smoke-00-goto.png"])

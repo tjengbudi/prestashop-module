@@ -148,6 +148,9 @@ def main():
     ap.add_argument("module_path", help="Path folder module PrestaShop")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma (default: 1.7.8,8.1,9.1)")
     ap.add_argument("--rules", default=str(DEFAULT_RULES), help="Path ps-rules.json (default: assets/ps-rules.json)")
+    ap.add_argument("--extra-rules", help="Path JSON aturan TAMBAHAN (skema sama ps-rules.json) — "
+                                          "di-merge ke ruleset; --rules MENGGANTI, ini MENAMBAH. "
+                                          "Untuk aturan dari knowledge base tanpa menyalin ruleset inti.")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -161,6 +164,14 @@ def main():
     except (OSError, json.JSONDecodeError) as e:
         print(f"error: gagal baca ruleset: {e}", file=sys.stderr)
         return 2
+    if args.extra_rules:
+        try:
+            extra = json.loads(Path(args.extra_rules).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"error: gagal baca extra-rules: {e}", file=sys.stderr)
+            return 2
+        for grp in RULE_GROUPS:
+            rules.setdefault(grp, []).extend(extra.get(grp, []))
 
     main_file = find_main_file(module_dir)
     if args.verbose:

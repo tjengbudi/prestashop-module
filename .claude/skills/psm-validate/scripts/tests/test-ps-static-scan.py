@@ -50,9 +50,9 @@ def make_module(tmp, name, main_src, with_index=True, tpl=None):
     return d
 
 
-def run_scan(module_dir, versions):
+def run_scan(module_dir, versions, extra_args=None):
     p = subprocess.run(
-        ["uv", "run", str(SCAN), str(module_dir), "--versions", versions],
+        ["uv", "run", str(SCAN), str(module_dir), "--versions", versions, *(extra_args or [])],
         capture_output=True, text=True,
     )
     return json.loads(p.stdout), p.returncode
@@ -130,6 +130,23 @@ def main():
         res, _ = run_scan(comp, "8.1")
         ok &= check("prepend-autoloader false -> tak ada struct-composer-prepend",
                     "struct-composer-prepend" not in [f["id"] for f in res["versions"]["8.1"]["findings"]])
+
+        # 7b. --extra-rules MENAMBAH ke ruleset default (determinism-3: aturan knowledge
+        # base masuk skrip via merge, bukan hand-scan model / mengganti ruleset inti)
+        extra = tmp / "extra-rules.json"
+        extra.write_text(json.dumps({"forbidden_functions": [
+            {"id": "xtra-marker", "severity": "error", "kind": "function",
+             "affects": ["1.7", "8", "9"], "pattern": r"\bpsm_forbidden_marker\s*\(",
+             "message": "fungsi terlarang (aturan tambahan)", "fix": "hapus"}]}))
+        xmod = make_module(tmp, "xmod", GOOD_MAIN.replace(
+            "$this->name = 'goodmod';", "$this->name = 'xmod'; psm_forbidden_marker(1);"))
+        res, rc = run_scan(xmod, "8.1", ["--extra-rules", str(extra)])
+        ids_x = [f["id"] for f in res["versions"]["8.1"]["findings"]]
+        ok &= check("--extra-rules: aturan tambahan kena (xtra-marker) & exit 1",
+                    "xtra-marker" in ids_x and rc == 1)
+        res, rc = run_scan(xmod, "8.1")
+        ok &= check("tanpa --extra-rules: aturan tambahan tak aktif (default utuh)",
+                    "xtra-marker" not in [f["id"] for f in res["versions"]["8.1"]["findings"]] and rc == 0)
 
     # 8. Kontrak authoring ruleset: pattern/expect konsisten dgn kind (rule salah-tulis
     #    ketahuan di test, bukan KeyError saat scan)
