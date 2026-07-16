@@ -107,6 +107,67 @@ def test_extract_module_metadata():
           and meta["version"] == "2.0" and meta["default_selected"] is False)
 
 
+def test_existing_values_preserved():
+    # run update: section sudah ada, answers TIDAK meng-echo nilai terkonfigurasi
+    existing = {"psm": {"name": "OLD", "psm_target_versions": "8.1", "stale_key": "zombie"}}
+    cfg = mod.merge_config(existing, MODYAML, {"module": {}})
+    check("update: nilai existing selamat dari anti-zombie",
+          cfg["psm"]["psm_target_versions"] == "8.1")
+    check("update: key basi tetap dibuang", "stale_key" not in cfg["psm"])
+    cfg2 = mod.merge_config(existing, MODYAML, {"module": {"psm_target_versions": "9.1"}})
+    check("update: jawaban eksplisit menang atas existing",
+          cfg2["psm"]["psm_target_versions"] == "9.1")
+
+
+def test_classify_install_type():
+    check("fresh: tanpa section", mod.classify_install_type(False, []) == "fresh-install")
+    check("fresh + legacy: konsolidasi tetap fresh-install",
+          mod.classify_install_type(False, ["x"]) == "fresh-install")
+    check("update: section tanpa legacy", mod.classify_install_type(True, []) == "update")
+    check("legacy-migration: section + legacy",
+          mod.classify_install_type(True, ["x"]) == "legacy-migration")
+
+
+def test_resolve_defaults():
+    existing = {"output_folder": "{project-root}/out", "psm": {"psm_target_versions": "8.1"}}
+    user = {"user_name": "Budi"}
+    d = mod.resolve_defaults(existing, user, MODYAML,
+                             {"communication_language": "Indonesia"},
+                             {"psm_modules_dir": "legacy-dir"})
+    check("module: existing menang",
+          d["module"]["psm_target_versions"] == {"value": "8.1", "source": "existing"})
+    check("module: legacy mengisi gap",
+          d["module"]["psm_modules_dir"] == {"value": "legacy-dir", "source": "legacy"})
+    check("module: default module.yaml paling akhir", d["module"]["secret_key"]["source"] == "default")
+    check("core: user config dihitung existing (user-only key)",
+          d["core"]["user_name"] == {"value": "Budi", "source": "existing"})
+    check("core: legacy core mengisi gap", d["core"]["communication_language"]["source"] == "legacy")
+    check("core: builtin default paling akhir",
+          d["core"]["document_output_language"] == {"value": "English", "source": "default"})
+    check("ask_core false bila ada core existing", d["ask_core"] is False)
+    d2 = mod.resolve_defaults({}, {}, MODYAML, {}, {})
+    check("ask_core true bila core kosong", d2["ask_core"] is True)
+
+
+def test_directories():
+    import tempfile
+    yaml_dirs = dict(MODYAML)
+    yaml_dirs["directories"] = ["{project-root}/_bmad/psm/memory/tech", "{project-root}/out"]
+    cfg = {"output_folder": "{project-root}/out",
+           "psm": {"name": "PSM", "psm_modules_dir": "{project-root}/modules",
+                   "psm_target_versions": "9.1"}}
+    vals = mod.collect_directory_values(cfg, yaml_dirs, "psm")
+    check("kumpul: directories + output_folder + nilai path module, dedup",
+          vals == ["{project-root}/_bmad/psm/memory/tech", "{project-root}/out",
+                   "{project-root}/modules"])
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        created = mod.create_directories(vals, root)
+        check("mkdir: semua dibuat", len(created) == 3
+              and (root / "_bmad/psm/memory/tech").is_dir() and (root / "modules").is_dir())
+        check("mkdir: idempoten (run kedua nol)", mod.create_directories(vals, root) == [])
+
+
 def test_reject_unresolved_paths():
     check("{project-root} di path arg -> exit 1",
           expect_exit(lambda: mod.reject_unresolved_paths([("--x", "{project-root}/foo")]), 1))
@@ -121,7 +182,8 @@ def test_reject_unresolved_paths():
 def main():
     for t in (test_apply_result_templates, test_merge_anti_zombie_and_core, test_merge_requires_code,
               test_extract_user_settings, test_apply_legacy_defaults, test_extract_module_metadata,
-              test_reject_unresolved_paths):
+              test_existing_values_preserved, test_classify_install_type, test_resolve_defaults,
+              test_directories, test_reject_unresolved_paths):
         print(f"{t.__name__}:")
         t()
     print("\n" + (f"{len(_fail)} GAGAL" if _fail else "SEMUA TEST LOLOS"))

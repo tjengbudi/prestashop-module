@@ -1,0 +1,181 @@
+{
+  "scanner": "prompt-metrics-prepass",
+  "script": "prepass-prompt-metrics.py",
+  "version": "2.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-setup",
+  "timestamp": "2026-07-16T05:02:39.707162+00:00",
+  "budgets": {
+    "skill_md_tokens": [
+      1500,
+      2500
+    ],
+    "multi_branch_reference_tokens": 4500,
+    "single_purpose_reference_tokens": 9000
+  },
+  "skill_md": {
+    "tokens": 2124,
+    "token_method": "tiktoken",
+    "section_count": 9,
+    "frontmatter": {
+      "name": "psm-setup",
+      "description": "Sets up PrestaShop Module Builder module in a project. Use when the user requests to 'install psm module', 'configure PrestaShop Module Builder', or 'setup PrestaShop Module Builder'.",
+      "description_chars": 183,
+      "description_has_angle_brackets": false,
+      "keys": [
+        "description",
+        "name"
+      ]
+    }
+  },
+  "aggregate": {
+    "total_files_scanned": 3,
+    "total_tokens": 5405,
+    "total_waste_patterns": 0,
+    "total_back_references": 0,
+    "files_with_numbered_prefix": 0
+  },
+  "reference_sizes": {},
+  "files": [
+    {
+      "file": "SKILL.md",
+      "tokens": 2124,
+      "token_method": "tiktoken",
+      "sections": [
+        {
+          "level": 2,
+          "title": "Overview"
+        },
+        {
+          "level": 2,
+          "title": "On Activation"
+        },
+        {
+          "level": 2,
+          "title": "Collect Configuration"
+        },
+        {
+          "level": 2,
+          "title": "Write Files"
+        },
+        {
+          "level": 2,
+          "title": "Create Output Directories"
+        },
+        {
+          "level": 2,
+          "title": "Cleanup Legacy Directories"
+        },
+        {
+          "level": 2,
+          "title": "Seed Knowledge Base & External Deps (khusus psm)"
+        },
+        {
+          "level": 2,
+          "title": "Confirm"
+        },
+        {
+          "level": 2,
+          "title": "Outcome"
+        }
+      ],
+      "table_count": 0,
+      "table_rows": 0,
+      "fenced_block_count": 2,
+      "allcaps_directive_count": 0,
+      "numbered_prefix_filename": false,
+      "waste_patterns": [],
+      "back_references": [],
+      "frontmatter": {
+        "name": "psm-setup",
+        "description": "Sets up PrestaShop Module Builder module in a project. Use when the user requests to 'install psm module', 'configure PrestaShop Module Builder', or 'setup PrestaShop Module Builder'.",
+        "description_chars": 183,
+        "description_has_angle_brackets": false,
+        "keys": [
+          "description",
+          "name"
+        ]
+      },
+      "is_skill_md": true
+    },
+    {
+      "file": ".memlog.md",
+      "tokens": 1068,
+      "token_method": "tiktoken",
+      "sections": [],
+      "table_count": 0,
+      "table_rows": 0,
+      "fenced_block_count": 0,
+      "allcaps_directive_count": 0,
+      "numbered_prefix_filename": false,
+      "waste_patterns": [],
+      "back_references": [],
+      "frontmatter": {
+        "name": "",
+        "description": "",
+        "description_chars": 0,
+        "description_has_angle_brackets": false,
+        "keys": [
+          "intent",
+          "skill",
+          "updated"
+        ]
+      },
+      "is_skill_md": false
+    },
+    {
+      "file": "README.md",
+      "tokens": 2213,
+      "token_method": "tiktoken",
+      "sections": [
+        {
+          "level": 2,
+          "title": "Apa isinya"
+        },
+        {
+          "level": 2,
+          "title": "Instalasi & setup"
+        },
+        {
+          "level": 3,
+          "title": "Konfigurasi (config section `psm`)"
+        },
+        {
+          "level": 2,
+          "title": "Cara pakai"
+        },
+        {
+          "level": 3,
+          "title": "Lewat agent (disarankan)"
+        },
+        {
+          "level": 3,
+          "title": "Langsung ke workflow"
+        },
+        {
+          "level": 2,
+          "title": "Alur kerja umum"
+        },
+        {
+          "level": 2,
+          "title": "Apa yang membuat hasilnya akurat"
+        },
+        {
+          "level": 2,
+          "title": "Struktur"
+        },
+        {
+          "level": 2,
+          "title": "Troubleshooting"
+        }
+      ],
+      "table_count": 2,
+      "table_rows": 19,
+      "fenced_block_count": 8,
+      "allcaps_directive_count": 0,
+      "numbered_prefix_filename": false,
+      "waste_patterns": [],
+      "back_references": [],
+      "is_skill_md": false
+    }
+  ]
+}

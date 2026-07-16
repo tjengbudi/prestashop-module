@@ -15,6 +15,13 @@ When --skills-dir is provided, the script verifies that every skill found
 in the legacy directories exists at the installed location before removing
 anything. Directories without skills (like _config/) are removed directly.
 
+--preserve <relpath> (repeatable) protects runtime data living inside a legacy
+directory: the named subtree (relative to each directory being removed, e.g.
+'memory') is kept in place while everything around it is removed. A directory
+with preserved content survives (reported in directories_preserved) instead of
+being deleted wholesale — this is what keeps a module's seeded knowledge base
+alive across re-runs.
+
 Exit codes: 0=success (including nothing to remove), 1=validation error, 2=runtime error
 """
 
@@ -49,6 +56,13 @@ def parse_args():
         "--skills-dir",
         help="Path to .claude/skills/ — enables safety verification that skills "
         "are installed before removing legacy copies",
+    )
+    parser.add_argument(
+        "--preserve",
+        action="append",
+        default=[],
+        help="Subtree (relative to each directory being removed) to keep in "
+        "place, e.g. 'memory' (repeatable)",
     )
     parser.add_argument(
         "--verbose",
@@ -146,16 +160,50 @@ def count_files(path: Path) -> int:
     return count
 
 
+def _is_within(path: Path, ancestor: Path) -> bool:
+    """True if path is strictly inside ancestor."""
+    if path == ancestor:
+        return False
+    try:
+        path.relative_to(ancestor)
+        return True
+    except ValueError:
+        return False
+
+
+def _remove_except(base: Path, keep: list) -> int:
+    """Remove everything under base except the keep subtrees. Returns files removed."""
+    removed_files = 0
+    for child in sorted(base.iterdir()):
+        if any(child == k or _is_within(child, k) for k in keep):
+            continue  # child is (inside) a preserved subtree
+        if any(_is_within(k, child) for k in keep):
+            removed_files += _remove_except(child, keep)  # a keep lives deeper
+            continue
+        if child.is_dir() and not child.is_symlink():
+            removed_files += count_files(child)
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+            removed_files += 1
+    return removed_files
+
+
 def cleanup_directories(
-    bmad_dir: str, dirs_to_remove: list, verbose: bool = False
+    bmad_dir: str, dirs_to_remove: list, verbose: bool = False, preserve=None
 ) -> tuple:
     """Remove specified directories under bmad_dir.
 
+    Directories containing a preserved subtree (see --preserve) are emptied
+    around it instead of removed, so runtime data like a module's memory/
+    survives re-runs.
+
     Returns:
-        (removed, not_found, total_files_removed) tuple
+        (removed, not_found, total_files_removed, preserved) tuple
     """
     removed = []
     not_found = []
+    preserved = []
     total_files = 0
 
     for dirname in dirs_to_remove:
@@ -172,14 +220,27 @@ def cleanup_directories(
             not_found.append(dirname)
             continue
 
-        file_count = count_files(target)
-        if verbose:
-            print(
-                f"Removing {target} ({file_count} files)",
-                file=sys.stderr,
-            )
+        keep = [target / rel for rel in (preserve or []) if (target / rel).exists()]
 
         try:
+            if keep:
+                if verbose:
+                    print(
+                        f"Emptying {target}, preserving: {[str(k) for k in keep]}",
+                        file=sys.stderr,
+                    )
+                total_files += _remove_except(target, keep)
+                preserved.append(
+                    {"directory": dirname, "kept": [str(k) for k in keep]}
+                )
+                continue
+
+            file_count = count_files(target)
+            if verbose:
+                print(
+                    f"Removing {target} ({file_count} files)",
+                    file=sys.stderr,
+                )
             shutil.rmtree(target)
         except OSError as e:
             error_result = {
@@ -194,7 +255,7 @@ def cleanup_directories(
         removed.append(dirname)
         total_files += file_count
 
-    return removed, not_found, total_files
+    return removed, not_found, total_files, preserved
 
 
 def reject_unresolved_paths(named_paths: list[tuple[str, str]]) -> None:
@@ -258,8 +319,8 @@ def main():
         )
 
     # Remove directories
-    removed, not_found, total_files = cleanup_directories(
-        bmad_dir, dirs_to_remove, args.verbose
+    removed, not_found, total_files, preserved = cleanup_directories(
+        bmad_dir, dirs_to_remove, args.verbose, preserve=args.preserve
     )
 
     # Build result
@@ -268,6 +329,7 @@ def main():
         "bmad_dir": str(Path(bmad_dir).resolve()),
         "directories_removed": removed,
         "directories_not_found": not_found,
+        "directories_preserved": preserved,
         "files_removed_count": total_files,
     }
 

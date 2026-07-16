@@ -1,0 +1,80 @@
+{
+  "scanner": "workflow-integrity-prepass",
+  "script": "prepass-workflow-integrity.py",
+  "version": "1.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-setup",
+  "timestamp": "2026-07-16T05:02:40.857576+00:00",
+  "status": "pass",
+  "metadata": {
+    "frontmatter": {
+      "name": "psm-setup",
+      "description": "Sets up PrestaShop Module Builder module in a project. Use when the user requests to 'install psm module', 'configure PrestaShop Module Builder', or 'setup PrestaShop Module Builder'."
+    },
+    "sections": [
+      {
+        "level": 2,
+        "title": "Overview",
+        "line": 8
+      },
+      {
+        "level": 2,
+        "title": "On Activation",
+        "line": 20
+      },
+      {
+        "level": 2,
+        "title": "Collect Configuration",
+        "line": 31
+      },
+      {
+        "level": 2,
+        "title": "Write Files",
+        "line": 41
+      },
+      {
+        "level": 2,
+        "title": "Create Output Directories",
+        "line": 56
+      },
+      {
+        "level": 2,
+        "title": "Cleanup Legacy Directories",
+        "line": 60
+      },
+      {
+        "level": 2,
+        "title": "Seed Knowledge Base & External Deps (khusus psm)",
+        "line": 74
+      },
+      {
+        "level": 2,
+        "title": "Confirm",
+        "line": 80
+      },
+      {
+        "level": 2,
+        "title": "Outcome",
+        "line": 84
+      }
+    ],
+    "workflow_type": "simple-workflow"
+  },
+  "stage_summary": {
+    "total_stages": 0,
+    "referenced": [],
+    "actual": [],
+    "missing_stages": [],
+    "orphaned_stages": []
+  },
+  "prompt_details": [],
+  "issues": [],
+  "summary": {
+    "total_issues": 0,
+    "by_severity": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    }
+  }
+}

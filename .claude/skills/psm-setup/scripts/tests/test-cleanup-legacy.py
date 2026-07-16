@@ -79,10 +79,41 @@ def test_cleanup_directories():
         (bmad / "psm" / "f.txt").write_text("x", encoding="utf-8")
         (bmad / "psm" / "sub").mkdir()
         (bmad / "psm" / "sub" / "g.txt").write_text("y", encoding="utf-8")
-        removed, not_found, total = mod.cleanup_directories(str(bmad), ["psm", "absent"])
+        removed, not_found, total, preserved = mod.cleanup_directories(str(bmad), ["psm", "absent"])
         check("dir ada dihapus", removed == ["psm"] and not (bmad / "psm").exists())
         check("dir tak ada -> not_found", not_found == ["absent"])
         check("hitung file rekursif benar", total == 2)
+        check("tanpa --preserve -> preserved kosong", preserved == [])
+
+
+def test_cleanup_preserve():
+    with tempfile.TemporaryDirectory() as td:
+        bmad = Path(td) / "_bmad"
+        mem = bmad / "psm" / "memory" / "tech"
+        mem.mkdir(parents=True)
+        (mem / "kb.md").write_text("seeded", encoding="utf-8")
+        (bmad / "psm" / "pkg.txt").write_text("x", encoding="utf-8")
+        (bmad / "psm" / "skills").mkdir()
+        (bmad / "psm" / "skills" / "s.md").write_text("y", encoding="utf-8")
+        (bmad / "core").mkdir()
+        (bmad / "core" / "c.txt").write_text("z", encoding="utf-8")
+        removed, _, total, preserved = mod.cleanup_directories(
+            str(bmad), ["psm", "core"], preserve=["memory"]
+        )
+        check("subtree preserve selamat + isinya utuh",
+              (mem / "kb.md").read_text(encoding="utf-8") == "seeded")
+        check("sekitar preserve dihapus",
+              not (bmad / "psm" / "pkg.txt").exists() and not (bmad / "psm" / "skills").exists())
+        check("dir ber-preserve dilaporkan preserved, bukan removed",
+              removed == ["core"] and len(preserved) == 1 and preserved[0]["directory"] == "psm")
+        check("dir tanpa subtree preserve tetap dihapus penuh", not (bmad / "core").exists())
+        check("hitung file terhapus benar (pkg+skills+core, kb selamat)", total == 3)
+        # idempoten: run kedua — psm kini hanya berisi memory/
+        _, _, total2, preserved2 = mod.cleanup_directories(
+            str(bmad), ["psm", "core"], preserve=["memory"]
+        )
+        check("run kedua: preserve tetap, nol file terhapus",
+              total2 == 0 and (mem / "kb.md").exists() and preserved2[0]["directory"] == "psm")
 
 
 def test_reject_unresolved_paths():
@@ -98,7 +129,7 @@ def test_reject_unresolved_paths():
 
 def main():
     for t in (test_find_skill_dirs, test_verify_skills_installed, test_cleanup_directories,
-              test_reject_unresolved_paths):
+              test_cleanup_preserve, test_reject_unresolved_paths):
         print(f"{t.__name__}:")
         t()
     print("\n" + (f"{len(_fail)} GAGAL" if _fail else "SEMUA TEST LOLOS"))

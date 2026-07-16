@@ -4,7 +4,7 @@ description: Bikin, kembangkan, buat cross-version (1.7/8/9), validasi, dan opti
 version: 1.0.0
 default_selected: false
 module_greeting: >
-  Selamat datang di PrestaShop Module Builder! Module ini membantu Budi membuat,
+  Selamat datang di PrestaShop Module Builder! Module ini membantumu membuat,
   meng-cross-version-kan, mengembangkan, memvalidasi, dan mengoptimasi module
   PrestaShop agar jalan di 1.7.x, 8.x, dan 9.x sekaligus. Mulai dengan memanggil
   "psm-agent-expert" untuk berkonsultasi, atau langsung panggil workflow yang kamu butuh.

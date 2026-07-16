@@ -156,6 +156,29 @@ def test_e2e_config_override():
     check("e2e override: browsers=chromium menang", data["psm_e2e_browsers"] == "chromium", res.stdout)
 
 
+def test_defaults_sync_module_yaml():
+    """Anti-drift: default bersama PSM_DEFAULTS harus identik dengan assets/module.yaml.
+
+    Dua file mendeklarasikan default yang sama (resolver untuk runtime, module.yaml
+    untuk prompt setup); divergensi harus menggagalkan test, bukan muncul di runtime.
+    """
+    import importlib.util
+    import yaml
+
+    spec = importlib.util.spec_from_file_location("resolve_psm_config", RESOLVER)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    module_yaml_path = Path(__file__).resolve().parent.parent.parent / "assets" / "module.yaml"
+    module_yaml = yaml.safe_load(module_yaml_path.read_text(encoding="utf-8"))
+    shared = {k: v["default"] for k, v in module_yaml.items()
+              if isinstance(v, dict) and "default" in v}
+    check("drift: ada key bersama untuk dibandingkan", len(shared) >= 4, str(sorted(shared)))
+    for key, default in sorted(shared.items()):
+        check(f"drift: {key} selaras PSM_DEFAULTS",
+              key in mod.PSM_DEFAULTS and mod.PSM_DEFAULTS[key] == default,
+              f"module.yaml={default!r} vs PSM_DEFAULTS={mod.PSM_DEFAULTS.get(key)!r}")
+
+
 def main():
     for test in (
         test_full_config_all_keys,
@@ -167,6 +190,7 @@ def main():
         test_graceful_missing_config,
         test_graceful_present_config,
         test_e2e_config_override,
+        test_defaults_sync_module_yaml,
     ):
         print(f"{test.__name__}:")
         test()

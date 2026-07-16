@@ -1,0 +1,1176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill Analysis Report</title>
+<style>
+  :root {
+    --bg: #0f1b2d;
+    --panel: #16263d;
+    --panel-2: #1d3250;
+    --ink: #e9eef6;
+    --ink-dim: #9fb0c7;
+    --line: #294366;
+    --accent: #b66d46;
+    --accent-ink: #f4d9c8;
+    --critical: #e05656;
+    --high: #e0904a;
+    --medium: #d8c24a;
+    --low: #5aa0d0;
+    --ok: #4caf72;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 20px 80px; }
+  header h1 { font-size: 22px; margin: 0 0 4px; }
+  header .meta { color: var(--ink-dim); font-size: 13px; }
+  header .meta b { color: var(--ink); font-weight: 600; }
+
+  .banner {
+    display: none;
+    background: #3a1414;
+    border: 1px solid var(--critical);
+    color: #ffd9d9;
+    padding: 14px 16px;
+    border-radius: 8px;
+    margin: 16px 0;
+    white-space: pre-wrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+  .banner.show { display: block; }
+
+  .overview {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .grade {
+    font-size: 34px;
+    font-weight: 800;
+    margin: 0 0 8px;
+    text-transform: capitalize;
+  }
+  .grade.g-excellent { color: var(--ok); }
+  .grade.g-good { color: var(--low); }
+  .grade.g-fair { color: var(--medium); }
+  .grade.g-poor { color: var(--critical); }
+  .verdict { font-size: 16px; font-weight: 600; margin: 0 0 14px; }
+  .summary { color: var(--ink-dim); margin: 0 0 14px; }
+  .counts { display: flex; flex-wrap: wrap; gap: 10px; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .pill .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .pill .n { font-weight: 700; }
+  .dot.critical { background: var(--critical); }
+  .dot.high { background: var(--high); }
+  .dot.medium { background: var(--medium); }
+  .dot.low { background: var(--low); }
+
+  /* Generic synthesis/agent-block panel */
+  .block {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .block > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 12px;
+  }
+  .block .mono, .block code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .kv { margin: 0; display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; }
+  .kv dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .kv dd { margin: 0; }
+
+  /* Themes */
+  .theme { padding: 12px 0; border-top: 1px solid var(--line); }
+  .theme:first-of-type { border-top: none; padding-top: 0; }
+  .theme .t-head { display: flex; align-items: center; gap: 10px; }
+  .theme .t-title { font-weight: 600; flex: 1 1 auto; min-width: 0; }
+  .theme .t-cause { color: var(--ink-dim); margin-top: 4px; }
+  .theme .t-action { margin-top: 4px; }
+  .theme .t-findings { margin-top: 8px; padding-left: 12px; border-left: 2px solid var(--line); }
+  .theme .t-finding { font-size: 13px; color: var(--ink-dim); padding: 2px 0; }
+
+  /* Strengths */
+  .strength-list { margin: 0; padding-left: 20px; }
+  .strength-list li { padding: 2px 0; }
+
+  /* Recommendations */
+  .rec { padding: 8px 0; border-top: 1px solid var(--line); }
+  .rec:first-of-type { border-top: none; padding-top: 0; }
+  .rec .rank { font-weight: 700; color: var(--accent-ink); margin-right: 8px; }
+  .rec .resolves { color: var(--ink-dim); font-size: 12px; margin-left: 8px; }
+
+  /* Experience journeys */
+  .block .journey { padding: 8px 0; border-top: 1px solid var(--line); }
+  .block .journey:first-of-type { border-top: none; padding-top: 0; }
+  .block .journey .j-name { font-weight: 600; }
+  .block .journey .j-steps { color: var(--ink-dim); margin-top: 2px; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 18px 0 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar .sel-count { color: var(--ink-dim); font-size: 13px; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--ink);
+    padding: 8px 14px;
+  }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #1a0e07;
+    font-weight: 600;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.link {
+    background: none;
+    border: none;
+    color: var(--accent-ink);
+    padding: 4px 6px;
+    font-size: 13px;
+  }
+  button.small { padding: 5px 10px; font-size: 13px; flex: 0 0 auto; }
+
+  .no-findings {
+    background: var(--panel);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    padding: 28px;
+    text-align: center;
+    color: var(--ink-dim);
+  }
+  .no-findings .big { font-size: 18px; color: var(--ok); margin-bottom: 6px; }
+
+  .group { margin: 18px 0; }
+  .group > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .finding {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--line);
+    border-radius: 8px;
+    margin: 8px 0;
+    overflow: hidden;
+  }
+  .finding.sev-critical { border-left-color: var(--critical); }
+  .finding.sev-high { border-left-color: var(--high); }
+  .finding.sev-medium { border-left-color: var(--medium); }
+  .finding.sev-low { border-left-color: var(--low); }
+
+  .finding .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .finding .row .chk { width: 16px; height: 16px; flex: 0 0 auto; cursor: pointer; }
+  .finding .row .head { flex: 1 1 auto; cursor: pointer; min-width: 0; }
+  .finding .row .title { font-weight: 600; }
+  .finding .row .sub { color: var(--ink-dim); font-size: 12px; margin-top: 2px; }
+  .finding .tag {
+    flex: 0 0 auto;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+  }
+  .finding .caret { flex: 0 0 auto; color: var(--ink-dim); transition: transform 0.15s; cursor: pointer; }
+  .finding.open .caret { transform: rotate(90deg); }
+
+  .finding .body {
+    display: none;
+    padding: 0 14px 14px 42px;
+    border-top: 1px solid var(--line);
+  }
+  .finding.open .body { display: block; }
+  .finding .body dl { margin: 12px 0 0; display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; }
+  .finding .body dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .finding .body dd { margin: 0; }
+  .finding .body code, .finding .body .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%);
+    background: var(--ok);
+    color: #06160c;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  .fallback-area { margin-top: 12px; display: none; }
+  .fallback-area.show { display: block; }
+  .fallback-area textarea {
+    width: 100%;
+    min-height: 160px;
+    background: var(--panel-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Skill Analysis Report</h1>
+    <div class="meta">
+      <span>Subject: <b id="m-subject">—</b></span> &nbsp;·&nbsp;
+      <span>Generated: <b id="m-generated">—</b></span> &nbsp;·&nbsp;
+      <span>Schema: <b id="m-schema">—</b></span>
+    </div>
+  </header>
+
+  <div id="parse-banner" class="banner"></div>
+
+  <section id="overview" class="overview" hidden>
+    <div id="grade" class="grade" hidden></div>
+    <p id="verdict" class="verdict"></p>
+    <p id="summary-text" class="summary" hidden></p>
+    <div id="counts" class="counts"></div>
+  </section>
+
+  <!-- Synthesis layer (themes, strengths, recommendations). Hidden when absent. -->
+  <section id="themes" class="block" hidden></section>
+  <section id="strengths" class="block" hidden></section>
+  <section id="recommendations" class="block" hidden></section>
+
+  <!-- Experience: journeys plus headless (experience). Hidden when absent. -->
+  <section id="experience" class="block" hidden></section>
+
+  <div id="toolbar" class="toolbar" hidden>
+    <button id="btn-copy" class="primary" disabled>Copy selected as paste-back prompt</button>
+    <span id="sel-count" class="sel-count">0 selected</span>
+    <button id="btn-select-all" class="link">Select all</button>
+    <button id="btn-clear" class="link">Clear</button>
+    <button id="btn-expand-all" class="link">Expand all</button>
+    <button id="btn-collapse-all" class="link">Collapse all</button>
+  </div>
+
+  <div id="fallback" class="fallback-area">
+    <p class="sel-count">Clipboard was unavailable. Copy the text below manually:</p>
+    <textarea id="fallback-text" readonly></textarea>
+  </div>
+
+  <div id="findings-root"></div>
+</div>
+
+<div id="toast" class="toast">Copied</div>
+
+<!-- scripts/render_report.py replaces the contents of this island per run.
+     The placeholder below is intentionally unusable: the shell refuses to
+     render it, so a failed injection can never look like real findings. -->
+<script type="application/json" id="report-data">
+{
+  "schema_version": 2,
+  "subject": ".claude/skills/psm-setup",
+  "generated": "2026-07-16",
+  "verdict": "A well-scripted, correctly-shaped installer held back by two things: an update run that trusts the model to preserve existing config values (determinism-1), and a drifted inline recap of psm-agent-expert's seed recipe pointing at the stale scaffold tree (leanness-3/architecture-1).",
+  "grade": "good",
+  "summary": "psm-setup's script layer is its strength — four unit-tested scripts with anti-zombie merges, unresolved-token guards, and idempotent cleanup, wrapped in a clean linear flow that passes workflow integrity. The opportunity is ownership: SKILL.md restates facts that the scripts and a sibling skill already own (one restatement has drifted to stale paths), and the 'existing config wins' tier of default resolution lives only in the prompt, so update runs depend on the model echoing every value back.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "SKILL.md restates facts owned elsewhere",
+      "root_cause": "Belt-and-suspenders prose repeats what the scripts already guard (the {project-root} token rule at four sites, user-key routing at three, mkdir mechanics) and recaps psm-agent-expert's seed recipe inline — where the copy has already drifted to the stale skills/ scaffold paths. The repetition costs tokens (2124, above the 1500 desired tier); the drifted recap actively misleads.",
+      "finding_ids": [
+        "leanness-1",
+        "leanness-2",
+        "leanness-3",
+        "leanness-4",
+        "enhancement-1",
+        "architecture-1",
+        "architecture-6"
+      ],
+      "action": "One editing pass on SKILL.md: replace the Seed section with the minimal hand-off (leanness-3's proposed_smallest), keep the Overview token paragraph as the single authority plus the one unguarded reminder in Create Output Directories, state user-key routing once, and drop the mkdir tool-teaching sentence — seven findings and the token overage fall out of one edit."
+    },
+    {
+      "title": "Update runs trust the model to preserve existing config",
+      "root_cause": "merge-config.py's anti-zombie delete rebuilds the module section purely from the answers JSON, while the 'existing new config values win' tier of default resolution exists only as a prompt instruction — so on an update run, any value the model does not echo back silently resets to defaults. The same prompt-side pattern covers install-type classification and output-directory creation, and module.yaml's directories: list is created by no instruction at all.",
+      "finding_ids": [
+        "determinism-1",
+        "determinism-2",
+        "determinism-3"
+      ],
+      "action": "Extend merge-config.py to own default resolution end-to-end: treat existing module-section values as fallback defaults exactly as apply_legacy_defaults treats legacy values, emit a resolve/--show-defaults pre-pass JSON (resolved defaults with provenance plus install_type), and create module.yaml's directories: entries itself, reporting directories_created."
+    },
+    {
+      "title": "Duplicated sources with no drift guard",
+      "root_cause": "resolve-psm-config.py exists in two identical copies — consumers execute the scaffold-tree copy at skills/psm-setup/scripts/ while the test suite lives beside this skill's non-executed copy — and PSM_DEFAULTS hardcodes the same defaults as assets/module.yaml with no cross-check. Both pairs stay in sync by convention only; this is the known multi-layer defaults-sync burden growing new limbs.",
+      "finding_ids": [
+        "architecture-5",
+        "determinism-4"
+      ],
+      "action": "Pick one canonical resolver copy (point consumers at the installed skill's scripts/ and delete the scaffold copy, or move the tests beside the executed copy), and add a unit test asserting each shared key's default in PSM_DEFAULTS equals assets/module.yaml."
+    },
+    {
+      "title": "README is a drifting, misplaced doc surface",
+      "root_cause": "The root-level README (flagged by path-standards; the bmb template ships none) documents the stale scaffold layout, lists 8 config keys while the runtime resolver honors 10 (both E2E keys missing), and tells users to 'press accept' — an interaction SKILL.md itself forbids.",
+      "finding_ids": [
+        "architecture-4",
+        "enhancement-2",
+        "enhancement-4"
+      ],
+      "action": "Relocate the README out of the skill root (module docs home, e.g. docs/), refreshing it in transit: structure section updated to the installed .claude/skills/ tree, config table gains psm_e2e_enabled and psm_e2e_browsers plus a source-of-truth note pointing at PSM_DEFAULTS in resolve-psm-config.py, and the accept-defaults instruction reworded to a typed reply."
+    },
+    {
+      "title": "Hardcoded 'Budi' defeats the personalization the skill just configured",
+      "root_cause": "The Seed section says 'Beri tahu Budi' twice and module.yaml's module_greeting says 'membantu Budi', while the Outcome section promises to address the user by their configured user_name (default BMad) — an implicit instruction that contradicts the skill's own stated rule and blocks portability to any other installer.",
+      "finding_ids": [
+        "architecture-2",
+        "enhancement-5"
+      ],
+      "action": "Replace 'Budi' with the configured user_name (or 'the user') in SKILL.md and make module_greeting name-neutral."
+    }
+  ],
+  "strengths": [
+    "Script layer is exemplary: four unit-tested Python scripts (scan-scripts 0/0/0) with anti-zombie merges, reject_unresolved_paths guards on every path argument, and idempotent legacy cleanup — the destructive step verifies skills are installed before it deletes.",
+    "Shape matches the job: a linear simple-workflow that passes integrity checks, clean two-part frontmatter with quoted triggers, zero waste patterns and back-references, SKILL.md within its token budget.",
+    "Correct customization posture: no customize.toml, matching the default-no for a one-shot installer whose install questions, module.yaml, and written config files are its product, not its configuration surface.",
+    "Chat-interface realities are encoded: values collected in one combined prompt, never 'press enter', and argument mapping makes the input side headless-ready.",
+    "Legacy migration is genuinely engineered: three-way fresh/update/migration detection, legacy values as schema-filtered fallback defaults, post-merge cleanup with verification and idempotent re-runs."
+  ],
+  "recommendations": [
+    {
+      "rank": 1,
+      "action": "Run the theme-1 editing pass on SKILL.md: swap in the proposed_smallest Seed hand-off, dedupe the {project-root} token rule and user-key routing to single authorities, and drop the mkdir sentence.",
+      "resolves": [
+        "leanness-1",
+        "leanness-2",
+        "leanness-3",
+        "leanness-4",
+        "enhancement-1",
+        "architecture-1",
+        "architecture-6"
+      ]
+    },
+    {
+      "rank": 2,
+      "action": "Extend merge-config.py to own default resolution: existing module-section values as fallback defaults, a --show-defaults pre-pass JSON with install_type and provenance, and creation of module.yaml's directories: entries.",
+      "resolves": [
+        "determinism-1",
+        "determinism-2",
+        "determinism-3"
+      ]
+    },
+    {
+      "rank": 3,
+      "action": "De-duplicate resolve-psm-config.py (one canonical copy, tests beside the executed one) and add a PSM_DEFAULTS-vs-module.yaml sync test.",
+      "resolves": [
+        "architecture-5",
+        "determinism-4"
+      ]
+    },
+    {
+      "rank": 4,
+      "action": "Relocate the README out of the skill root and refresh it: live .claude/skills/ structure, +psm_e2e_enabled/+psm_e2e_browsers rows with a source-of-truth note, typed-reply wording for accepting defaults.",
+      "resolves": [
+        "architecture-4",
+        "enhancement-2",
+        "enhancement-4"
+      ]
+    },
+    {
+      "rank": 5,
+      "action": "Neutralize the hardcoded name: 'the user' (or configured user_name) in SKILL.md's Seed section, name-neutral module_greeting in assets/module.yaml.",
+      "resolves": [
+        "architecture-2",
+        "enhancement-5"
+      ]
+    },
+    {
+      "rank": 6,
+      "action": "Stamp the canonical Resolution rules block into SKILL.md and define the headless return contract (assumptions appended via _bmad/scripts/memlog.py plus a minimal JSON result).",
+      "resolves": [
+        "architecture-3",
+        "enhancement-3"
+      ]
+    }
+  ],
+  "experience": {
+    "journeys": [
+      {
+        "name": "Fresh install",
+        "steps": "module.yaml read → core + module values collected in one combined prompt → merge-config.py and merge-help-csv.py run in parallel → output directories created → cleanup-legacy.py removes installer packages → confirmation summary + module greeting → hand-off: run psm-agent-expert once to seed the knowledge base, check Docker."
+      },
+      {
+        "name": "Update (re-run)",
+        "steps": "Existing psm section detected → user informed this is an update → same collect/merge flow; risk: any existing value the model does not echo into the answers JSON silently resets to defaults (determinism-1)."
+      },
+      {
+        "name": "Legacy migration",
+        "steps": "Per-module _bmad/psm/config.yaml or _bmad/core/config.yaml detected alongside existing config → legacy values become schema-filtered fallback defaults → consolidated write → legacy files deleted and installer directories cleaned with verification."
+      }
+    ],
+    "headless": "Input side is ready (--headless and inline values map to config keys, prompting skipped) but the return is undefined — the flow ends in a prose summary with no JSON contract or memlog'd assumptions (enhancement-3)."
+  },
+  "findings": [
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "medium",
+      "title": "{project-root} dual-semantics rule restated at four sites",
+      "location": "SKILL.md:18 (Overview), :43-45 (Write Files), :58 (Create Output Directories), :64 (Cleanup Legacy Directories)",
+      "evidence": "The literal-token-in-values vs resolved-path-in-arguments rule is stated in full in Overview (line 18), then restated before the Write Files commands (lines 43 and 45), again in Create Output Directories (line 58, including 'The paths stored in the config files must continue to use the literal {project-root} token' — a step that never touches config files), and again before the cleanup command (line 64: 'As with the merge scripts, replace {project-root}...'). This is the canon's 'facts restated across sections' shape. Three of the four use-sites are also script-guarded: merge-config.py, merge-help-csv.py, and cleanup-legacy.py all reject an unresolved token with a loud error (reject_unresolved_paths, merge-config.py:342), so a forgotten resolution there recovers in one turn. The only unguarded site is the mkdir step, where 'mkdir -p {project-root}/...' would silently create a junk directory.",
+      "recommendation": "Keep the Overview paragraph as the single authority and keep the resolve instruction inside Create Output Directories (the one site with no script guard). Cut the reminders at lines 45 and 64 and the 'config files must continue to use the literal token' sentence at line 58 — the scripts' own errors cover those cases, per the canon's core test (a line earns its place only by preventing a failure that would otherwise happen)."
+    },
+    {
+      "id": "leanness-2",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "User-key routing fact stated three times",
+      "location": "SKILL.md:12-13 (Overview) and :37 (Collect Configuration)",
+      "evidence": "That user_name and communication_language live exclusively in config.user.yaml is stated in Overview bullet 1 ('are never written here'), Overview bullet 2 ('These values live exclusively here'), and again in Collect Configuration ('Of these, user_name and communication_language are written exclusively to config.user.yaml'). The routing is enforced by merge-config.py (_CORE_USER_KEYS, line 299) — the model never writes these files by hand, so one statement (with the gitignore why) is all the Confirm step and user explanation need.",
+      "recommendation": "State the routing once in Overview with its why (personal, gitignored) and drop the other two restatements; the Collect Configuration sentence can shrink to nothing since the script does the split."
+    },
+    {
+      "id": "leanness-3",
+      "lens": "leanness",
+      "severity": "medium",
+      "title": "Seed section recaps another skill's mechanics — downstream mechanics in the wrong file, already drifted",
+      "location": "SKILL.md:76 (Seed Knowledge Base & External Deps)",
+      "evidence": "The only actions this skill takes are: do not seed, and tell the user to run psm-agent-expert once. Yet the parenthetical recaps psm-agent-expert's entire seed procedure — source paths ({project-root}/skills/reports/prestashop-module-builder-plan.md, {project-root}/skills/psm-cross-version/references/version-safe-patterns.md, {project-root}/skills/psm-develop/references/ecommerce-function-catalog.md, devdocs fallback). None of it changes a move in this skill, and it has already drifted: the authoritative psm-agent-expert/references/maintain-knowledge.md now resolves catalog paths via a '<skills-dir>' convention, while this recap points into the {project-root}/skills/ tree — the stale scaffold. The recap fails the defend-against-absence test: no dimension exists on which relaying these mechanics beats a two-line hand-off, and the stale copy can only mislead the user it is relayed to.",
+      "recommendation": "Replace the recap with the hand-off only; the seed mechanics stay in psm-agent-expert's maintain-knowledge.md where they execute. Route to variant eval to confirm.",
+      "proposed_smallest": "Setelah direktori dibuat, knowledge base di `{project-root}/_bmad/psm/memory/` (`tech/`, `ecommerce/`, `projects/`) masih kosong. Jangan men-seed-nya di sini — itu tugas first-run `psm-agent-expert` (lihat `references/maintain-knowledge.md` skill tersebut). Beri tahu Budi: jalankan `psm-agent-expert` sekali untuk mengisinya.\n\nPeriksa juga dependensi eksternal: **Docker** wajib untuk uji `psm-validate`/`psm-optimize` di `prestashop-flashlight`. Cek `docker --version`; bila tak ada, beri tahu Budi cara memasang (jangan instal otomatis) dan bahwa image flashlight ditarik saat workflow uji pertama dijalankan.",
+      "predicted_delta": "Nothing lost — the model is explicitly told not to seed, so the source-path details drive no action here, and cutting them removes a copy that is already stale relative to the authoritative file. Route to variant eval to confirm."
+    },
+    {
+      "id": "leanness-4",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Tool mechanics re-teach: 'Use mkdir -p or equivalent'",
+      "location": "SKILL.md:58 (Create Output Directories)",
+      "evidence": "'Use `mkdir -p` or equivalent to create the full path' teaches a tool the model drives fluently — the canon's core test cuts it: a capable model told to create directories that do not yet exist already does this correctly.",
+      "recommendation": "Delete the sentence; the section's remaining instruction (create each not-yet-existing path-type value with the token resolved) fully specifies the outcome."
+    },
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Seed section restates another skill's seed logic with drifted paths",
+      "location": "SKILL.md:74-78 (## Seed Knowledge Base & External Deps)",
+      "evidence": "The section explicitly says seeding is psm-agent-expert's job ('Jangan men-seed-nya di sini'), then restates that skill's seed sources anyway — naming {project-root}/skills/psm-cross-version/references/version-safe-patterns.md and {project-root}/skills/psm-develop/references/ecommerce-function-catalog.md (the stale skills/ scaffold tree), while the authoritative logic in psm-agent-expert's references/maintain-knowledge.md (lines 18-19) resolves them via <skills-dir>/..., i.e. the installed .claude/skills/ tree. The parenthetical 'lihat references/maintain-knowledge.md skill tersebut' also reads as a bare path, which by convention resolves from this skill's root where no references/ directory exists. It is additionally the only Indonesian-language section in an otherwise English SKILL.md — a seam showing it was bolted onto the bmb template.",
+      "recommendation": "Cut the restated source list: keep only 'tell the user to run psm-agent-expert once to seed the knowledge base — its first-run seed logic (psm-agent-expert's references/maintain-knowledge.md) owns the sources.' This removes the drift surface, fixes the bare-path ambiguity, and lets the authoritative file be the single owner. Normalize the section's language to match the rest of the file."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Hardcoded user name contradicts the skill's own Outcome rule",
+      "location": "SKILL.md:76,78 (Seed section); assets/module.yaml:6-10 (module_greeting)",
+      "evidence": "The Outcome section promises: once user_name is known, 'address the user by their configured name'. The Seed section instructs 'Beri tahu Budi: jalankan psm-agent-expert...' and 'beri tahu Budi cara memasang' — a specific hardcoded name (the default is 'BMad'), and module.yaml's module_greeting, displayed verbatim in Confirm, says 'membantu Budi'. This is the implicit-instruction-violates-stated-principle misalignment the architecture bar names as the most dangerous kind, and it makes the skill non-portable to any other user.",
+      "recommendation": "Replace 'Budi' with 'the user' in SKILL.md and make the greeting name-neutral (or interpolate the configured user_name), so the Outcome rule actually governs every user-facing line."
+    },
+    {
+      "id": "architecture-3",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Multi-file SKILL.md missing the canonical Resolution rules block",
+      "location": "SKILL.md",
+      "evidence": "SKILL.md references multiple internal files by bare path (assets/module.yaml, assets/module-help.csv, scripts/merge-config.py, scripts/merge-help-csv.py, scripts/cleanup-legacy.py) and invokes them bare in bash (python3 scripts/merge-config.py ...), where the executing shell's cwd is not guaranteed to be the skill root. The Overview paragraph covers {project-root} token semantics thoroughly, but nothing states that bare paths resolve from the skill's installed directory — the exact gap the canonical Resolution rules block exists to close, and the principles file requires it in any SKILL.md that references multiple internal files.",
+      "recommendation": "Stamp the canonical Resolution rules block (bare paths / {project-root} / {skill-name}) into SKILL.md; the existing {project-root}-literal-token paragraph then reads as the skill-specific extension of it."
+    },
+    {
+      "id": "architecture-4",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "README.md at skill root, with a stale structure section",
+      "location": "README.md (root); stale content at README.md:129-147",
+      "evidence": "Path-standards flags README.md at skill root (only SKILL.md belongs there); the official template bmad-bmb-setup ships no root README. Judged down from the scanner's high because it is human-facing module documentation, never loaded at runtime — not workflow content. But it is drifting: the 'Struktur' section documents the stale skills/ scaffold layout rather than the installed .claude/skills/ tree, and its config table lists 8 psm keys while module.yaml prompts only 4, implying setup manages keys it never writes.",
+      "recommendation": "Move the module README out of the skill (e.g. docs/ or the module's distribution root) since it is not agent-consumed content, and refresh the structure section and config-key table while relocating."
+    },
+    {
+      "id": "architecture-5",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "scripts/resolve-psm-config.py is unreachable from this skill and shadowed by the copy consumers execute",
+      "location": "scripts/resolve-psm-config.py; scripts/tests/test-resolve-psm-config.py",
+      "evidence": "This SKILL.md never references resolve-psm-config.py; its consumers (e.g. psm-validate SKILL.md line 20) execute the other copy at {project-root}/skills/psm-setup/scripts/resolve-psm-config.py in the otherwise-stale scaffold tree. The two copies are currently identical (verified by diff), but the test suite lives beside this non-executed copy — an engineer can edit here, pass tests, and change nothing at runtime. A file no path in the skill reaches is a silent-drift trap in the topology.",
+      "recommendation": "Pick one canonical copy: point consumers at the installed skill's scripts/ (then delete the scaffold-tree copy), or if the scaffold tree must stay authoritative, remove this duplicate and move the tests beside the executed copy."
+    },
+    {
+      "id": "architecture-6",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "SKILL.md between desired and budget token tier",
+      "location": "SKILL.md",
+      "evidence": "2124 tiktoken tokens against the configured tier [1500 desired, 2500 budget] — the principles file defines this band as warn-and-name-the-section, not a hard finding. Nothing is branch-specific enough to carve (every section fires on every run), so a references/ split would be the wrong fix.",
+      "recommendation": "Take the reduction from architecture-1's cut (the restated seed-source detail is the heaviest non-load-bearing prose); the {project-root} gotcha paragraph stays inline as a gotcha that cannot carve."
+    },
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "high",
+      "title": "Default-priority resolution is prompt-side while the script implements only two of its three tiers",
+      "location": "/home/budi/dev/prestashop-module/.claude/skills/psm-setup/SKILL.md:35 (Collect Configuration) + /home/budi/dev/prestashop-module/.claude/skills/psm-setup/scripts/merge-config.py:271-293",
+      "evidence": "SKILL.md instructs the model: '**Default priority** (highest wins): existing new config values > legacy config values > assets/module.yaml defaults... Only keys that match the current schema are carried forward — changed or removed keys are ignored.' — i.e. parse up to four YAML files, filter keys against the schema, and compute a priority merge inline. merge-config.py already implements the legacy and module.yaml tiers deterministically (load_legacy_values/apply_legacy_defaults with schema filtering) but NOT the 'existing new config values' tier: its anti-zombie step (del config[module_code]) rebuilds the module section solely from metadata + answers, so preserving previously configured module values across an update depends entirely on the model re-reading config.yaml correctly and echoing every value back into the answers JSON. If it echoes only changed values, user customizations silently reset to defaults.",
+      "recommendation": "Determinism leak. All three tiers pass the determinism test (identical input -> identical resolved defaults; trivially unit-testable). Apply the pre-pass JSON pattern: add a resolve/--show-defaults mode to merge-config.py (or a small pre-pass script) that reads existing config.yaml + legacy configs + module.yaml and emits compact JSON of resolved defaults with per-key provenance for the model to present; and/or make merge_config treat existing module-section values as fallback defaults exactly as apply_legacy_defaults treats legacy values, so update runs cannot lose values regardless of what the model echoes back."
+    },
+    {
+      "id": "determinism-2",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Prompt-side string-prefix classification and creation of output directories; module.yaml directories list falls through the stated rule",
+      "location": "/home/budi/dev/prestashop-module/.claude/skills/psm-setup/SKILL.md:56-58 (Create Output Directories) + /home/budi/dev/prestashop-module/.claude/skills/psm-setup/assets/module.yaml:39-42",
+      "evidence": "SKILL.md: 'create each path-type value from config.yaml that does not yet exist — this includes output_folder and any module variable whose value starts with {project-root}/' — a scan-for/detect-pattern operation (string-prefix classification) plus token resolution and mkdir, done by the model each run. Meanwhile module.yaml declares a directories: list (_bmad/psm/memory/tech|ecommerce|projects) that no SKILL.md instruction creates — the config-value prefix rule cannot catch it — yet the Seed section assumes those directories exist ('Setelah direktori dibuat... masih kosong').",
+      "recommendation": "Determinism leak (signal verbs: scan for, detect pattern, transform). merge-config.py already holds every input needed — module.yaml (including directories:), resolved answers, and the written config — so have it create the directories (resolving the token from a --project-root it can derive from --config-path) and report directories_created in its JSON, or emit a directories_to_create list the model just mkdirs verbatim. This closes the memory-dirs gap deterministically instead of relying on the model to generalize past the stated rule."
+    },
+    {
+      "id": "determinism-3",
+      "lens": "determinism",
+      "severity": "low",
+      "title": "Install-type classification (fresh install / update / legacy migration) is a deterministic three-way check done in the prompt",
+      "location": "/home/budi/dev/prestashop-module/.claude/skills/psm-setup/SKILL.md:20-27 (On Activation)",
+      "evidence": "Steps 2-3 have the model derive a three-way classification from file existence plus section presence: 'Check if {project-root}/_bmad/config.yaml exists — if a section matching the module's code is already present... Check for per-module configuration at {project-root}/_bmad/psm/config.yaml and {project-root}/_bmad/core/config.yaml...' with fresh-install vs legacy-migration branching on the combination.",
+      "recommendation": "Determinism leak, cheap but unit-testable (given the same files, the classification is always the same). Fold an install_type field and legacy_configs_found list into the same defaults pre-pass JSON proposed in determinism-1 — one script run then hands the model install type, legacy inventory, and resolved defaults together, and the prompt keeps only the user-facing messaging judgment."
+    },
+    {
+      "id": "determinism-4",
+      "lens": "determinism",
+      "severity": "low",
+      "title": "PSM_DEFAULTS duplicates module.yaml defaults with no automated drift check",
+      "location": "/home/budi/dev/prestashop-module/.claude/skills/psm-setup/scripts/resolve-psm-config.py:39-55 vs /home/budi/dev/prestashop-module/.claude/skills/psm-setup/assets/module.yaml:19-37",
+      "evidence": "PSM_DEFAULTS hardcodes 'psm_target_versions': '1.7.8,8.1,9.1', 'psm_flashlight_tag_map': '1.7.8=1.7.8.11,...', psm_modules_dir, psm_reports_dir — the same defaults declared in assets/module.yaml. They currently agree, but nothing verifies it: tests/test-resolve-psm-config.py never cross-references module.yaml, so the sync is maintained by convention (a known multi-layer sync burden).",
+      "recommendation": "Comparison-category script opportunity: comparing two files for drift is exactly the deterministic work the lens says should never be manual. Add a unit test in scripts/tests/test-resolve-psm-config.py that loads assets/module.yaml and asserts each shared key's default equals PSM_DEFAULTS, so divergence fails a test run instead of surfacing at runtime."
+    },
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Remove drifted restatement of psm-agent-expert's seed recipe (delegation already applied)",
+      "location": "SKILL.md:74-76 (## Seed Knowledge Base & External Deps)",
+      "evidence": "The section correctly applies delegation ('Jangan men-seed-nya di sini — itu tugas psm-agent-expert') and names the authority (references/maintain-knowledge.md of that skill), then restates the recipe inline anyway — and the restatement has already drifted: psm-setup points the catalogs at {project-root}/skills/psm-cross-version/... and {project-root}/skills/psm-develop/... (the stale scaffold tree), while the authoritative maintain-knowledge.md resolves them via <skills-dir> (the live installed sibling tree at .claude/skills/). Duplicated downstream logic drifting is the exact failure delegation exists to prevent.",
+      "recommendation": "Cut the parenthetical recipe (source paths + devdocs fallback) and keep only the delegation, the pointer to psm-agent-expert's references/maintain-knowledge.md, and the one-line user instruction to run psm-agent-expert once. Loss from the removal: nothing — the authoritative reference is already named in the same sentence."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add the two undocumented E2E keys to the README config table (documented escape hatch is incomplete)",
+      "location": "README.md:41-54 (### Konfigurasi table)",
+      "evidence": "README's config table is the only discovery surface for keys setup never prompts for (module.yaml asks 4, table documents 8), and its stated escape hatch is 'sunting _bmad/config.yaml'. But the runtime resolver scripts/resolve-psm-config.py honors 10 keys — psm_e2e_enabled and psm_e2e_browsers (Lapis 4 browser E2E gate and Playwright engines) are absent from the table, so an expert user wanting to skip or tune E2E dead-ends. MEMORY already tracks this family's multi-layer defaults-sync risk; this is a fifth drift point.",
+      "recommendation": "Add psm_e2e_enabled and psm_e2e_browsers rows to the README table, and annotate the table with its source of truth (PSM_DEFAULTS in scripts/resolve-psm-config.py) so future keys land in both places."
+    },
+    {
+      "id": "enhancement-3",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Opportunity: define the headless return contract (assumptions to memlog, minimal JSON back)",
+      "location": "SKILL.md:29 (On Activation args paragraph) and SKILL.md:80-82 (## Confirm)",
+      "evidence": "Headless readiness verdict: input-side ready (arguments map to keys, defaults fill the rest, prompting is skipped) and easily adaptable to full headless. The gap is the return: '--headless' is an accepted argument but the flow ends only in a human confirmation summary, while the principles' Headless mode pattern calls for assumptions logged as typed entries via {project-root}/_bmad/scripts/memlog.py (which exists in this project) and a minimal JSON return (status, files written, directories created) so an automator bootstrapping psm in CI gets a usable result.",
+      "recommendation": "Add two lines to the headless branch: append 'assumption' entries (defaults used, legacy values carried forward) through _bmad/scripts/memlog.py, and end with a small JSON return of status plus the paths written (config.yaml, config.user.yaml, module-help.csv, directories created) in place of — or alongside — the prose summary."
+    },
+    {
+      "id": "enhancement-4",
+      "lens": "enhancement",
+      "severity": "low",
+      "title": "Reword 'tekan terima saja' — README tells the user to press accept, which the skill itself forbids",
+      "location": "README.md:31",
+      "evidence": "README step 1 says defaults are sensible — 'tekan terima saja bila cocok' (just press accept) — but SKILL.md's Collect Configuration explicitly encodes the chat-interface reality: never tell the user to press enter or leave blank, because they must type something. A first-timer following the README looks for an accept button that does not exist.",
+      "recommendation": "Reword to match the skill's actual interaction, e.g. 'balas \"pakai default semua\" bila cocok'."
+    },
+    {
+      "id": "enhancement-5",
+      "lens": "enhancement",
+      "severity": "low",
+      "title": "Hardcoded 'Budi' bypasses the user_name the skill just collected",
+      "location": "SKILL.md:76-78 (seed/deps section); assets/module.yaml module_greeting",
+      "evidence": "The skill collects user_name (default BMad) and the Outcome section instructs addressing the user by the configured name, yet the seed/deps section hardcodes 'Beri tahu Budi' twice and module.yaml's greeting says 'membantu Budi'. This is the same failure shape as a hardcoded value beside a declared scalar: the personalization mechanism the skill just configured is silently no-oped for any other installer of a module whose stated goal is 'siap dipakai siapa pun'.",
+      "recommendation": "Replace 'Budi' with 'the user' (or the collected user_name) in SKILL.md, and make module_greeting name-neutral."
+    }
+  ]
+}
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  var SEVERITIES = ["critical", "high", "medium", "low"];
+  var SEV_LABEL = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
+  var GRADES = ["excellent", "good", "fair", "poor"];
+  var PLACEHOLDER_SUBJECT = "__PLACEHOLDER__";
+
+  var els = {
+    banner: document.getElementById("parse-banner"),
+    overview: document.getElementById("overview"),
+    grade: document.getElementById("grade"),
+    verdict: document.getElementById("verdict"),
+    summaryText: document.getElementById("summary-text"),
+    counts: document.getElementById("counts"),
+    themes: document.getElementById("themes"),
+    strengths: document.getElementById("strengths"),
+    recommendations: document.getElementById("recommendations"),
+    experience: document.getElementById("experience"),
+    toolbar: document.getElementById("toolbar"),
+    root: document.getElementById("findings-root"),
+    subject: document.getElementById("m-subject"),
+    generated: document.getElementById("m-generated"),
+    schema: document.getElementById("m-schema"),
+    selCount: document.getElementById("sel-count"),
+    btnCopy: document.getElementById("btn-copy"),
+    btnSelectAll: document.getElementById("btn-select-all"),
+    btnClear: document.getElementById("btn-clear"),
+    btnExpandAll: document.getElementById("btn-expand-all"),
+    btnCollapseAll: document.getElementById("btn-collapse-all"),
+    fallback: document.getElementById("fallback"),
+    fallbackText: document.getElementById("fallback-text"),
+    toast: document.getElementById("toast")
+  };
+
+  var selected = Object.create(null);
+  var findings = [];
+  var findingsById = Object.create(null);
+  var subjectPath = "";
+  var standards = null;
+
+  function showBanner(message) {
+    els.banner.textContent = message;
+    els.banner.classList.add("show");
+  }
+
+  function esc(value) {
+    var s = value == null ? "" : String(value);
+    return s.replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Normalize an arbitrary parsed object against schema_version 2, supplying
+  // defaults so a partial or future island still renders. Unknown fields are
+  // ignored, not fatal. Severity counts are always derived from the findings
+  // array, never read from the island, so they cannot disagree with it. The
+  // synthesis blocks (grade, summary, themes, strengths, recommendations) and
+  // the experience block are OPTIONAL: each normalizes to an empty value that
+  // renders nothing rather than an empty panel or an error.
+  function normalize(raw) {
+    var obj = raw && typeof raw === "object" ? raw : {};
+    var rawFindings = Array.isArray(obj.findings) ? obj.findings : [];
+
+    var norm = {
+      schema_version: typeof obj.schema_version === "number" ? obj.schema_version : 2,
+      subject: obj.subject != null ? String(obj.subject) : "(unspecified)",
+      generated: obj.generated != null ? String(obj.generated) : "(unspecified)",
+      verdict: obj.verdict != null ? String(obj.verdict) : "(no verdict supplied)",
+      grade: GRADES.indexOf(String(obj.grade || "").toLowerCase()) >= 0
+        ? String(obj.grade).toLowerCase() : "",
+      summary: typeof obj.summary === "string" ? obj.summary : "",
+      standards: (obj.standards && typeof obj.standards === "object") ? {
+        canon: obj.standards.canon != null ? String(obj.standards.canon) : "",
+        principles: obj.standards.principles != null ? String(obj.standards.principles) : "",
+        scripts: obj.standards.scripts != null ? String(obj.standards.scripts) : ""
+      } : null,
+      themes: normalizeThemes(obj.themes),
+      strengths: normalizeStrengths(obj.strengths),
+      recommendations: normalizeRecommendations(obj.recommendations),
+      experience: normalizeExperience(obj.experience),
+      counts: { critical: 0, high: 0, medium: 0, low: 0 },
+      findings: []
+    };
+
+    rawFindings.forEach(function (f, i) {
+      if (!f || typeof f !== "object") { return; }
+      var sev = SEVERITIES.indexOf(f.severity) >= 0 ? f.severity : "low";
+      norm.findings.push({
+        id: f.id != null ? String(f.id) : "finding-" + (i + 1),
+        lens: f.lens != null ? String(f.lens) : "(unknown)",
+        severity: sev,
+        title: f.title != null ? String(f.title) : "(untitled finding)",
+        location: f.location != null ? String(f.location) : "",
+        evidence: f.evidence != null ? String(f.evidence) : "",
+        recommendation: f.recommendation != null ? String(f.recommendation) : "",
+        proposed_smallest: f.proposed_smallest != null ? String(f.proposed_smallest) : "",
+        predicted_delta: f.predicted_delta != null ? String(f.predicted_delta) : ""
+      });
+      norm.counts[sev] += 1;
+    });
+
+    return norm;
+  }
+
+  function normalizeThemes(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (t) {
+      if (!t || typeof t !== "object") { return; }
+      var ids = [];
+      if (Array.isArray(t.finding_ids)) {
+        t.finding_ids.forEach(function (id) { if (id != null) { ids.push(String(id)); } });
+      }
+      var title = t.title != null ? String(t.title) : "";
+      if (!title && !ids.length) { return; }
+      list.push({
+        title: title || "(untitled theme)",
+        root_cause: t.root_cause != null ? String(t.root_cause) : "",
+        action: t.action != null ? String(t.action) : "",
+        finding_ids: ids
+      });
+    });
+    return list;
+  }
+
+  function normalizeStrengths(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (s) {
+      if (typeof s === "string" && s) { list.push(s); }
+      else if (s && typeof s === "object" && s.title) {
+        list.push(String(s.title) + (s.detail ? " — " + String(s.detail) : ""));
+      }
+    });
+    return list;
+  }
+
+  function normalizeRecommendations(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (r, i) {
+      if (!r || typeof r !== "object") { return; }
+      var action = r.action != null ? String(r.action) : "";
+      if (!action) { return; }
+      var resolves = "";
+      if (Array.isArray(r.resolves)) { resolves = r.resolves.map(String).join(", "); }
+      else if (typeof r.resolves === "number") { resolves = r.resolves + " findings"; }
+      else if (r.resolves != null) { resolves = String(r.resolves); }
+      list.push({
+        rank: typeof r.rank === "number" ? r.rank : i + 1,
+        action: action,
+        resolves: resolves
+      });
+    });
+    list.sort(function (a, b) { return a.rank - b.rank; });
+    return list;
+  }
+
+  // Optional experience block: journeys plus a headless note. Returns null when
+  // neither is usable.
+  function normalizeExperience(raw) {
+    if (!raw || typeof raw !== "object") { return null; }
+    var journeys = [];
+    if (Array.isArray(raw.journeys)) {
+      raw.journeys.forEach(function (j) {
+        if (!j || typeof j !== "object") { return; }
+        var name = j.name != null ? String(j.name) : "";
+        var steps = j.steps != null ? String(j.steps) : "";
+        if (!name && !steps) { return; }
+        journeys.push({ name: name, steps: steps });
+      });
+    }
+    var headless = raw.headless != null ? String(raw.headless) : "";
+    if (!journeys.length && !headless) { return null; }
+    return { journeys: journeys, headless: headless };
+  }
+
+  function renderOverview(data) {
+    els.subject.textContent = data.subject;
+    els.generated.textContent = data.generated;
+    els.schema.textContent = String(data.schema_version);
+    els.verdict.textContent = data.verdict;
+
+    if (data.grade) {
+      els.grade.textContent = data.grade;
+      els.grade.className = "grade g-" + data.grade;
+      els.grade.hidden = false;
+    }
+    if (data.summary) {
+      els.summaryText.textContent = data.summary;
+      els.summaryText.hidden = false;
+    }
+
+    els.counts.innerHTML = "";
+    SEVERITIES.forEach(function (s) {
+      var pill = document.createElement("span");
+      pill.className = "pill";
+      pill.innerHTML =
+        '<span class="dot ' + s + '"></span>' +
+        '<span class="lbl">' + SEV_LABEL[s] + '</span>' +
+        '<span class="n">' + data.counts[s] + "</span>";
+      els.counts.appendChild(pill);
+    });
+    els.overview.hidden = false;
+  }
+
+  // Every copied fix prompt opens by anchoring the fixing session to the same
+  // standards that produced the findings, so the fix is held to the bar too.
+  function standardsPreamble() {
+    if (!standards || !standards.canon) { return []; }
+    var bar = standards.canon + (standards.principles ? " and " + standards.principles : "");
+    var lines = [
+      "Hold " + bar + " as the bar for every line you change — a fix that adds ceremony is a new finding, not a fix."
+    ];
+    if (standards.scripts) {
+      lines.push("If the fix adds or changes scripts, follow " + standards.scripts + ".");
+    }
+    lines.push("");
+    return lines;
+  }
+
+  function composeThemePrompt(theme, resolved) {
+    var lines = standardsPreamble();
+    lines.push("Fix the following theme in " + subjectPath + ": " + theme.title);
+    lines.push("");
+    if (theme.root_cause) { lines.push("Root cause: " + theme.root_cause); }
+    if (theme.action) { lines.push("Fix: " + theme.action); }
+    if (resolved.length) {
+      lines.push("");
+      lines.push("Findings to address:");
+      resolved.forEach(function (f, i) {
+        lines.push((i + 1) + ". " + f.title);
+        if (f.location) { lines.push("   Location: " + f.location); }
+        if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+        if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      });
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  function renderThemes(themes) {
+    if (!themes.length) { els.themes.hidden = true; return; }
+    els.themes.innerHTML = "<h2>Themes</h2>";
+    themes.forEach(function (t) {
+      var resolved = t.finding_ids
+        .map(function (id) { return findingsById[id]; })
+        .filter(function (f) { return !!f; });
+      var items = resolved.map(function (f) {
+        return '<div class="t-finding"><span class="mono">' + esc(f.id) + "</span> " +
+          esc(f.title) +
+          (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "") +
+          "</div>";
+      }).join("");
+
+      var node = document.createElement("div");
+      node.className = "theme";
+      node.innerHTML =
+        '<div class="t-head"><span class="t-title">' + esc(t.title) + "</span>" +
+        '<button class="small t-fix">Fix This Theme</button></div>' +
+        (t.root_cause ? '<div class="t-cause">Root cause: ' + esc(t.root_cause) + "</div>" : "") +
+        (t.action ? '<div class="t-action"><b>Fix:</b> ' + esc(t.action) + "</div>" : "") +
+        (items ? '<div class="t-findings">' + items + "</div>" : "");
+      node.querySelector(".t-fix").addEventListener("click", function () {
+        copyText(composeThemePrompt(t, resolved));
+      });
+      els.themes.appendChild(node);
+    });
+    els.themes.hidden = false;
+  }
+
+  function renderStrengths(list) {
+    if (!list.length) { els.strengths.hidden = true; return; }
+    els.strengths.innerHTML =
+      "<h2>Strengths</h2><ul class=\"strength-list\">" +
+      list.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") +
+      "</ul>";
+    els.strengths.hidden = false;
+  }
+
+  function renderRecommendations(recs) {
+    if (!recs.length) { els.recommendations.hidden = true; return; }
+    var html = "<h2>Recommendations</h2>";
+    recs.forEach(function (r) {
+      html += '<div class="rec"><span class="rank">#' + esc(String(r.rank)) + "</span>" +
+        esc(r.action) +
+        (r.resolves ? '<span class="resolves">resolves: ' + esc(r.resolves) + "</span>" : "") +
+        "</div>";
+    });
+    els.recommendations.innerHTML = html;
+    els.recommendations.hidden = false;
+  }
+
+  function renderExperience(exp) {
+    if (!exp) { els.experience.hidden = true; return; }
+    var html = "<h2>Experience</h2>";
+    if (exp.journeys.length) {
+      html += exp.journeys.map(function (j) {
+        return '<div class="journey">' +
+          '<div class="j-name">' + esc(j.name || "(unnamed journey)") + "</div>" +
+          (j.steps ? '<div class="j-steps">' + esc(j.steps) + "</div>" : "") +
+          "</div>";
+      }).join("");
+    }
+    if (exp.headless) {
+      html += '<dl class="kv" style="margin-top:12px"><dt>Headless</dt><dd>' +
+        esc(exp.headless) + "</dd></dl>";
+    }
+    els.experience.innerHTML = html;
+    els.experience.hidden = false;
+  }
+
+  function renderNoFindings() {
+    els.root.innerHTML =
+      '<div class="no-findings">' +
+      '<div class="big">No findings</div>' +
+      "<div>The scanners returned a clean pass for this subject.</div>" +
+      "</div>";
+  }
+
+  function findingNode(f) {
+    var node = document.createElement("div");
+    node.className = "finding sev-" + f.severity;
+    node.setAttribute("data-id", f.id);
+
+    var sub =
+      esc(f.lens) +
+      (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "");
+
+    var rows =
+      "<dt>Lens</dt><dd>" + esc(f.lens) + "</dd>" +
+      (f.location ? "<dt>Location</dt><dd><code>" + esc(f.location) + "</code></dd>" : "") +
+      (f.evidence ? "<dt>Evidence</dt><dd>" + esc(f.evidence) + "</dd>" : "") +
+      (f.recommendation ? "<dt>Recommendation</dt><dd>" + esc(f.recommendation) + "</dd>" : "") +
+      (f.proposed_smallest ? "<dt>Proposed smallest</dt><dd>" + esc(f.proposed_smallest) + "</dd>" : "") +
+      (f.predicted_delta ? "<dt>Predicted delta</dt><dd>" + esc(f.predicted_delta) + "</dd>" : "");
+
+    node.innerHTML =
+      '<div class="row">' +
+      '<input type="checkbox" class="chk" aria-label="Select finding">' +
+      '<div class="head">' +
+      '<div class="title">' + esc(f.title) + "</div>" +
+      '<div class="sub">' + sub + "</div>" +
+      "</div>" +
+      '<span class="tag">' + SEV_LABEL[f.severity] + "</span>" +
+      '<span class="caret">▸</span>' +
+      "</div>" +
+      '<div class="body"><dl>' + rows + "</dl></div>";
+
+    var chk = node.querySelector(".chk");
+    chk.checked = !!selected[f.id];
+    chk.addEventListener("change", function () {
+      if (chk.checked) { selected[f.id] = true; } else { delete selected[f.id]; }
+      updateSelection();
+    });
+
+    var head = node.querySelector(".head");
+    var caret = node.querySelector(".caret");
+    function toggle() { node.classList.toggle("open"); }
+    head.addEventListener("click", toggle);
+    caret.addEventListener("click", toggle);
+
+    return node;
+  }
+
+  function renderFindings(list) {
+    els.root.innerHTML = "";
+    if (list.length === 0) {
+      renderNoFindings();
+      els.toolbar.hidden = true;
+      return;
+    }
+    els.toolbar.hidden = false;
+
+    SEVERITIES.forEach(function (sev) {
+      var group = list.filter(function (f) { return f.severity === sev; });
+      if (group.length === 0) { return; }
+      var wrap = document.createElement("div");
+      wrap.className = "group";
+      var h = document.createElement("h2");
+      h.innerHTML = '<span class="dot ' + sev + '"></span>' + SEV_LABEL[sev] + " (" + group.length + ")";
+      wrap.appendChild(h);
+      group.forEach(function (f) { wrap.appendChild(findingNode(f)); });
+      els.root.appendChild(wrap);
+    });
+  }
+
+  function updateSelection() {
+    var n = Object.keys(selected).length;
+    els.selCount.textContent = n + " selected";
+    els.btnCopy.disabled = n === 0;
+  }
+
+  function composePrompt() {
+    var picked = findings.filter(function (f) { return selected[f.id]; });
+    if (picked.length === 0) { return ""; }
+    var lines = standardsPreamble();
+    lines.push("Fix the following issues in " + subjectPath + ":");
+    lines.push("");
+    picked.forEach(function (f, i) {
+      lines.push((i + 1) + ". " + f.title);
+      if (f.location) { lines.push("   Location: " + f.location); }
+      if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+      if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      if (f.proposed_smallest) { lines.push("   Proposed smallest: " + f.proposed_smallest); }
+      lines.push("");
+    });
+    return lines.join("\n").replace(/\n+$/, "\n");
+  }
+
+  function showToast(text) {
+    els.toast.textContent = text;
+    els.toast.classList.add("show");
+    setTimeout(function () { els.toast.classList.remove("show"); }, 1600);
+  }
+
+  function fallbackCopy(text) {
+    els.fallbackText.value = text;
+    els.fallback.classList.add("show");
+    els.fallbackText.focus();
+    els.fallbackText.select();
+    try {
+      var ok = document.execCommand && document.execCommand("copy");
+      if (ok) {
+        showToast("Copied");
+        return;
+      }
+    } catch (e) { /* fall through to manual */ }
+    showToast("Copy the text shown below");
+  }
+
+  function copyText(text) {
+    if (!text) { return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { showToast("Copied"); },
+        function () { fallbackCopy(text); }
+      );
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function doCopy() {
+    copyText(composePrompt());
+  }
+
+  function wireToolbar() {
+    els.btnCopy.addEventListener("click", doCopy);
+    els.btnSelectAll.addEventListener("click", function () {
+      findings.forEach(function (f) { selected[f.id] = true; });
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = true; });
+      updateSelection();
+    });
+    els.btnClear.addEventListener("click", function () {
+      selected = Object.create(null);
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = false; });
+      els.fallback.classList.remove("show");
+      updateSelection();
+    });
+    els.btnExpandAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.add("open"); });
+    });
+    els.btnCollapseAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.remove("open"); });
+    });
+  }
+
+  function init() {
+    var island = document.getElementById("report-data");
+    var parsed;
+    try {
+      if (!island) { throw new Error("report-data island element not found"); }
+      parsed = JSON.parse(island.textContent);
+    } catch (err) {
+      showBanner(
+        "Could not parse the report data island.\n\n" +
+        "Error: " + (err && err.message ? err.message : String(err)) + "\n\n" +
+        "The findings could not be rendered. The JSON inside the " +
+        'report-data island (the application/json script tag) is malformed.'
+      );
+      return;
+    }
+
+    var data = normalize(parsed);
+
+    if (data.subject === PLACEHOLDER_SUBJECT) {
+      els.subject.textContent = data.subject;
+      showBanner(
+        "This is the unfilled report shell.\n\n" +
+        "The report-data island still carries the placeholder subject, so " +
+        "there are no findings here. Generate a real report with " +
+        "scripts/render_report.py."
+      );
+      return;
+    }
+
+    findings = data.findings;
+    subjectPath = data.subject;
+    standards = data.standards;
+    findingsById = Object.create(null);
+    findings.forEach(function (f) { findingsById[f.id] = f; });
+
+    renderOverview(data);
+    renderThemes(data.themes);
+    renderStrengths(data.strengths);
+    renderRecommendations(data.recommendations);
+    renderExperience(data.experience);
+    renderFindings(findings);
+    wireToolbar();
+    updateSelection();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

@@ -8,13 +8,28 @@
 Reads a module.yaml definition and a JSON answers file, then writes or updates
 the shared config.yaml (core values at root + module section) and config.user.yaml
 (user_name, communication_language, plus any module variable with user_setting: true).
-Uses an anti-zombie pattern for the module section in config.yaml.
+Uses an anti-zombie pattern for the module section in config.yaml; schema-matched
+values already in the section survive the rebuild as fallback defaults, so an
+update run cannot lose configured values the answers file does not echo back.
+
+Default priority (highest wins): answers > existing config values > legacy values
+> module.yaml defaults.
+
+Pre-pass mode: --show-defaults emits resolved defaults with per-key provenance,
+the install type (fresh-install / update / legacy-migration), and the legacy
+config inventory as JSON — without writing anything. Run it before prompting.
 
 Legacy migration: when --legacy-dir is provided, reads old per-module config files
 from {legacy-dir}/{module-code}/config.yaml and {legacy-dir}/core/config.yaml.
 Matching values serve as fallback defaults (answers override them). After a
 successful merge, the legacy config.yaml files are deleted. Only the current
 module and core directories are touched — other module directories are left alone.
+
+After a successful merge the script also creates the configured directories
+(module.yaml `directories:` entries, `output_folder`, and any module path value
+starting with `{project-root}/`), resolving the token against the project root
+derived from --config-path ({project-root}/_bmad/config.yaml). The result JSON
+reports them in `directories_created`.
 
 Exit codes: 0=success, 1=validation error, 2=runtime error
 """
@@ -47,13 +62,17 @@ def parse_args():
     )
     parser.add_argument(
         "--answers",
-        required=True,
-        help="Path to JSON file with collected answers",
+        help="Path to JSON file with collected answers (required unless --show-defaults)",
     )
     parser.add_argument(
         "--user-config-path",
-        required=True,
-        help="Path to the target _bmad/config.user.yaml file",
+        help="Path to the target _bmad/config.user.yaml file (required unless --show-defaults)",
+    )
+    parser.add_argument(
+        "--show-defaults",
+        action="store_true",
+        help="Pre-pass mode: emit resolved defaults (with per-key provenance), "
+        "install type, and legacy inventory as JSON without writing anything.",
     )
     parser.add_argument(
         "--legacy-dir",
@@ -88,6 +107,15 @@ def load_json_file(path: str) -> dict:
 _CORE_KEYS = frozenset(
     {"user_name", "communication_language", "document_output_language", "output_folder"}
 )
+
+# Built-in defaults for core keys, used only by --show-defaults when a key is
+# absent from existing config, user config, and legacy config alike.
+_CORE_DEFAULTS = {
+    "user_name": "BMad",
+    "communication_language": "English",
+    "document_output_language": "English",
+    "output_folder": "{project-root}/_bmad-output",
+}
 
 
 def load_legacy_values(
@@ -159,6 +187,129 @@ def apply_legacy_defaults(answers: dict, legacy_core: dict, legacy_module: dict)
         merged["module"] = filled_mod
 
     return merged
+
+
+def extract_existing_module_values(
+    existing_config: dict, module_code: str, module_yaml: dict
+) -> dict:
+    """Schema-filtered variable values from the existing module section.
+
+    Only keys that match a current module.yaml variable definition are returned;
+    stale keys stay excluded so the anti-zombie rebuild still drops them.
+    """
+    section = existing_config.get(module_code)
+    if not isinstance(section, dict):
+        return {}
+    return {
+        k: v
+        for k, v in section.items()
+        if k in module_yaml and isinstance(module_yaml[k], dict)
+    }
+
+
+def classify_install_type(has_module_section: bool, legacy_files: list) -> str:
+    """Deterministic three-way install classification.
+
+    fresh-install: no module section yet (legacy files, if any, get consolidated).
+    update: module section exists, no legacy files.
+    legacy-migration: module section exists alongside legacy per-module configs.
+    """
+    if has_module_section:
+        return "legacy-migration" if legacy_files else "update"
+    return "fresh-install"
+
+
+def resolve_defaults(
+    existing_config: dict,
+    user_config: dict,
+    module_yaml: dict,
+    legacy_core: dict,
+    legacy_module: dict,
+) -> dict:
+    """Resolve per-key defaults with provenance for the --show-defaults pre-pass.
+
+    Priority (highest wins): existing values > legacy values > module.yaml /
+    built-in defaults. Returns {"core": {...}, "module": {...}, "ask_core": bool}
+    where each entry is {"value": ..., "source": "existing"|"legacy"|"default"}.
+    """
+    module_code = module_yaml.get("code", "")
+    existing_module = extract_existing_module_values(
+        existing_config, module_code, module_yaml
+    )
+
+    module_defaults = {}
+    for key, var_def in module_yaml.items():
+        if not (isinstance(var_def, dict) and "prompt" in var_def):
+            continue
+        if key in existing_module:
+            module_defaults[key] = {"value": existing_module[key], "source": "existing"}
+        elif key in legacy_module:
+            module_defaults[key] = {"value": legacy_module[key], "source": "legacy"}
+        else:
+            module_defaults[key] = {"value": var_def.get("default"), "source": "default"}
+
+    core_defaults = {}
+    any_core_existing = False
+    for key in sorted(_CORE_KEYS):
+        # user-only keys live in config.user.yaml; the rest at config root
+        existing_source = user_config if key in _CORE_USER_KEYS else existing_config
+        if existing_source.get(key) is not None:
+            core_defaults[key] = {"value": existing_source[key], "source": "existing"}
+            any_core_existing = True
+        elif key in legacy_core:
+            core_defaults[key] = {"value": legacy_core[key], "source": "legacy"}
+        else:
+            core_defaults[key] = {"value": _CORE_DEFAULTS[key], "source": "default"}
+
+    return {
+        "core": core_defaults,
+        "module": module_defaults,
+        "ask_core": not any_core_existing,
+    }
+
+
+def collect_directory_values(config: dict, module_yaml: dict, module_code: str) -> list:
+    """Gather the configured directory values to ensure on disk (still tokenized).
+
+    Sources: module.yaml `directories:` entries, root `output_folder`, and any
+    module variable value starting with `{project-root}/`.
+    """
+    values = [v for v in (module_yaml.get("directories") or []) if isinstance(v, str)]
+    if isinstance(config.get("output_folder"), str):
+        values.append(config["output_folder"])
+    section = config.get(module_code)
+    if isinstance(section, dict):
+        for k, v in section.items():
+            if (
+                isinstance(module_yaml.get(k), dict)
+                and isinstance(v, str)
+                and v.startswith("{project-root}/")
+            ):
+                values.append(v)
+    seen = set()
+    ordered = []
+    for v in values:
+        if v not in seen:
+            seen.add(v)
+            ordered.append(v)
+    return ordered
+
+
+def create_directories(values: list, project_root: Path, verbose: bool = False) -> list:
+    """Resolve {project-root} in each value and mkdir -p it. Returns paths created
+    this run (already-existing directories are skipped, keeping re-runs idempotent).
+    """
+    created = []
+    for value in values:
+        resolved = Path(value.replace("{project-root}", str(project_root)))
+        if not resolved.is_absolute():
+            resolved = project_root / resolved
+        if not resolved.exists():
+            if verbose:
+                print(f"Creating directory: {resolved}", file=sys.stderr)
+            resolved.mkdir(parents=True, exist_ok=True)
+            created.append(str(resolved))
+    return created
 
 
 def cleanup_legacy_configs(
@@ -268,6 +419,11 @@ def merge_config(
                 print(f"Writing core config at root: {list(shared_core.keys())}", file=sys.stderr)
             config.update(shared_core)
 
+    # Preserve tier: schema-matched values from the existing section survive the
+    # anti-zombie rebuild unless the answers override them, so an update run
+    # cannot silently reset values the model did not echo back.
+    existing_values = extract_existing_module_values(config, module_code, module_yaml)
+
     # Anti-zombie: remove existing module section
     if module_code in config:
         if verbose:
@@ -277,8 +433,9 @@ def merge_config(
             )
         del config[module_code]
 
-    # Build module section: metadata + variable values
+    # Build module section: metadata + preserved values + answered values
     module_section = extract_module_metadata(module_yaml)
+    module_section.update(existing_values)
     module_answers = apply_result_templates(
         module_yaml, answers.get("module", {}), verbose
     )
@@ -367,6 +524,13 @@ def reject_unresolved_paths(named_paths: list[tuple[str, str]]) -> None:
 def main():
     args = parse_args()
 
+    if not args.show_defaults and not (args.answers and args.user_config_path):
+        print(
+            "Error: --answers and --user-config-path are required unless --show-defaults",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     reject_unresolved_paths(
         [
             ("--config-path", args.config_path),
@@ -381,8 +545,13 @@ def main():
         print(f"Error: Could not load module.yaml from {args.module_yaml}", file=sys.stderr)
         sys.exit(1)
 
-    answers = load_json_file(args.answers)
+    module_code = module_yaml.get("code", "")
+    if not module_code:
+        print("Error: module.yaml must have a 'code' field", file=sys.stderr)
+        sys.exit(1)
+
     existing_config = load_yaml_file(args.config_path)
+    has_module_section = module_code in existing_config
 
     if args.verbose:
         exists = Path(args.config_path).exists()
@@ -391,20 +560,68 @@ def main():
             print(f"Existing sections: {list(existing_config.keys())}", file=sys.stderr)
 
     # Legacy migration: read old per-module configs as fallback defaults
-    legacy_files_found = []
+    legacy_core, legacy_module, legacy_files_found = {}, {}, []
     if args.legacy_dir:
-        module_code = module_yaml.get("code", "")
         legacy_core, legacy_module, legacy_files_found = load_legacy_values(
             args.legacy_dir, module_code, module_yaml, args.verbose
         )
-        if legacy_core or legacy_module:
-            answers = apply_legacy_defaults(answers, legacy_core, legacy_module)
-            if args.verbose:
-                print("Applied legacy values as fallback defaults", file=sys.stderr)
+
+    install_type = classify_install_type(has_module_section, legacy_files_found)
+
+    # Pre-pass mode: emit resolved defaults + install type, write nothing
+    if args.show_defaults:
+        user_config = (
+            load_yaml_file(args.user_config_path) if args.user_config_path else {}
+        )
+        defaults = resolve_defaults(
+            existing_config, user_config, module_yaml, legacy_core, legacy_module
+        )
+        print(
+            json.dumps(
+                {
+                    "status": "success",
+                    "mode": "show-defaults",
+                    "module_code": module_code,
+                    "install_type": install_type,
+                    "legacy_configs_found": legacy_files_found,
+                    "ask_core": defaults["ask_core"],
+                    "core_defaults": defaults["core"],
+                    "module_defaults": defaults["module"],
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
+
+    answers = load_json_file(args.answers)
+
+    if legacy_core or legacy_module:
+        # Existing config outranks legacy: drop legacy keys the existing section
+        # already answers, then fill the remaining gaps under the answers.
+        existing_module = extract_existing_module_values(
+            existing_config, module_code, module_yaml
+        )
+        legacy_module = {
+            k: v for k, v in legacy_module.items() if k not in existing_module
+        }
+        answers = apply_legacy_defaults(answers, legacy_core, legacy_module)
+        if args.verbose:
+            print("Applied legacy values as fallback defaults", file=sys.stderr)
 
     # Merge and write config.yaml
     updated_config = merge_config(existing_config, module_yaml, answers, args.verbose)
     write_config(updated_config, args.config_path, args.verbose)
+
+    # Ensure configured directories exist (module.yaml directories:, output_folder,
+    # module path values). Project root derives from --config-path's contract
+    # location: {project-root}/_bmad/config.yaml.
+    project_root = Path(args.config_path).resolve().parent.parent
+    directories_created = create_directories(
+        collect_directory_values(updated_config, module_yaml, module_code),
+        project_root,
+        args.verbose,
+    )
 
     # Merge and write config.user.yaml
     user_settings = extract_user_settings(module_yaml, answers)
@@ -422,15 +639,16 @@ def main():
         )
 
     # Output result summary as JSON
-    module_code = module_yaml["code"]
     result = {
         "status": "success",
         "config_path": str(Path(args.config_path).resolve()),
         "user_config_path": str(Path(args.user_config_path).resolve()),
         "module_code": module_code,
+        "install_type": install_type,
         "core_updated": bool(answers.get("core")),
         "module_keys": list(updated_config.get(module_code, {}).keys()),
         "user_keys": list(user_settings.keys()),
+        "directories_created": directories_created,
         "legacy_configs_found": legacy_files_found,
         "legacy_configs_deleted": legacy_deleted,
     }
