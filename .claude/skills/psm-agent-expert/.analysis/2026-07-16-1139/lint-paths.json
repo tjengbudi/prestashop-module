@@ -1,0 +1,236 @@
+{
+  "scanner": "path-standards",
+  "script": "scan-path-standards.py",
+  "version": "3.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-agent-expert",
+  "timestamp": "2026-07-16T04:39:33.736617+00:00",
+  "files_scanned": [
+    ".analysis/2026-06-25-2035/agent-analysis-report.md",
+    ".analysis/2026-06-25-2035/findings.json",
+    ".analysis/2026-06-25-2035/lint-paths.json",
+    ".analysis/2026-06-25-2035/lint-scripts.json",
+    ".analysis/2026-06-25-2035/prepass.json",
+    ".analysis/2026-07-16-1139/integrity.json",
+    ".analysis/2026-07-16-1139/lint-paths.json",
+    ".analysis/2026-07-16-1139/lint-scripts.json",
+    ".analysis/2026-07-16-1139/prepass.json",
+    ".memlog.md",
+    "SKILL.md",
+    "references/answer-technical.md",
+    "references/brainstorm-ecommerce.md",
+    "references/maintain-knowledge.md",
+    "references/route-workflow.md"
+  ],
+  "status": "fail",
+  "findings": [
+    {
+      "file": ".memlog.md",
+      "line": 0,
+      "severity": "high",
+      "category": "structure",
+      "title": "Prompt file at skill root: .memlog.md",
+      "detail": "All progressive disclosure content must be in ./references/ \u2014 only SKILL.md belongs at root",
+      "action": "Move .memlog.md to references/.memlog.md"
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/agent-analysis-report.md",
+      "line": 1,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "# Analysis Report: /home/budi/dev/prestashop-module/skills/psm-agent-expert",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/agent-analysis-report.md",
+      "line": 41,
+      "severity": "high",
+      "category": "bare-bmad",
+      "title": "Bare _bmad reference without {project-root} prefix",
+      "detail": "- Wiring shared module memory _bmad/psm/memory/ benar \u2014 agent kurator, workflow lain konsumen; bukan sanctum pribadi yan",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/agent-analysis-report.md",
+      "line": 99,
+      "severity": "high",
+      "category": "bare-bmad",
+      "title": "Bare _bmad reference without {project-root} prefix",
+      "detail": "- Evidence: name/title terisi tanpa catatan bahwa read-only saat runtime; user bisa bingung saat override via _bmad/cust",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/findings.json",
+      "line": 3,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"subject\": \"/home/budi/dev/prestashop-module/skills/psm-agent-expert\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/findings.json",
+      "line": 9,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"canon\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/prompt-quality-canon.md\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/findings.json",
+      "line": 10,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"principles\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/agent-quality-principles.md",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/findings.json",
+      "line": 11,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"scripts\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/script-opportunities-reference",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/findings.json",
+      "line": 37,
+      "severity": "high",
+      "category": "bare-bmad",
+      "title": "Bare _bmad reference without {project-root} prefix",
+      "detail": "\"Wiring shared module memory _bmad/psm/memory/ benar \u2014 agent kurator, workflow lain konsumen; bukan sanctum pribadi yang",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/findings.json",
+      "line": 56,
+      "severity": "high",
+      "category": "bare-bmad",
+      "title": "Bare _bmad reference without {project-root} prefix",
+      "detail": "{\"id\": \"customization-1\", \"lens\": \"customization\", \"severity\": \"low\", \"title\": \"name/title tanpa komentar read-only (DIP",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/lint-paths.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/skills/psm-agent-expert\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/lint-paths.json",
+      "line": 33,
+      "severity": "high",
+      "category": "bare-bmad",
+      "title": "Bare _bmad reference without {project-root} prefix",
+      "detail": "\"title\": \"Bare _bmad reference without {project-root} prefix\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/lint-paths.json",
+      "line": 42,
+      "severity": "high",
+      "category": "bare-bmad",
+      "title": "Bare _bmad reference without {project-root} prefix",
+      "detail": "\"title\": \"Bare _bmad reference without {project-root} prefix\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/lint-paths.json",
+      "line": 43,
+      "severity": "high",
+      "category": "bare-bmad",
+      "title": "Bare _bmad reference without {project-root} prefix",
+      "detail": "\"detail\": \"- (decision) Knowledge base = shared module memory _bmad/psm/memory/ (tech/ ecommerce/ projects/), agent kura",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/lint-paths.json",
+      "line": 51,
+      "severity": "high",
+      "category": "bare-bmad",
+      "title": "Bare _bmad reference without {project-root} prefix",
+      "detail": "\"title\": \"Bare _bmad reference without {project-root} prefix\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2035/lint-scripts.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/skills/psm-agent-expert\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-16-1139/integrity.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/.claude/skills/psm-agent-expert\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-16-1139/lint-scripts.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/.claude/skills/psm-agent-expert\",",
+      "action": ""
+    },
+    {
+      "file": ".memlog.md",
+      "line": 7,
+      "severity": "high",
+      "category": "bare-bmad",
+      "title": "Bare _bmad reference without {project-root} prefix",
+      "detail": "- (note) Build agent psm-agent-expert skill #5 (hub). Persona PrestaShop Module Expert (tetap, bukan First-Breath). Rout",
+      "action": ""
+    },
+    {
+      "file": ".memlog.md",
+      "line": 9,
+      "severity": "high",
+      "category": "bare-bmad",
+      "title": "Bare _bmad reference without {project-root} prefix",
+      "detail": "- (decision) Knowledge base = shared module memory _bmad/psm/memory/ (tech/ ecommerce/ projects/), agent kurator utama; ",
+      "action": ""
+    },
+    {
+      "file": ".memlog.md",
+      "line": 11,
+      "severity": "high",
+      "category": "bare-bmad",
+      "title": "Bare _bmad reference without {project-root} prefix",
+      "detail": "- (event) Bangun agent stateless-template (persona tetap penuh di SKILL.md 1219 token) + 4 references capability (answer",
+      "action": ""
+    }
+  ],
+  "assessments": {},
+  "summary": {
+    "total_findings": 21,
+    "by_severity": {
+      "critical": 0,
+      "high": 21,
+      "medium": 0,
+      "low": 0
+    },
+    "by_category": {
+      "double_prefix": 0,
+      "bare_bmad": 11,
+      "absolute_path": 9,
+      "relative_prefix": 0,
+      "cross_dir_dot_slash": 0,
+      "frontmatter": 0,
+      "structure": 1
+    },
+    "assessment": "Path standards scan complete"
+  }
+}

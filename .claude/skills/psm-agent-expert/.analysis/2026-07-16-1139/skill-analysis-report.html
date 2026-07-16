@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill Analysis Report</title>
+<style>
+  :root {
+    --bg: #0f1b2d;
+    --panel: #16263d;
+    --panel-2: #1d3250;
+    --ink: #e9eef6;
+    --ink-dim: #9fb0c7;
+    --line: #294366;
+    --accent: #b66d46;
+    --accent-ink: #f4d9c8;
+    --critical: #e05656;
+    --high: #e0904a;
+    --medium: #d8c24a;
+    --low: #5aa0d0;
+    --ok: #4caf72;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 20px 80px; }
+  header h1 { font-size: 22px; margin: 0 0 4px; }
+  header .meta { color: var(--ink-dim); font-size: 13px; }
+  header .meta b { color: var(--ink); font-weight: 600; }
+
+  .banner {
+    display: none;
+    background: #3a1414;
+    border: 1px solid var(--critical);
+    color: #ffd9d9;
+    padding: 14px 16px;
+    border-radius: 8px;
+    margin: 16px 0;
+    white-space: pre-wrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+  .banner.show { display: block; }
+
+  .overview {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .grade {
+    font-size: 34px;
+    font-weight: 800;
+    margin: 0 0 8px;
+    text-transform: capitalize;
+  }
+  .grade.g-excellent { color: var(--ok); }
+  .grade.g-good { color: var(--low); }
+  .grade.g-fair { color: var(--medium); }
+  .grade.g-poor { color: var(--critical); }
+  .verdict { font-size: 16px; font-weight: 600; margin: 0 0 14px; }
+  .summary { color: var(--ink-dim); margin: 0 0 14px; }
+  .counts { display: flex; flex-wrap: wrap; gap: 10px; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .pill .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .pill .n { font-weight: 700; }
+  .dot.critical { background: var(--critical); }
+  .dot.high { background: var(--high); }
+  .dot.medium { background: var(--medium); }
+  .dot.low { background: var(--low); }
+
+  /* Generic synthesis/agent-block panel */
+  .block {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .block > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 12px;
+  }
+  .block .mono, .block code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .kv { margin: 0; display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; }
+  .kv dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .kv dd { margin: 0; }
+
+  /* Themes */
+  .theme { padding: 12px 0; border-top: 1px solid var(--line); }
+  .theme:first-of-type { border-top: none; padding-top: 0; }
+  .theme .t-head { display: flex; align-items: center; gap: 10px; }
+  .theme .t-title { font-weight: 600; flex: 1 1 auto; min-width: 0; }
+  .theme .t-cause { color: var(--ink-dim); margin-top: 4px; }
+  .theme .t-action { margin-top: 4px; }
+  .theme .t-findings { margin-top: 8px; padding-left: 12px; border-left: 2px solid var(--line); }
+  .theme .t-finding { font-size: 13px; color: var(--ink-dim); padding: 2px 0; }
+
+  /* Strengths */
+  .strength-list { margin: 0; padding-left: 20px; }
+  .strength-list li { padding: 2px 0; }
+
+  /* Recommendations */
+  .rec { padding: 8px 0; border-top: 1px solid var(--line); }
+  .rec:first-of-type { border-top: none; padding-top: 0; }
+  .rec .rank { font-weight: 700; color: var(--accent-ink); margin-right: 8px; }
+  .rec .resolves { color: var(--ink-dim); font-size: 12px; margin-left: 8px; }
+
+  /* Experience journeys */
+  .block .journey { padding: 8px 0; border-top: 1px solid var(--line); }
+  .block .journey:first-of-type { border-top: none; padding-top: 0; }
+  .block .journey .j-name { font-weight: 600; }
+  .block .journey .j-steps { color: var(--ink-dim); margin-top: 2px; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 18px 0 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar .sel-count { color: var(--ink-dim); font-size: 13px; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--ink);
+    padding: 8px 14px;
+  }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #1a0e07;
+    font-weight: 600;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.link {
+    background: none;
+    border: none;
+    color: var(--accent-ink);
+    padding: 4px 6px;
+    font-size: 13px;
+  }
+  button.small { padding: 5px 10px; font-size: 13px; flex: 0 0 auto; }
+
+  .no-findings {
+    background: var(--panel);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    padding: 28px;
+    text-align: center;
+    color: var(--ink-dim);
+  }
+  .no-findings .big { font-size: 18px; color: var(--ok); margin-bottom: 6px; }
+
+  .group { margin: 18px 0; }
+  .group > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .finding {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--line);
+    border-radius: 8px;
+    margin: 8px 0;
+    overflow: hidden;
+  }
+  .finding.sev-critical { border-left-color: var(--critical); }
+  .finding.sev-high { border-left-color: var(--high); }
+  .finding.sev-medium { border-left-color: var(--medium); }
+  .finding.sev-low { border-left-color: var(--low); }
+
+  .finding .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .finding .row .chk { width: 16px; height: 16px; flex: 0 0 auto; cursor: pointer; }
+  .finding .row .head { flex: 1 1 auto; cursor: pointer; min-width: 0; }
+  .finding .row .title { font-weight: 600; }
+  .finding .row .sub { color: var(--ink-dim); font-size: 12px; margin-top: 2px; }
+  .finding .tag {
+    flex: 0 0 auto;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+  }
+  .finding .caret { flex: 0 0 auto; color: var(--ink-dim); transition: transform 0.15s; cursor: pointer; }
+  .finding.open .caret { transform: rotate(90deg); }
+
+  .finding .body {
+    display: none;
+    padding: 0 14px 14px 42px;
+    border-top: 1px solid var(--line);
+  }
+  .finding.open .body { display: block; }
+  .finding .body dl { margin: 12px 0 0; display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; }
+  .finding .body dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .finding .body dd { margin: 0; }
+  .finding .body code, .finding .body .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%);
+    background: var(--ok);
+    color: #06160c;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  .fallback-area { margin-top: 12px; display: none; }
+  .fallback-area.show { display: block; }
+  .fallback-area textarea {
+    width: 100%;
+    min-height: 160px;
+    background: var(--panel-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Skill Analysis Report</h1>
+    <div class="meta">
+      <span>Subject: <b id="m-subject">—</b></span> &nbsp;·&nbsp;
+      <span>Generated: <b id="m-generated">—</b></span> &nbsp;·&nbsp;
+      <span>Schema: <b id="m-schema">—</b></span>
+    </div>
+  </header>
+
+  <div id="parse-banner" class="banner"></div>
+
+  <section id="overview" class="overview" hidden>
+    <div id="grade" class="grade" hidden></div>
+    <p id="verdict" class="verdict"></p>
+    <p id="summary-text" class="summary" hidden></p>
+    <div id="counts" class="counts"></div>
+  </section>
+
+  <!-- Synthesis layer (themes, strengths, recommendations). Hidden when absent. -->
+  <section id="themes" class="block" hidden></section>
+  <section id="strengths" class="block" hidden></section>
+  <section id="recommendations" class="block" hidden></section>
+
+  <!-- Experience: journeys plus headless (experience). Hidden when absent. -->
+  <section id="experience" class="block" hidden></section>
+
+  <div id="toolbar" class="toolbar" hidden>
+    <button id="btn-copy" class="primary" disabled>Copy selected as paste-back prompt</button>
+    <span id="sel-count" class="sel-count">0 selected</span>
+    <button id="btn-select-all" class="link">Select all</button>
+    <button id="btn-clear" class="link">Clear</button>
+    <button id="btn-expand-all" class="link">Expand all</button>
+    <button id="btn-collapse-all" class="link">Collapse all</button>
+  </div>
+
+  <div id="fallback" class="fallback-area">
+    <p class="sel-count">Clipboard was unavailable. Copy the text below manually:</p>
+    <textarea id="fallback-text" readonly></textarea>
+  </div>
+
+  <div id="findings-root"></div>
+</div>
+
+<div id="toast" class="toast">Copied</div>
+
+<!-- scripts/render_report.py replaces the contents of this island per run.
+     The placeholder below is intentionally unusable: the shell refuses to
+     render it, so a failed injection can never look like real findings. -->
+<script type="application/json" id="report-data">
+{
+  "schema_version": 2,
+  "subject": "/home/budi/dev/prestashop-module/.claude/skills/psm-agent-expert",
+  "generated": "2026-07-16",
+  "verdict": "A lean, honest consultant hub held back by module drift: sibling pointers still read the stale skills/ scaffold and the router cannot see psm-optimize.",
+  "grade": "good",
+  "summary": "The skill's core is in excellent shape: a 1266-token entry with zero waste patterns, an honest script-free determinism posture, and a deliberately declined, well-documented customization surface — three of five lenses passed clean. The primary opportunity is a single module-sync pass: cross-skill pointers were wired against the skills/ scaffold snapshot at build time and the module has since evolved (live tree moved to .claude/skills/, psm-optimize was added, target default moved to 9.1), so the hub's truth-source chain and router have quietly drifted. A secondary opportunity is re-sequencing On Activation so intent comes before ingestion and environment plumbing.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "Module drift: wiring frozen at build time while the module evolved",
+      "root_cause": "The hub was wired against the skills/ scaffold snapshot when it was built (2026-06-25). Since then the live tree moved to .claude/skills/ and diverged (psm-validate gained a fourth E2E layer, version-safe-patterns gained a checklist), and psm-optimize shipped as a fifth sibling. The hub still reads the stale copies and routes to only four workflows, so its 'knowledge base is truth' principle is silently violated at the source.",
+      "finding_ids": [
+        "architecture-1",
+        "enhancement-1"
+      ],
+      "action": "One sync pass: repoint sibling-skill reads to the install-dir-relative convention the live psm-develop catalog already uses (<skills-dir>/psm-cross-version/references/version-safe-patterns.md, etc.), drop route-workflow.md's 'semua di {project-root}/skills/' location claim in favor of routing by skill name, add a psm-optimize row to the routing table ('module lambat / optimasi performa / tuning cache-service'), and add it to the Overview parenthetical. Keep the two intentionally-correct skills/ pointers: psm-setup's resolver script and skills/reports/prestashop-module-builder-plan.md."
+    },
+    {
+      "title": "Activation front-loads work that belongs after intent",
+      "root_cause": "On Activation runs config → build-or-read the whole knowledge base → check Docker/flashlight → greet last. The user who invoked the hub with a question in hand waits through ingestion and possibly another workflow's environment setup before being heard; 'read what is relevant' cannot be judged before intent exists.",
+      "finding_ids": [
+        "enhancement-2",
+        "enhancement-3",
+        "enhancement-5"
+      ],
+      "action": "Re-sequence On Activation: greet and capture intent first (if the invocation already carries a question or module path, route straight to the matching capability); defer KB reads to capability time since answer-technical.md already names the KB as its first source of truth; on first run offer the seed rather than imposing it; move the Docker/flashlight check out of activation and into route-workflow.md's psm-validate handoff prep, the only moment it matters."
+    },
+    {
+      "title": "Activation config contract is half-specified",
+      "root_cause": "The parenthetical defaults on SKILL.md:40-42 are the skill's only fallback if the resolver is unavailable, yet one of them is stale (psm_target_versions documents 9.0 while the canonical resolver default is 9.1 — verified against resolve-psm-config.py) and no instruction connects the defaults to resolver failure. The fallback path is both wrong and unreachable.",
+      "finding_ids": [
+        "enhancement-4",
+        "orchestrator-1"
+      ],
+      "action": "Refresh the documented default to 1.7.8,8.1,9.1 and add one clause: if the resolver is missing or fails to run, use the parenthesized defaults and continue, noting config was not resolved. This mirrors the fallback discipline maintain-knowledge.md already applies to seed sources."
+    },
+    {
+      "title": "Entry-file residue from templating and carving",
+      "root_cause": "Small leftovers from the build: two convention tokens defined but never consumed (one mis-stamped into a tautology), seed-source paths re-inlined at the entry after being carved into maintain-knowledge.md, and one lateral reference-to-reference route that duplicates routing the entry owns.",
+      "finding_ids": [
+        "leanness-1",
+        "leanness-2",
+        "architecture-2",
+        "architecture-3"
+      ],
+      "action": "One tidy pass over SKILL.md and answer-technical.md: keep only the bare-path and {project-root} convention lines, truncate the first-run bullet to its route ('lihat references/maintain-knowledge.md untuk sumber seed dan fallback-nya'), and in answer-technical.md name the maintain-knowledge capability without the file path."
+    }
+  ],
+  "strengths": [
+    "Lean, load-bearing persona: 1266-token entry, zero waste patterns, no ceremony sections or shouted directives — the consultant voice is an investment and every section defends its absence.",
+    "Honest determinism posture: the one deterministic operation (config resolution) is delegated to psm-setup's resolver with an explicit ban on prompt-side parsing; everything else genuinely turns on meaning.",
+    "Customization surface deliberately declined and documented: metadata-only [agent] roster block with in-file read-only notes — the sole config mechanism present.",
+    "Branch-carved capabilities behind a clean routing map, with references that stand alone for non-interactive tails.",
+    "Fixes from the 2026-06-25 analysis held: seed-source fallbacks and read-only comments are present in the current files."
+  ],
+  "recommendations": [
+    {
+      "rank": 1,
+      "action": "Run the module-sync pass: repoint sibling pointers to the install-dir-relative convention, add the psm-optimize routing row and Overview mention, and refresh the documented version default to 1.7.8,8.1,9.1.",
+      "resolves": [
+        "architecture-1",
+        "enhancement-1",
+        "orchestrator-1"
+      ]
+    },
+    {
+      "rank": 2,
+      "action": "Rewrite On Activation: intent-first adaptive opening, lazy KB loading, first-run seed as an offer, Docker/flashlight check moved to the psm-validate handoff, and a one-clause resolver-failure fallback.",
+      "resolves": [
+        "enhancement-2",
+        "enhancement-3",
+        "enhancement-5",
+        "enhancement-4"
+      ]
+    },
+    {
+      "rank": 3,
+      "action": "Tidy the entry file: drop the two unused convention lines, truncate the first-run seed parenthetical to its route, and remove the lateral reference-to-reference pointer in answer-technical.md.",
+      "resolves": [
+        "leanness-1",
+        "leanness-2",
+        "architecture-3",
+        "architecture-2"
+      ]
+    }
+  ],
+  "experience": {
+    "journeys": [
+      {
+        "name": "Ask a technical question",
+        "steps": "invoke hub → answer-technical consults the shared KB → versioned answer with explicit cross-version guards and safe paths"
+      },
+      {
+        "name": "Route to a workflow",
+        "steps": "describe a multi-step need → route-workflow matches intent → context prepared → handoff to the psm-* sibling in a fresh session"
+      },
+      {
+        "name": "First-run setup",
+        "steps": "first activation → build _bmad/psm/memory tree → seed from module sources with documented fallbacks → ready to consult"
+      }
+    ],
+    "headless": "Interactive-first consultant; capability references carry non-interactive direct-answer tails, but there is no dedicated headless flag."
+  },
+  "findings": [
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "Cross-skill pointers resolve to the stale skills/ scaffold, not the live sibling tree",
+      "location": "SKILL.md:46 (On Activation seed sources); references/answer-technical.md:5; references/brainstorm-ecommerce.md:5; references/route-workflow.md:5",
+      "evidence": "The live skill hardcodes sibling reads as {project-root}/skills/…: version-safe-patterns.md, ecommerce-function-catalog.md, psm-validate/SKILL.md, and route-workflow.md's claim 'semua di {project-root}/skills/'. All three pointed-at files exist but have diverged from their live .claude/skills/ counterparts (diff confirmed: live psm-validate/SKILL.md now describes four-layer validation with browser E2E and a resolver-based config contract; the stale copy still says three layers and hand-parses config.yaml). The truth-source chain and first-run KB seeding silently ingest outdated content, baking staleness in as curated truth. Two skills/ pointers are correct as-is: psm-setup/scripts/resolve-psm-config.py and skills/reports/prestashop-module-builder-plan.md.",
+      "recommendation": "Repoint sibling-skill reads to the install-dir-relative convention the live psm-develop catalog already uses (<skills-dir>/psm-cross-version/references/version-safe-patterns.md, etc.), and drop route-workflow.md's location claim in favor of routing by skill name. Keep the resolver and skills/reports/ pointers at {project-root}/skills/."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Reference-to-reference route in answer-technical.md",
+      "location": "references/answer-technical.md:7",
+      "evidence": "answer-technical.md instructs loading 'references/maintain-knowledge.md' directly. The canon keeps references one level deep — entry routes to reference, never reference to reference — and SKILL.md's Capabilities table already routes to maintain-knowledge.md.",
+      "recommendation": "Name the capability without the file path ('lewat kapabilitas rawat knowledge') and let SKILL.md's routing map carry the load."
+    },
+    {
+      "id": "architecture-3",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Mis-stamped resolution rule renders one Conventions line circular",
+      "location": "SKILL.md:34 (## Conventions)",
+      "evidence": "The canonical resolution-rules block's '{skill-name} → the skill directory's basename' was stamped with the variable pre-substituted: '`psm-agent-expert` → basename direktori skill'. As written the line is a tautology that guides nothing, and no file in the skill uses {skill-name}.",
+      "recommendation": "Restore the '{skill-name}' variable form, or drop the line since the skill never uses the token."
+    },
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Dead convention definitions: {skill-root} and basename mapping are never used",
+      "location": "SKILL.md:Conventions (lines 32, 34)",
+      "evidence": "The Conventions section defines four path tokens. Two are load-bearing ({project-root} is used ~15 times across files; the bare-path rule prevents misresolution against the project cwd). The other two — {skill-root} and the basename mapping — appear nowhere else in SKILL.md or any reference. A definition of a token the reader never encounters changes none of its moves.",
+      "recommendation": "Delete the {skill-root} and basename convention lines, keeping the bare-path and {project-root} lines."
+    },
+    {
+      "id": "leanness-2",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "First-run seed sources restated inline after routing to the reference that owns them",
+      "location": "SKILL.md:On Activation (first-run bullet, line 46)",
+      "evidence": "The bullet routes correctly ('Lihat references/maintain-knowledge.md untuk sumber seed') but then re-inlines the three seed-source paths in a parenthetical. maintain-knowledge.md carries these same paths in full, plus the missing-source fallback rules the model needs to actually seed — so it must load that file anyway, and the parenthetical changes no move. A restated fact paid on every activation for a branch that fires once.",
+      "recommendation": "Truncate the bullet to the route: 'First run (folder belum ada): bangun strukturnya dan seed isinya — lihat references/maintain-knowledge.md untuk sumber seed dan fallback-nya.' Keep the Docker/flashlight sentence handling per the activation re-sequencing theme."
+    },
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Add: routing map omits psm-optimize — a live sibling workflow is invisible to the router",
+      "location": "references/route-workflow.md:7-13 (intent table); SKILL.md:10 (Overview parenthetical)",
+      "evidence": "The hub's core capability is intent-to-workflow routing, and its table maps only four workflows (cross-version, scaffold, develop, validate). psm-optimize exists as an installed sibling (triggers 'optimasi module', 'percepat module') but has no row; SKILL.md's Overview also enumerates only four. A user saying 'module-ku lambat' — a multi-step job by the skill's own definition — either gets misrouted to psm-develop or handled as chat, exactly what route-workflow.md forbids.",
+      "recommendation": "Add a row to the mapping table: 'module lambat / optimasi performa / tuning cache-service' → psm-optimize, update the Overview parenthetical, and extend the tie-breaker note if ordering matters (e.g. validate before optimize)."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Remove: Docker + flashlight environment check over-applied at hub activation",
+      "location": "SKILL.md:46 (On Activation, first-run bullet)",
+      "evidence": "'Lalu cek Docker + image flashlight; bila belum ada, bantu Budi menyiapkan' runs during first activation of a consultation hub. Docker/flashlight is psm-validate's dependency; the hub itself never runs a container. The first-timer who came to ask a question can be pulled into a Docker installation session before being greeted.",
+      "recommendation": "Cut the check from On Activation. If wanted at all, add one clause to route-workflow.md's psm-validate handoff prep ('cek Docker + image flashlight sebelum memanggil'). Nothing is lost — the check still happens at the only moment it matters."
+    },
+    {
+      "id": "enhancement-3",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add: intent-before-ingestion — activation seeds/reads the KB before greeting or intent",
+      "location": "SKILL.md:44-49 (On Activation)",
+      "evidence": "The activation sequence is config → build-or-read knowledge base → greet last. First run seeds the entire KB (potentially including WebReader devdocs research when seed sources are missing) before any greeting; every later run reads tech/*, ecommerce/*, and projects/*.md before the user has said why they came — 'yang relevan' cannot be judged without intent.",
+      "recommendation": "Reorder: greet and capture intent first. On first run, offer the seed or seed only what the stated intent needs; on later runs, defer KB reads to capability time — answer-technical.md already names the KB as its first source of truth, so lazy loading loses nothing."
+    },
+    {
+      "id": "enhancement-4",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add: graceful degradation for the config-resolver dependency at activation",
+      "location": "SKILL.md:38-42 (On Activation, config load)",
+      "evidence": "Activation's first act is the resolver call; the --graceful flag covers a missing config.yaml but nothing covers a missing resolver script or uv itself — while maintain-knowledge.md explicitly contemplates this exact environment ('agent dipasang tanpa skill psm saudaranya') and provides fallbacks for seed sources. The canonical defaults sit in parentheses on lines 40-42, but no instruction connects them to resolver failure.",
+      "recommendation": "One clause: 'Bila resolver tak ada atau gagal dijalankan, pakai default dalam kurung dan lanjut (catat bahwa config tak resolved).' Mirrors the fallback discipline the skill already applies to seed sources."
+    },
+    {
+      "id": "enhancement-5",
+      "lens": "enhancement",
+      "severity": "low",
+      "title": "Opportunity: replace the capabilities-demo offer with an open-floor opening",
+      "location": "SKILL.md:49 (On Activation, closing line)",
+      "evidence": "'Sapa Budi dan tawarkan untuk menunjukkan kemampuan' opens every session — including the fiftieth — with an offer to demo the menu, and gives no instruction for the common interactive case where the invocation already carries the question or module path.",
+      "recommendation": "Adaptive opening: if the invocation carries a question or module path, route straight to the matching capability; otherwise greet by name and invite the dump ('lagi ngerjain module apa?'), surfacing the capability list only on request."
+    },
+    {
+      "id": "orchestrator-1",
+      "lens": "orchestrator",
+      "severity": "medium",
+      "title": "Documented default psm_target_versions is stale: 9.0 vs canonical 9.1",
+      "location": "SKILL.md:42 (On Activation, config defaults)",
+      "evidence": "SKILL.md documents the default as (1.7.8,8.1,9.0) while the canonical resolver (skills/psm-setup/scripts/resolve-psm-config.py) and the module config both resolve to 1.7.8,8.1,9.1 — verified by running the resolver. The parenthetical defaults are the skill's only fallback when the resolver is unavailable, so the fallback value is wrong; the module's own memlog records that version defaults live in multiple layers that must stay in sync.",
+      "recommendation": "Update the documented default to (1.7.8,8.1,9.1) and re-check the parenthetical defaults whenever psm-setup's canonical defaults change."
+    }
+  ]
+}
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  var SEVERITIES = ["critical", "high", "medium", "low"];
+  var SEV_LABEL = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
+  var GRADES = ["excellent", "good", "fair", "poor"];
+  var PLACEHOLDER_SUBJECT = "__PLACEHOLDER__";
+
+  var els = {
+    banner: document.getElementById("parse-banner"),
+    overview: document.getElementById("overview"),
+    grade: document.getElementById("grade"),
+    verdict: document.getElementById("verdict"),
+    summaryText: document.getElementById("summary-text"),
+    counts: document.getElementById("counts"),
+    themes: document.getElementById("themes"),
+    strengths: document.getElementById("strengths"),
+    recommendations: document.getElementById("recommendations"),
+    experience: document.getElementById("experience"),
+    toolbar: document.getElementById("toolbar"),
+    root: document.getElementById("findings-root"),
+    subject: document.getElementById("m-subject"),
+    generated: document.getElementById("m-generated"),
+    schema: document.getElementById("m-schema"),
+    selCount: document.getElementById("sel-count"),
+    btnCopy: document.getElementById("btn-copy"),
+    btnSelectAll: document.getElementById("btn-select-all"),
+    btnClear: document.getElementById("btn-clear"),
+    btnExpandAll: document.getElementById("btn-expand-all"),
+    btnCollapseAll: document.getElementById("btn-collapse-all"),
+    fallback: document.getElementById("fallback"),
+    fallbackText: document.getElementById("fallback-text"),
+    toast: document.getElementById("toast")
+  };
+
+  var selected = Object.create(null);
+  var findings = [];
+  var findingsById = Object.create(null);
+  var subjectPath = "";
+  var standards = null;
+
+  function showBanner(message) {
+    els.banner.textContent = message;
+    els.banner.classList.add("show");
+  }
+
+  function esc(value) {
+    var s = value == null ? "" : String(value);
+    return s.replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Normalize an arbitrary parsed object against schema_version 2, supplying
+  // defaults so a partial or future island still renders. Unknown fields are
+  // ignored, not fatal. Severity counts are always derived from the findings
+  // array, never read from the island, so they cannot disagree with it. The
+  // synthesis blocks (grade, summary, themes, strengths, recommendations) and
+  // the experience block are OPTIONAL: each normalizes to an empty value that
+  // renders nothing rather than an empty panel or an error.
+  function normalize(raw) {
+    var obj = raw && typeof raw === "object" ? raw : {};
+    var rawFindings = Array.isArray(obj.findings) ? obj.findings : [];
+
+    var norm = {
+      schema_version: typeof obj.schema_version === "number" ? obj.schema_version : 2,
+      subject: obj.subject != null ? String(obj.subject) : "(unspecified)",
+      generated: obj.generated != null ? String(obj.generated) : "(unspecified)",
+      verdict: obj.verdict != null ? String(obj.verdict) : "(no verdict supplied)",
+      grade: GRADES.indexOf(String(obj.grade || "").toLowerCase()) >= 0
+        ? String(obj.grade).toLowerCase() : "",
+      summary: typeof obj.summary === "string" ? obj.summary : "",
+      standards: (obj.standards && typeof obj.standards === "object") ? {
+        canon: obj.standards.canon != null ? String(obj.standards.canon) : "",
+        principles: obj.standards.principles != null ? String(obj.standards.principles) : "",
+        scripts: obj.standards.scripts != null ? String(obj.standards.scripts) : ""
+      } : null,
+      themes: normalizeThemes(obj.themes),
+      strengths: normalizeStrengths(obj.strengths),
+      recommendations: normalizeRecommendations(obj.recommendations),
+      experience: normalizeExperience(obj.experience),
+      counts: { critical: 0, high: 0, medium: 0, low: 0 },
+      findings: []
+    };
+
+    rawFindings.forEach(function (f, i) {
+      if (!f || typeof f !== "object") { return; }
+      var sev = SEVERITIES.indexOf(f.severity) >= 0 ? f.severity : "low";
+      norm.findings.push({
+        id: f.id != null ? String(f.id) : "finding-" + (i + 1),
+        lens: f.lens != null ? String(f.lens) : "(unknown)",
+        severity: sev,
+        title: f.title != null ? String(f.title) : "(untitled finding)",
+        location: f.location != null ? String(f.location) : "",
+        evidence: f.evidence != null ? String(f.evidence) : "",
+        recommendation: f.recommendation != null ? String(f.recommendation) : "",
+        proposed_smallest: f.proposed_smallest != null ? String(f.proposed_smallest) : "",
+        predicted_delta: f.predicted_delta != null ? String(f.predicted_delta) : ""
+      });
+      norm.counts[sev] += 1;
+    });
+
+    return norm;
+  }
+
+  function normalizeThemes(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (t) {
+      if (!t || typeof t !== "object") { return; }
+      var ids = [];
+      if (Array.isArray(t.finding_ids)) {
+        t.finding_ids.forEach(function (id) { if (id != null) { ids.push(String(id)); } });
+      }
+      var title = t.title != null ? String(t.title) : "";
+      if (!title && !ids.length) { return; }
+      list.push({
+        title: title || "(untitled theme)",
+        root_cause: t.root_cause != null ? String(t.root_cause) : "",
+        action: t.action != null ? String(t.action) : "",
+        finding_ids: ids
+      });
+    });
+    return list;
+  }
+
+  function normalizeStrengths(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (s) {
+      if (typeof s === "string" && s) { list.push(s); }
+      else if (s && typeof s === "object" && s.title) {
+        list.push(String(s.title) + (s.detail ? " — " + String(s.detail) : ""));
+      }
+    });
+    return list;
+  }
+
+  function normalizeRecommendations(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (r, i) {
+      if (!r || typeof r !== "object") { return; }
+      var action = r.action != null ? String(r.action) : "";
+      if (!action) { return; }
+      var resolves = "";
+      if (Array.isArray(r.resolves)) { resolves = r.resolves.map(String).join(", "); }
+      else if (typeof r.resolves === "number") { resolves = r.resolves + " findings"; }
+      else if (r.resolves != null) { resolves = String(r.resolves); }
+      list.push({
+        rank: typeof r.rank === "number" ? r.rank : i + 1,
+        action: action,
+        resolves: resolves
+      });
+    });
+    list.sort(function (a, b) { return a.rank - b.rank; });
+    return list;
+  }
+
+  // Optional experience block: journeys plus a headless note. Returns null when
+  // neither is usable.
+  function normalizeExperience(raw) {
+    if (!raw || typeof raw !== "object") { return null; }
+    var journeys = [];
+    if (Array.isArray(raw.journeys)) {
+      raw.journeys.forEach(function (j) {
+        if (!j || typeof j !== "object") { return; }
+        var name = j.name != null ? String(j.name) : "";
+        var steps = j.steps != null ? String(j.steps) : "";
+        if (!name && !steps) { return; }
+        journeys.push({ name: name, steps: steps });
+      });
+    }
+    var headless = raw.headless != null ? String(raw.headless) : "";
+    if (!journeys.length && !headless) { return null; }
+    return { journeys: journeys, headless: headless };
+  }
+
+  function renderOverview(data) {
+    els.subject.textContent = data.subject;
+    els.generated.textContent = data.generated;
+    els.schema.textContent = String(data.schema_version);
+    els.verdict.textContent = data.verdict;
+
+    if (data.grade) {
+      els.grade.textContent = data.grade;
+      els.grade.className = "grade g-" + data.grade;
+      els.grade.hidden = false;
+    }
+    if (data.summary) {
+      els.summaryText.textContent = data.summary;
+      els.summaryText.hidden = false;
+    }
+
+    els.counts.innerHTML = "";
+    SEVERITIES.forEach(function (s) {
+      var pill = document.createElement("span");
+      pill.className = "pill";
+      pill.innerHTML =
+        '<span class="dot ' + s + '"></span>' +
+        '<span class="lbl">' + SEV_LABEL[s] + '</span>' +
+        '<span class="n">' + data.counts[s] + "</span>";
+      els.counts.appendChild(pill);
+    });
+    els.overview.hidden = false;
+  }
+
+  // Every copied fix prompt opens by anchoring the fixing session to the same
+  // standards that produced the findings, so the fix is held to the bar too.
+  function standardsPreamble() {
+    if (!standards || !standards.canon) { return []; }
+    var bar = standards.canon + (standards.principles ? " and " + standards.principles : "");
+    var lines = [
+      "Hold " + bar + " as the bar for every line you change — a fix that adds ceremony is a new finding, not a fix."
+    ];
+    if (standards.scripts) {
+      lines.push("If the fix adds or changes scripts, follow " + standards.scripts + ".");
+    }
+    lines.push("");
+    return lines;
+  }
+
+  function composeThemePrompt(theme, resolved) {
+    var lines = standardsPreamble();
+    lines.push("Fix the following theme in " + subjectPath + ": " + theme.title);
+    lines.push("");
+    if (theme.root_cause) { lines.push("Root cause: " + theme.root_cause); }
+    if (theme.action) { lines.push("Fix: " + theme.action); }
+    if (resolved.length) {
+      lines.push("");
+      lines.push("Findings to address:");
+      resolved.forEach(function (f, i) {
+        lines.push((i + 1) + ". " + f.title);
+        if (f.location) { lines.push("   Location: " + f.location); }
+        if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+        if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      });
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  function renderThemes(themes) {
+    if (!themes.length) { els.themes.hidden = true; return; }
+    els.themes.innerHTML = "<h2>Themes</h2>";
+    themes.forEach(function (t) {
+      var resolved = t.finding_ids
+        .map(function (id) { return findingsById[id]; })
+        .filter(function (f) { return !!f; });
+      var items = resolved.map(function (f) {
+        return '<div class="t-finding"><span class="mono">' + esc(f.id) + "</span> " +
+          esc(f.title) +
+          (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "") +
+          "</div>";
+      }).join("");
+
+      var node = document.createElement("div");
+      node.className = "theme";
+      node.innerHTML =
+        '<div class="t-head"><span class="t-title">' + esc(t.title) + "</span>" +
+        '<button class="small t-fix">Fix This Theme</button></div>' +
+        (t.root_cause ? '<div class="t-cause">Root cause: ' + esc(t.root_cause) + "</div>" : "") +
+        (t.action ? '<div class="t-action"><b>Fix:</b> ' + esc(t.action) + "</div>" : "") +
+        (items ? '<div class="t-findings">' + items + "</div>" : "");
+      node.querySelector(".t-fix").addEventListener("click", function () {
+        copyText(composeThemePrompt(t, resolved));
+      });
+      els.themes.appendChild(node);
+    });
+    els.themes.hidden = false;
+  }
+
+  function renderStrengths(list) {
+    if (!list.length) { els.strengths.hidden = true; return; }
+    els.strengths.innerHTML =
+      "<h2>Strengths</h2><ul class=\"strength-list\">" +
+      list.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") +
+      "</ul>";
+    els.strengths.hidden = false;
+  }
+
+  function renderRecommendations(recs) {
+    if (!recs.length) { els.recommendations.hidden = true; return; }
+    var html = "<h2>Recommendations</h2>";
+    recs.forEach(function (r) {
+      html += '<div class="rec"><span class="rank">#' + esc(String(r.rank)) + "</span>" +
+        esc(r.action) +
+        (r.resolves ? '<span class="resolves">resolves: ' + esc(r.resolves) + "</span>" : "") +
+        "</div>";
+    });
+    els.recommendations.innerHTML = html;
+    els.recommendations.hidden = false;
+  }
+
+  function renderExperience(exp) {
+    if (!exp) { els.experience.hidden = true; return; }
+    var html = "<h2>Experience</h2>";
+    if (exp.journeys.length) {
+      html += exp.journeys.map(function (j) {
+        return '<div class="journey">' +
+          '<div class="j-name">' + esc(j.name || "(unnamed journey)") + "</div>" +
+          (j.steps ? '<div class="j-steps">' + esc(j.steps) + "</div>" : "") +
+          "</div>";
+      }).join("");
+    }
+    if (exp.headless) {
+      html += '<dl class="kv" style="margin-top:12px"><dt>Headless</dt><dd>' +
+        esc(exp.headless) + "</dd></dl>";
+    }
+    els.experience.innerHTML = html;
+    els.experience.hidden = false;
+  }
+
+  function renderNoFindings() {
+    els.root.innerHTML =
+      '<div class="no-findings">' +
+      '<div class="big">No findings</div>' +
+      "<div>The scanners returned a clean pass for this subject.</div>" +
+      "</div>";
+  }
+
+  function findingNode(f) {
+    var node = document.createElement("div");
+    node.className = "finding sev-" + f.severity;
+    node.setAttribute("data-id", f.id);
+
+    var sub =
+      esc(f.lens) +
+      (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "");
+
+    var rows =
+      "<dt>Lens</dt><dd>" + esc(f.lens) + "</dd>" +
+      (f.location ? "<dt>Location</dt><dd><code>" + esc(f.location) + "</code></dd>" : "") +
+      (f.evidence ? "<dt>Evidence</dt><dd>" + esc(f.evidence) + "</dd>" : "") +
+      (f.recommendation ? "<dt>Recommendation</dt><dd>" + esc(f.recommendation) + "</dd>" : "") +
+      (f.proposed_smallest ? "<dt>Proposed smallest</dt><dd>" + esc(f.proposed_smallest) + "</dd>" : "") +
+      (f.predicted_delta ? "<dt>Predicted delta</dt><dd>" + esc(f.predicted_delta) + "</dd>" : "");
+
+    node.innerHTML =
+      '<div class="row">' +
+      '<input type="checkbox" class="chk" aria-label="Select finding">' +
+      '<div class="head">' +
+      '<div class="title">' + esc(f.title) + "</div>" +
+      '<div class="sub">' + sub + "</div>" +
+      "</div>" +
+      '<span class="tag">' + SEV_LABEL[f.severity] + "</span>" +
+      '<span class="caret">▸</span>' +
+      "</div>" +
+      '<div class="body"><dl>' + rows + "</dl></div>";
+
+    var chk = node.querySelector(".chk");
+    chk.checked = !!selected[f.id];
+    chk.addEventListener("change", function () {
+      if (chk.checked) { selected[f.id] = true; } else { delete selected[f.id]; }
+      updateSelection();
+    });
+
+    var head = node.querySelector(".head");
+    var caret = node.querySelector(".caret");
+    function toggle() { node.classList.toggle("open"); }
+    head.addEventListener("click", toggle);
+    caret.addEventListener("click", toggle);
+
+    return node;
+  }
+
+  function renderFindings(list) {
+    els.root.innerHTML = "";
+    if (list.length === 0) {
+      renderNoFindings();
+      els.toolbar.hidden = true;
+      return;
+    }
+    els.toolbar.hidden = false;
+
+    SEVERITIES.forEach(function (sev) {
+      var group = list.filter(function (f) { return f.severity === sev; });
+      if (group.length === 0) { return; }
+      var wrap = document.createElement("div");
+      wrap.className = "group";
+      var h = document.createElement("h2");
+      h.innerHTML = '<span class="dot ' + sev + '"></span>' + SEV_LABEL[sev] + " (" + group.length + ")";
+      wrap.appendChild(h);
+      group.forEach(function (f) { wrap.appendChild(findingNode(f)); });
+      els.root.appendChild(wrap);
+    });
+  }
+
+  function updateSelection() {
+    var n = Object.keys(selected).length;
+    els.selCount.textContent = n + " selected";
+    els.btnCopy.disabled = n === 0;
+  }
+
+  function composePrompt() {
+    var picked = findings.filter(function (f) { return selected[f.id]; });
+    if (picked.length === 0) { return ""; }
+    var lines = standardsPreamble();
+    lines.push("Fix the following issues in " + subjectPath + ":");
+    lines.push("");
+    picked.forEach(function (f, i) {
+      lines.push((i + 1) + ". " + f.title);
+      if (f.location) { lines.push("   Location: " + f.location); }
+      if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+      if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      if (f.proposed_smallest) { lines.push("   Proposed smallest: " + f.proposed_smallest); }
+      lines.push("");
+    });
+    return lines.join("\n").replace(/\n+$/, "\n");
+  }
+
+  function showToast(text) {
+    els.toast.textContent = text;
+    els.toast.classList.add("show");
+    setTimeout(function () { els.toast.classList.remove("show"); }, 1600);
+  }
+
+  function fallbackCopy(text) {
+    els.fallbackText.value = text;
+    els.fallback.classList.add("show");
+    els.fallbackText.focus();
+    els.fallbackText.select();
+    try {
+      var ok = document.execCommand && document.execCommand("copy");
+      if (ok) {
+        showToast("Copied");
+        return;
+      }
+    } catch (e) { /* fall through to manual */ }
+    showToast("Copy the text shown below");
+  }
+
+  function copyText(text) {
+    if (!text) { return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { showToast("Copied"); },
+        function () { fallbackCopy(text); }
+      );
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function doCopy() {
+    copyText(composePrompt());
+  }
+
+  function wireToolbar() {
+    els.btnCopy.addEventListener("click", doCopy);
+    els.btnSelectAll.addEventListener("click", function () {
+      findings.forEach(function (f) { selected[f.id] = true; });
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = true; });
+      updateSelection();
+    });
+    els.btnClear.addEventListener("click", function () {
+      selected = Object.create(null);
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = false; });
+      els.fallback.classList.remove("show");
+      updateSelection();
+    });
+    els.btnExpandAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.add("open"); });
+    });
+    els.btnCollapseAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.remove("open"); });
+    });
+  }
+
+  function init() {
+    var island = document.getElementById("report-data");
+    var parsed;
+    try {
+      if (!island) { throw new Error("report-data island element not found"); }
+      parsed = JSON.parse(island.textContent);
+    } catch (err) {
+      showBanner(
+        "Could not parse the report data island.\n\n" +
+        "Error: " + (err && err.message ? err.message : String(err)) + "\n\n" +
+        "The findings could not be rendered. The JSON inside the " +
+        'report-data island (the application/json script tag) is malformed.'
+      );
+      return;
+    }
+
+    var data = normalize(parsed);
+
+    if (data.subject === PLACEHOLDER_SUBJECT) {
+      els.subject.textContent = data.subject;
+      showBanner(
+        "This is the unfilled report shell.\n\n" +
+        "The report-data island still carries the placeholder subject, so " +
+        "there are no findings here. Generate a real report with " +
+        "scripts/render_report.py."
+      );
+      return;
+    }
+
+    findings = data.findings;
+    subjectPath = data.subject;
+    standards = data.standards;
+    findingsById = Object.create(null);
+    findings.forEach(function (f) { findingsById[f.id] = f; });
+
+    renderOverview(data);
+    renderThemes(data.themes);
+    renderStrengths(data.strengths);
+    renderRecommendations(data.recommendations);
+    renderExperience(data.experience);
+    renderFindings(findings);
+    wireToolbar();
+    updateSelection();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

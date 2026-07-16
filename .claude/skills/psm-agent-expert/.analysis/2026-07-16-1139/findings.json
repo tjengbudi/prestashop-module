@@ -1,0 +1,160 @@
+{
+  "schema_version": 2,
+  "subject": "/home/budi/dev/prestashop-module/.claude/skills/psm-agent-expert",
+  "generated": "2026-07-16",
+  "verdict": "A lean, honest consultant hub held back by module drift: sibling pointers still read the stale skills/ scaffold and the router cannot see psm-optimize.",
+  "grade": "good",
+  "summary": "The skill's core is in excellent shape: a 1266-token entry with zero waste patterns, an honest script-free determinism posture, and a deliberately declined, well-documented customization surface — three of five lenses passed clean. The primary opportunity is a single module-sync pass: cross-skill pointers were wired against the skills/ scaffold snapshot at build time and the module has since evolved (live tree moved to .claude/skills/, psm-optimize was added, target default moved to 9.1), so the hub's truth-source chain and router have quietly drifted. A secondary opportunity is re-sequencing On Activation so intent comes before ingestion and environment plumbing.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "Module drift: wiring frozen at build time while the module evolved",
+      "root_cause": "The hub was wired against the skills/ scaffold snapshot when it was built (2026-06-25). Since then the live tree moved to .claude/skills/ and diverged (psm-validate gained a fourth E2E layer, version-safe-patterns gained a checklist), and psm-optimize shipped as a fifth sibling. The hub still reads the stale copies and routes to only four workflows, so its 'knowledge base is truth' principle is silently violated at the source.",
+      "finding_ids": ["architecture-1", "enhancement-1"],
+      "action": "One sync pass: repoint sibling-skill reads to the install-dir-relative convention the live psm-develop catalog already uses (<skills-dir>/psm-cross-version/references/version-safe-patterns.md, etc.), drop route-workflow.md's 'semua di {project-root}/skills/' location claim in favor of routing by skill name, add a psm-optimize row to the routing table ('module lambat / optimasi performa / tuning cache-service'), and add it to the Overview parenthetical. Keep the two intentionally-correct skills/ pointers: psm-setup's resolver script and skills/reports/prestashop-module-builder-plan.md."
+    },
+    {
+      "title": "Activation front-loads work that belongs after intent",
+      "root_cause": "On Activation runs config → build-or-read the whole knowledge base → check Docker/flashlight → greet last. The user who invoked the hub with a question in hand waits through ingestion and possibly another workflow's environment setup before being heard; 'read what is relevant' cannot be judged before intent exists.",
+      "finding_ids": ["enhancement-2", "enhancement-3", "enhancement-5"],
+      "action": "Re-sequence On Activation: greet and capture intent first (if the invocation already carries a question or module path, route straight to the matching capability); defer KB reads to capability time since answer-technical.md already names the KB as its first source of truth; on first run offer the seed rather than imposing it; move the Docker/flashlight check out of activation and into route-workflow.md's psm-validate handoff prep, the only moment it matters."
+    },
+    {
+      "title": "Activation config contract is half-specified",
+      "root_cause": "The parenthetical defaults on SKILL.md:40-42 are the skill's only fallback if the resolver is unavailable, yet one of them is stale (psm_target_versions documents 9.0 while the canonical resolver default is 9.1 — verified against resolve-psm-config.py) and no instruction connects the defaults to resolver failure. The fallback path is both wrong and unreachable.",
+      "finding_ids": ["enhancement-4", "orchestrator-1"],
+      "action": "Refresh the documented default to 1.7.8,8.1,9.1 and add one clause: if the resolver is missing or fails to run, use the parenthesized defaults and continue, noting config was not resolved. This mirrors the fallback discipline maintain-knowledge.md already applies to seed sources."
+    },
+    {
+      "title": "Entry-file residue from templating and carving",
+      "root_cause": "Small leftovers from the build: two convention tokens defined but never consumed (one mis-stamped into a tautology), seed-source paths re-inlined at the entry after being carved into maintain-knowledge.md, and one lateral reference-to-reference route that duplicates routing the entry owns.",
+      "finding_ids": ["leanness-1", "leanness-2", "architecture-2", "architecture-3"],
+      "action": "One tidy pass over SKILL.md and answer-technical.md: keep only the bare-path and {project-root} convention lines, truncate the first-run bullet to its route ('lihat references/maintain-knowledge.md untuk sumber seed dan fallback-nya'), and in answer-technical.md name the maintain-knowledge capability without the file path."
+    }
+  ],
+  "strengths": [
+    "Lean, load-bearing persona: 1266-token entry, zero waste patterns, no ceremony sections or shouted directives — the consultant voice is an investment and every section defends its absence.",
+    "Honest determinism posture: the one deterministic operation (config resolution) is delegated to psm-setup's resolver with an explicit ban on prompt-side parsing; everything else genuinely turns on meaning.",
+    "Customization surface deliberately declined and documented: metadata-only [agent] roster block with in-file read-only notes — the sole config mechanism present.",
+    "Branch-carved capabilities behind a clean routing map, with references that stand alone for non-interactive tails.",
+    "Fixes from the 2026-06-25 analysis held: seed-source fallbacks and read-only comments are present in the current files."
+  ],
+  "recommendations": [
+    { "rank": 1, "action": "Run the module-sync pass: repoint sibling pointers to the install-dir-relative convention, add the psm-optimize routing row and Overview mention, and refresh the documented version default to 1.7.8,8.1,9.1.", "resolves": ["architecture-1", "enhancement-1", "orchestrator-1"] },
+    { "rank": 2, "action": "Rewrite On Activation: intent-first adaptive opening, lazy KB loading, first-run seed as an offer, Docker/flashlight check moved to the psm-validate handoff, and a one-clause resolver-failure fallback.", "resolves": ["enhancement-2", "enhancement-3", "enhancement-5", "enhancement-4"] },
+    { "rank": 3, "action": "Tidy the entry file: drop the two unused convention lines, truncate the first-run seed parenthetical to its route, and remove the lateral reference-to-reference pointer in answer-technical.md.", "resolves": ["leanness-1", "leanness-2", "architecture-3", "architecture-2"] }
+  ],
+  "experience": {
+    "journeys": [
+      { "name": "Ask a technical question", "steps": "invoke hub → answer-technical consults the shared KB → versioned answer with explicit cross-version guards and safe paths" },
+      { "name": "Route to a workflow", "steps": "describe a multi-step need → route-workflow matches intent → context prepared → handoff to the psm-* sibling in a fresh session" },
+      { "name": "First-run setup", "steps": "first activation → build _bmad/psm/memory tree → seed from module sources with documented fallbacks → ready to consult" }
+    ],
+    "headless": "Interactive-first consultant; capability references carry non-interactive direct-answer tails, but there is no dedicated headless flag."
+  },
+  "findings": [
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "Cross-skill pointers resolve to the stale skills/ scaffold, not the live sibling tree",
+      "location": "SKILL.md:46 (On Activation seed sources); references/answer-technical.md:5; references/brainstorm-ecommerce.md:5; references/route-workflow.md:5",
+      "evidence": "The live skill hardcodes sibling reads as {project-root}/skills/…: version-safe-patterns.md, ecommerce-function-catalog.md, psm-validate/SKILL.md, and route-workflow.md's claim 'semua di {project-root}/skills/'. All three pointed-at files exist but have diverged from their live .claude/skills/ counterparts (diff confirmed: live psm-validate/SKILL.md now describes four-layer validation with browser E2E and a resolver-based config contract; the stale copy still says three layers and hand-parses config.yaml). The truth-source chain and first-run KB seeding silently ingest outdated content, baking staleness in as curated truth. Two skills/ pointers are correct as-is: psm-setup/scripts/resolve-psm-config.py and skills/reports/prestashop-module-builder-plan.md.",
+      "recommendation": "Repoint sibling-skill reads to the install-dir-relative convention the live psm-develop catalog already uses (<skills-dir>/psm-cross-version/references/version-safe-patterns.md, etc.), and drop route-workflow.md's location claim in favor of routing by skill name. Keep the resolver and skills/reports/ pointers at {project-root}/skills/."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Reference-to-reference route in answer-technical.md",
+      "location": "references/answer-technical.md:7",
+      "evidence": "answer-technical.md instructs loading 'references/maintain-knowledge.md' directly. The canon keeps references one level deep — entry routes to reference, never reference to reference — and SKILL.md's Capabilities table already routes to maintain-knowledge.md.",
+      "recommendation": "Name the capability without the file path ('lewat kapabilitas rawat knowledge') and let SKILL.md's routing map carry the load."
+    },
+    {
+      "id": "architecture-3",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Mis-stamped resolution rule renders one Conventions line circular",
+      "location": "SKILL.md:34 (## Conventions)",
+      "evidence": "The canonical resolution-rules block's '{skill-name} → the skill directory's basename' was stamped with the variable pre-substituted: '`psm-agent-expert` → basename direktori skill'. As written the line is a tautology that guides nothing, and no file in the skill uses {skill-name}.",
+      "recommendation": "Restore the '{skill-name}' variable form, or drop the line since the skill never uses the token."
+    },
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Dead convention definitions: {skill-root} and basename mapping are never used",
+      "location": "SKILL.md:Conventions (lines 32, 34)",
+      "evidence": "The Conventions section defines four path tokens. Two are load-bearing ({project-root} is used ~15 times across files; the bare-path rule prevents misresolution against the project cwd). The other two — {skill-root} and the basename mapping — appear nowhere else in SKILL.md or any reference. A definition of a token the reader never encounters changes none of its moves.",
+      "recommendation": "Delete the {skill-root} and basename convention lines, keeping the bare-path and {project-root} lines."
+    },
+    {
+      "id": "leanness-2",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "First-run seed sources restated inline after routing to the reference that owns them",
+      "location": "SKILL.md:On Activation (first-run bullet, line 46)",
+      "evidence": "The bullet routes correctly ('Lihat references/maintain-knowledge.md untuk sumber seed') but then re-inlines the three seed-source paths in a parenthetical. maintain-knowledge.md carries these same paths in full, plus the missing-source fallback rules the model needs to actually seed — so it must load that file anyway, and the parenthetical changes no move. A restated fact paid on every activation for a branch that fires once.",
+      "recommendation": "Truncate the bullet to the route: 'First run (folder belum ada): bangun strukturnya dan seed isinya — lihat references/maintain-knowledge.md untuk sumber seed dan fallback-nya.' Keep the Docker/flashlight sentence handling per the activation re-sequencing theme."
+    },
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Add: routing map omits psm-optimize — a live sibling workflow is invisible to the router",
+      "location": "references/route-workflow.md:7-13 (intent table); SKILL.md:10 (Overview parenthetical)",
+      "evidence": "The hub's core capability is intent-to-workflow routing, and its table maps only four workflows (cross-version, scaffold, develop, validate). psm-optimize exists as an installed sibling (triggers 'optimasi module', 'percepat module') but has no row; SKILL.md's Overview also enumerates only four. A user saying 'module-ku lambat' — a multi-step job by the skill's own definition — either gets misrouted to psm-develop or handled as chat, exactly what route-workflow.md forbids.",
+      "recommendation": "Add a row to the mapping table: 'module lambat / optimasi performa / tuning cache-service' → psm-optimize, update the Overview parenthetical, and extend the tie-breaker note if ordering matters (e.g. validate before optimize)."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Remove: Docker + flashlight environment check over-applied at hub activation",
+      "location": "SKILL.md:46 (On Activation, first-run bullet)",
+      "evidence": "'Lalu cek Docker + image flashlight; bila belum ada, bantu Budi menyiapkan' runs during first activation of a consultation hub. Docker/flashlight is psm-validate's dependency; the hub itself never runs a container. The first-timer who came to ask a question can be pulled into a Docker installation session before being greeted.",
+      "recommendation": "Cut the check from On Activation. If wanted at all, add one clause to route-workflow.md's psm-validate handoff prep ('cek Docker + image flashlight sebelum memanggil'). Nothing is lost — the check still happens at the only moment it matters."
+    },
+    {
+      "id": "enhancement-3",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add: intent-before-ingestion — activation seeds/reads the KB before greeting or intent",
+      "location": "SKILL.md:44-49 (On Activation)",
+      "evidence": "The activation sequence is config → build-or-read knowledge base → greet last. First run seeds the entire KB (potentially including WebReader devdocs research when seed sources are missing) before any greeting; every later run reads tech/*, ecommerce/*, and projects/*.md before the user has said why they came — 'yang relevan' cannot be judged without intent.",
+      "recommendation": "Reorder: greet and capture intent first. On first run, offer the seed or seed only what the stated intent needs; on later runs, defer KB reads to capability time — answer-technical.md already names the KB as its first source of truth, so lazy loading loses nothing."
+    },
+    {
+      "id": "enhancement-4",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add: graceful degradation for the config-resolver dependency at activation",
+      "location": "SKILL.md:38-42 (On Activation, config load)",
+      "evidence": "Activation's first act is the resolver call; the --graceful flag covers a missing config.yaml but nothing covers a missing resolver script or uv itself — while maintain-knowledge.md explicitly contemplates this exact environment ('agent dipasang tanpa skill psm saudaranya') and provides fallbacks for seed sources. The canonical defaults sit in parentheses on lines 40-42, but no instruction connects them to resolver failure.",
+      "recommendation": "One clause: 'Bila resolver tak ada atau gagal dijalankan, pakai default dalam kurung dan lanjut (catat bahwa config tak resolved).' Mirrors the fallback discipline the skill already applies to seed sources."
+    },
+    {
+      "id": "enhancement-5",
+      "lens": "enhancement",
+      "severity": "low",
+      "title": "Opportunity: replace the capabilities-demo offer with an open-floor opening",
+      "location": "SKILL.md:49 (On Activation, closing line)",
+      "evidence": "'Sapa Budi dan tawarkan untuk menunjukkan kemampuan' opens every session — including the fiftieth — with an offer to demo the menu, and gives no instruction for the common interactive case where the invocation already carries the question or module path.",
+      "recommendation": "Adaptive opening: if the invocation carries a question or module path, route straight to the matching capability; otherwise greet by name and invite the dump ('lagi ngerjain module apa?'), surfacing the capability list only on request."
+    },
+    {
+      "id": "orchestrator-1",
+      "lens": "orchestrator",
+      "severity": "medium",
+      "title": "Documented default psm_target_versions is stale: 9.0 vs canonical 9.1",
+      "location": "SKILL.md:42 (On Activation, config defaults)",
+      "evidence": "SKILL.md documents the default as (1.7.8,8.1,9.0) while the canonical resolver (skills/psm-setup/scripts/resolve-psm-config.py) and the module config both resolve to 1.7.8,8.1,9.1 — verified by running the resolver. The parenthetical defaults are the skill's only fallback when the resolver is unavailable, so the fallback value is wrong; the module's own memlog records that version defaults live in multiple layers that must stay in sync.",
+      "recommendation": "Update the documented default to (1.7.8,8.1,9.1) and re-check the parenthetical defaults whenever psm-setup's canonical defaults change."
+    }
+  ]
+}

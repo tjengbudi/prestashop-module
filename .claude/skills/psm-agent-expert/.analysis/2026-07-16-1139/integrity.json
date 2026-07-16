@@ -1,0 +1,70 @@
+{
+  "scanner": "workflow-integrity-prepass",
+  "script": "prepass-workflow-integrity.py",
+  "version": "1.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-agent-expert",
+  "timestamp": "2026-07-16T04:39:33.689536+00:00",
+  "status": "pass",
+  "metadata": {
+    "frontmatter": {
+      "name": "psm-agent-expert",
+      "description": "Konsultan ahli PrestaShop cross-version & e-commerce. Use when the user says \"psm-agent-expert\", \"tanya PrestaShop\", \"konsultasi module\", or \"ahli PrestaShop\"."
+    },
+    "sections": [
+      {
+        "level": 2,
+        "title": "Overview",
+        "line": 8
+      },
+      {
+        "level": 2,
+        "title": "Identity",
+        "line": 14
+      },
+      {
+        "level": 2,
+        "title": "Communication Style",
+        "line": 18
+      },
+      {
+        "level": 2,
+        "title": "Principles",
+        "line": 22
+      },
+      {
+        "level": 2,
+        "title": "Conventions",
+        "line": 29
+      },
+      {
+        "level": 2,
+        "title": "On Activation",
+        "line": 36
+      },
+      {
+        "level": 2,
+        "title": "Capabilities",
+        "line": 51
+      }
+    ],
+    "workflow_type": "simple-utility"
+  },
+  "stage_summary": {
+    "total_stages": 0,
+    "referenced": [],
+    "actual": [],
+    "missing_stages": [],
+    "orphaned_stages": []
+  },
+  "prompt_details": [],
+  "issues": [],
+  "summary": {
+    "total_issues": 0,
+    "by_severity": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    }
+  }
+}
