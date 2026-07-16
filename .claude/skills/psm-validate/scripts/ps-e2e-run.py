@@ -78,6 +78,8 @@ _spec.loader.exec_module(fl)
 
 DEFAULT_BROWSERS = "chromium,firefox"
 SUPPORTED_ENGINES = ("chromium", "firefox", "webkit")
+SUPPORTED_ACTIONS = ("goto", "expect_no_fatal", "expect_visible", "expect_text",
+                     "expect_no_console_error", "click", "fill", "screenshot")
 CONTAINER_HTTP_PORT = 80          # nginx/apache flashlight mendengarkan di 80
 DEFAULT_HOST_PORT = 8000
 # Default admin flashlight (BO folder `admin-dev`); override lewat flag. Login BO
@@ -179,8 +181,9 @@ def universal_smoke():
 def discover_scenarios(module_dir):
     """Muat spec authored dari <module>/tests/e2e/*.json. Return (scenarios, notes).
 
-    Spec tak valid (JSON rusak / tanpa 'steps' list) DILEWATI dengan catatan —
-    tak crash, tak diam-diam hilang.
+    Spec tak valid (JSON rusak / tanpa 'steps' list / aksi tak dikenal) DILEWATI
+    dengan catatan — tak crash, tak diam-diam hilang. Validasi aksi di sini supaya
+    typo (mis. 'expect_visable') tak pernah terbaca hijau.
     """
     found, notes = [], []
     e2e_dir = Path(module_dir) / "tests" / "e2e"
@@ -195,6 +198,12 @@ def discover_scenarios(module_dir):
         steps = data.get("steps") if isinstance(data, dict) else None
         if not isinstance(steps, list) or not steps:
             notes.append(f"{f.name}: tak ada 'steps' list — dilewati")
+            continue
+        unknown = sorted({str((s.get("action") if isinstance(s, dict) else None) or "?")
+                          for s in steps
+                          if not isinstance(s, dict) or s.get("action") not in SUPPORTED_ACTIONS})
+        if unknown:
+            notes.append(f"{f.name}: aksi tak dikenal ({', '.join(unknown)}) — dilewati")
             continue
         found.append({"name": data.get("name") or f.stem, "source": f.name, "steps": steps})
     return found, notes
@@ -302,7 +311,9 @@ def run_steps(page, steps, ctx):
                 _snap(page, ctx, f"{idx:02d}-shot")
                 results.append(_res(action, True, conclusive, "screenshot diambil", ctx.get("screenshot_dir", "")))
             else:
-                results.append(_res(action or "?", True, False, "aksi tak dikenal — dilewati", ""))
+                # Backstop discover_scenarios: aksi tak dikenal TIDAK boleh terbaca lolos —
+                # ok=False + conclusive=False -> masuk kanal inconclusive, bukan silent pass.
+                results.append(_res(action or "?", False, False, "aksi tak dikenal — tak dieksekusi", ""))
         except Exception as e:  # noqa: BLE001 — selector timeout / nav gagal = assertion gagal
             results.append(_res(action or "?", False, conclusive, f"exception: {str(e)[:120]}", ""))
         if results and not results[-1]["ok"]:

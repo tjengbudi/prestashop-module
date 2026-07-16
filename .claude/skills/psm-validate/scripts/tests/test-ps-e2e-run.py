@@ -200,8 +200,12 @@ def main():
     rexc = mod.run_steps(FakePage(raise_on={"goto"}), [{"action": "goto", "area": "fo", "path": "/"}], _ctx())
     ok &= check("goto exception -> ok False (assertion gagal)", rexc[0]["ok"] is False)
     rukn = mod.run_steps(FakePage(), [{"action": "teleport"}], _ctx())
-    ok &= check("aksi tak dikenal -> ok True tapi tak konklusif (dilewati)",
-                rukn[0]["ok"] is True and rukn[0]["conclusive"] is False)
+    ok &= check("aksi tak dikenal -> ok False & tak konklusif (bukan silent pass)",
+                rukn[0]["ok"] is False and rukn[0]["conclusive"] is False)
+    ukn_f, ukn_inc = mod.assemble_findings("9.1", [{"browser": "chromium", "scenarios": [
+        {"name": "typo", "source": "typo.json", "results": rukn}]}])
+    ok &= check("aksi tak dikenal -> kanal inconclusive (tak memblok, tak hilang)",
+                ukn_f == [] and len(ukn_inc) == 1 and ukn_inc[0]["action"] == "teleport")
 
     # --- run_steps: expect_no_console_error (baca console_sink sejak console_base) ---
     rce_clean = mod.run_steps(FakePage(), [{"action": "expect_no_console_error"}],
@@ -267,9 +271,14 @@ def main():
             {"name": "cfg", "steps": [{"action": "goto", "area": "bo", "path": "/x"}]}), encoding="utf-8")
         (e2e / "nosteps.json").write_text(json.dumps({"name": "x"}), encoding="utf-8")
         (e2e / "broken.json").write_text("{bukan json", encoding="utf-8")
+        (e2e / "typo.json").write_text(json.dumps(
+            {"name": "t", "steps": [{"action": "goto", "area": "fo", "path": "/"},
+                                    {"action": "expect_visable", "selector": "#x"}]}), encoding="utf-8")
         found, notes = mod.discover_scenarios(mdir)
         ok &= check("spec valid ditemukan (1) dgn name", len(found) == 1 and found[0]["name"] == "cfg")
-        ok &= check("spec tanpa steps & JSON rusak dicatat (2 notes)", len(notes) == 2)
+        ok &= check("spec tanpa steps & JSON rusak & aksi typo dicatat (3 notes)", len(notes) == 3)
+        ok &= check("note aksi tak dikenal menyebut aksinya",
+                    any("expect_visable" in n for n in notes))
 
     # --- playwright_available -> bool (env apa pun) ---
     ok &= check("playwright_available -> bool", isinstance(mod.playwright_available(), bool))

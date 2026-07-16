@@ -86,8 +86,8 @@ def scan_pattern_rule(rule, module_dir, main_file):
     return findings
 
 
-def scan_structure_rule(rule, module_dir, main_file):
-    """Rule struktural: ps_versions_compliancy ada, index.php tiap folder."""
+def scan_structure_rule(rule, module_dir, main_file, target_ver=None):
+    """Rule struktural: ps_versions_compliancy ada & mencakup target, index.php tiap folder, composer prepend-autoloader."""
     expect = rule.get("expect")
     if expect == "present":
         if not main_file:
@@ -102,6 +102,44 @@ def scan_structure_rule(rule, module_dir, main_file):
             if not (d / "index.php").is_file():
                 missing.append({"file": str(d.relative_to(module_dir)) or ".", "line": 0, "snippet": "index.php tidak ada di folder ini"})
         return missing
+    if expect == "composer_prepend_autoloader_false":
+        composer = module_dir / "composer.json"
+        if not composer.is_file():
+            return []  # tanpa composer.json tak ada autoloader yang bisa prepend
+        try:
+            cfg = json.loads(composer.read_text(encoding="utf-8", errors="replace"))
+        except json.JSONDecodeError:
+            cfg = None
+        if not isinstance(cfg, dict):
+            return [{"file": "composer.json", "line": 0, "snippet": "composer.json bukan JSON object valid"}]
+        conf = cfg.get("config")
+        if not isinstance(conf, dict) or conf.get("prepend-autoloader") is not False:
+            return [{"file": "composer.json", "line": 0, "snippet": "config.prepend-autoloader bukan false"}]
+        return []
+    if expect == "compliancy_covers_target":
+        if not main_file or not target_ver:
+            return []
+        text = main_file.read_text(encoding="utf-8", errors="replace")
+        m = re.search(r"ps_versions_compliancy\s*=\s*(?:\[|array\s*\()(.*?)(?:\]|\))", text, re.S)
+        if not m:
+            return []  # ketiadaan compliancy sudah urusan struct-compliancy
+        body = m.group(1)
+        mmin = re.search(r"['\"]min['\"]\s*=>\s*['\"]([0-9.]+)['\"]", body)
+        mmax = re.search(r"['\"]max['\"]\s*=>\s*(_PS_VERSION_|['\"]([0-9.]+)['\"])", body)
+
+        def vtup(s):
+            return tuple(int(x) for x in s.split(".") if x)
+
+        hits = []
+        rel = str(main_file.relative_to(module_dir))
+        try:
+            if mmin and vtup(mmin.group(1)) > vtup(target_ver):
+                hits.append({"file": rel, "line": 0, "snippet": f"min {mmin.group(1)} > versi target {target_ver}"})
+            if mmax and mmax.group(1) != "_PS_VERSION_" and vtup(mmax.group(2)) < vtup(target_ver):
+                hits.append({"file": rel, "line": 0, "snippet": f"max {mmax.group(2)} < versi target {target_ver}"})
+        except ValueError:
+            hits.append({"file": rel, "line": 0, "snippet": "min/max compliancy tak terbaca (bukan angka)"})
+        return hits
     return []
 
 
@@ -142,7 +180,7 @@ def main():
             if major not in rule.get("affects", []):
                 continue
             if rule["kind"] in ("structure", "compliancy"):
-                hits = scan_structure_rule(rule, module_dir, main_file)
+                hits = scan_structure_rule(rule, module_dir, main_file, full_ver)
             else:
                 hits = scan_pattern_rule(rule, module_dir, main_file)
             if hits:

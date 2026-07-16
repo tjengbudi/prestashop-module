@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Aturan kompatibilitas module PrestaShop lintas versi, di-embed agar psm-validate akurat tanpa knowledge base. Sumber: devdocs.prestashop-project.org (core-updates 8.0/9.0), validator.prestashop.com/changelog, flashlight README.",
-    "schema": "Setiap rule: id, severity (error|warning|info), affects (daftar versi yang TERPENGARUH), kind (dependency|class|method|hook|constant|function|structure|smarty|compliancy), pattern (regex dicocokkan ke isi file), files (glob filter, opsional), message, fix."
+    "schema": "Setiap rule: id, severity (error|warning|info), affects (daftar versi yang TERPENGARUH), kind (dependency|class|method|hook|constant|function|structure|smarty|compliancy), message, fix, files (glob filter, opsional; __MAIN__ = main module file). Rule pola: pattern (regex dicocokkan ke isi file; negate_pattern opsional) — wajib untuk kind selain structure|compliancy. Rule struktural (kind structure|compliancy dirutekan ke scan_structure_rule): expect salah satu dari present (juga butuh pattern) | index_php_each_dir | composer_prepend_autoloader_false | compliancy_covers_target."
   },
   "forbidden_dependencies_ps9": [
     {"id": "dep-guzzle", "severity": "error", "affects": ["9"], "kind": "dependency", "pattern": "guzzlehttp/guzzle|GuzzleHttp\\\\", "message": "GuzzleHttp dihapus dari core PrestaShop 9.", "fix": "Pakai Symfony HTTP Client, atau bundle guzzle sendiri di vendor module."},
@@ -36,6 +36,8 @@
   ],
   "structure": [
     {"id": "struct-compliancy", "severity": "error", "affects": ["1.7", "8", "9"], "kind": "compliancy", "pattern": "ps_versions_compliancy\\s*=", "files": ["__MAIN__"], "expect": "present", "message": "ps_versions_compliancy WAJIB ada di main module file (diwajibkan PrestaShop Validator).", "fix": "Tambahkan $this->ps_versions_compliancy = ['min' => '1.7.0.0', 'max' => _PS_VERSION_] di constructor."},
+    {"id": "struct-compliancy-range", "severity": "error", "affects": ["1.7", "8", "9"], "kind": "compliancy", "files": ["__MAIN__"], "expect": "compliancy_covers_target", "message": "Range ps_versions_compliancy tidak mencakup versi target — module menolak install di versi itu.", "fix": "Set 'min' <= versi target terendah dan 'max' => _PS_VERSION_ (atau literal >= target tertinggi)."},
+    {"id": "struct-composer-prepend", "severity": "error", "affects": ["1.7", "8", "9"], "kind": "structure", "expect": "composer_prepend_autoloader_false", "message": "composer.json module wajib set config.prepend-autoloader = false — kalau true/absen, autoloader module bisa override kelas core dan merusak PrestaShop.", "fix": "Tambahkan \"config\": {\"prepend-autoloader\": false} di composer.json module."},
     {"id": "struct-index-php", "severity": "warning", "affects": ["1.7", "8", "9"], "kind": "structure", "expect": "index_php_each_dir", "message": "Setiap folder module harus punya index.php (keamanan: redirect ke FO).", "fix": "Tambahkan index.php standar di tiap subfolder."}
   ],
   "smarty": [

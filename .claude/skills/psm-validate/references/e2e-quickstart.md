@@ -36,14 +36,14 @@ playwright ...` di atas sudah begitu) agar build browser cocok dengan yang di-dr
 Buktikan skrip + browser + Docker siap tanpa perlu module nyata:
 
 ```bash
-# unit test (tanpa Docker/browser) — 41 assert harus lolos
+# unit test (tanpa Docker/browser) — semua assert harus lolos
 uv run scripts/tests/test-ps-e2e-run.py
 
 # probe cepat: jalankan atas folder module apa pun, baca JSON-nya
-uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium,firefox -o /tmp/e2e.json
+uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium,firefox -o e2e-probe.json
 ```
 
-Baca `/tmp/e2e.json`:
+Baca `e2e-probe.json`:
 
 - `browsers_available: ["chromium","firefox"]` → browser siap. Firefox absen → `browser_notes`
   menyuruh `playwright install firefox`; versi jalan dgn chromium saja (coverage tak lengkap, jujur dicatat).
@@ -98,7 +98,7 @@ Satu file = satu skenario `{ "name", "steps":[...] }`. Aksi yang didukung:
 | `screenshot` | — | ambil screenshot manual (butuh `--screenshot-dir`) |
 
 Placeholder yang disubstitusi di `path`/`url`/`text`/`value`: `{mod}` `{fo}` `{bo}`.
-Spec tak valid (JSON rusak / tanpa `steps`) dilewati dengan catatan, bukan crash.
+Spec tak valid (JSON rusak / tanpa `steps` / aksi tak dikenal) dilewati dengan catatan, bukan crash.
 Rujukan otoritatif: `uv run scripts/ps-e2e-run.py --help`.
 
 ### Verifikasi visual ("cek web asli" — lihat render seperti user)
@@ -130,8 +130,9 @@ uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium --heade
   (override: `--admin-email` / `--admin-password` / `--admin-path`). Login gagal → assertion
   area BO ditandai tak konklusif (tak memblok), assertion FO tetap konklusif.
 - **Config keys.** `psm_e2e_enabled` (false → lewati Lapis 4) & `psm_e2e_browsers` di section
-  `psm` `_bmad/config.yaml`; default kanonik dari resolver. Base URL memakai ulang
+  `psm` `{project-root}/_bmad/config.yaml`; default kanonik dari resolver. Base URL memakai ulang
   `psm_flashlight_ps_domain`.
-- **Struktur skill dua-pohon.** Resolver config di-eksekusi runtime dari
-  `skills/psm-setup/scripts/resolve-psm-config.py` — pastikan file itu ada saat menyalin skill
-  ke mesin lain (bukan hanya `.claude/skills/`).
+- **Dependensi psm-setup.** Resolver config dijalankan saat aktivasi dari
+  `.claude/skills/psm-setup/scripts/resolve-psm-config.py` — saat menyalin ke mesin lain, sertakan
+  skill `psm-setup`, bukan hanya folder `psm-validate`. Resolver absen → skill lanjut dengan
+  default kanonik skrip dan mencatatnya di ringkasan.

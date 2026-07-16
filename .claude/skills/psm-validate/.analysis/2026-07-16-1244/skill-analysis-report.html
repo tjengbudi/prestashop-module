@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill Analysis Report</title>
+<style>
+  :root {
+    --bg: #0f1b2d;
+    --panel: #16263d;
+    --panel-2: #1d3250;
+    --ink: #e9eef6;
+    --ink-dim: #9fb0c7;
+    --line: #294366;
+    --accent: #b66d46;
+    --accent-ink: #f4d9c8;
+    --critical: #e05656;
+    --high: #e0904a;
+    --medium: #d8c24a;
+    --low: #5aa0d0;
+    --ok: #4caf72;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 20px 80px; }
+  header h1 { font-size: 22px; margin: 0 0 4px; }
+  header .meta { color: var(--ink-dim); font-size: 13px; }
+  header .meta b { color: var(--ink); font-weight: 600; }
+
+  .banner {
+    display: none;
+    background: #3a1414;
+    border: 1px solid var(--critical);
+    color: #ffd9d9;
+    padding: 14px 16px;
+    border-radius: 8px;
+    margin: 16px 0;
+    white-space: pre-wrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+  .banner.show { display: block; }
+
+  .overview {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .grade {
+    font-size: 34px;
+    font-weight: 800;
+    margin: 0 0 8px;
+    text-transform: capitalize;
+  }
+  .grade.g-excellent { color: var(--ok); }
+  .grade.g-good { color: var(--low); }
+  .grade.g-fair { color: var(--medium); }
+  .grade.g-poor { color: var(--critical); }
+  .verdict { font-size: 16px; font-weight: 600; margin: 0 0 14px; }
+  .summary { color: var(--ink-dim); margin: 0 0 14px; }
+  .counts { display: flex; flex-wrap: wrap; gap: 10px; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .pill .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .pill .n { font-weight: 700; }
+  .dot.critical { background: var(--critical); }
+  .dot.high { background: var(--high); }
+  .dot.medium { background: var(--medium); }
+  .dot.low { background: var(--low); }
+
+  /* Generic synthesis/agent-block panel */
+  .block {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .block > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 12px;
+  }
+  .block .mono, .block code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .kv { margin: 0; display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; }
+  .kv dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .kv dd { margin: 0; }
+
+  /* Themes */
+  .theme { padding: 12px 0; border-top: 1px solid var(--line); }
+  .theme:first-of-type { border-top: none; padding-top: 0; }
+  .theme .t-head { display: flex; align-items: center; gap: 10px; }
+  .theme .t-title { font-weight: 600; flex: 1 1 auto; min-width: 0; }
+  .theme .t-cause { color: var(--ink-dim); margin-top: 4px; }
+  .theme .t-action { margin-top: 4px; }
+  .theme .t-findings { margin-top: 8px; padding-left: 12px; border-left: 2px solid var(--line); }
+  .theme .t-finding { font-size: 13px; color: var(--ink-dim); padding: 2px 0; }
+
+  /* Strengths */
+  .strength-list { margin: 0; padding-left: 20px; }
+  .strength-list li { padding: 2px 0; }
+
+  /* Recommendations */
+  .rec { padding: 8px 0; border-top: 1px solid var(--line); }
+  .rec:first-of-type { border-top: none; padding-top: 0; }
+  .rec .rank { font-weight: 700; color: var(--accent-ink); margin-right: 8px; }
+  .rec .resolves { color: var(--ink-dim); font-size: 12px; margin-left: 8px; }
+
+  /* Experience journeys */
+  .block .journey { padding: 8px 0; border-top: 1px solid var(--line); }
+  .block .journey:first-of-type { border-top: none; padding-top: 0; }
+  .block .journey .j-name { font-weight: 600; }
+  .block .journey .j-steps { color: var(--ink-dim); margin-top: 2px; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 18px 0 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar .sel-count { color: var(--ink-dim); font-size: 13px; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--ink);
+    padding: 8px 14px;
+  }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #1a0e07;
+    font-weight: 600;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.link {
+    background: none;
+    border: none;
+    color: var(--accent-ink);
+    padding: 4px 6px;
+    font-size: 13px;
+  }
+  button.small { padding: 5px 10px; font-size: 13px; flex: 0 0 auto; }
+
+  .no-findings {
+    background: var(--panel);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    padding: 28px;
+    text-align: center;
+    color: var(--ink-dim);
+  }
+  .no-findings .big { font-size: 18px; color: var(--ok); margin-bottom: 6px; }
+
+  .group { margin: 18px 0; }
+  .group > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .finding {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--line);
+    border-radius: 8px;
+    margin: 8px 0;
+    overflow: hidden;
+  }
+  .finding.sev-critical { border-left-color: var(--critical); }
+  .finding.sev-high { border-left-color: var(--high); }
+  .finding.sev-medium { border-left-color: var(--medium); }
+  .finding.sev-low { border-left-color: var(--low); }
+
+  .finding .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .finding .row .chk { width: 16px; height: 16px; flex: 0 0 auto; cursor: pointer; }
+  .finding .row .head { flex: 1 1 auto; cursor: pointer; min-width: 0; }
+  .finding .row .title { font-weight: 600; }
+  .finding .row .sub { color: var(--ink-dim); font-size: 12px; margin-top: 2px; }
+  .finding .tag {
+    flex: 0 0 auto;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+  }
+  .finding .caret { flex: 0 0 auto; color: var(--ink-dim); transition: transform 0.15s; cursor: pointer; }
+  .finding.open .caret { transform: rotate(90deg); }
+
+  .finding .body {
+    display: none;
+    padding: 0 14px 14px 42px;
+    border-top: 1px solid var(--line);
+  }
+  .finding.open .body { display: block; }
+  .finding .body dl { margin: 12px 0 0; display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; }
+  .finding .body dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .finding .body dd { margin: 0; }
+  .finding .body code, .finding .body .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%);
+    background: var(--ok);
+    color: #06160c;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  .fallback-area { margin-top: 12px; display: none; }
+  .fallback-area.show { display: block; }
+  .fallback-area textarea {
+    width: 100%;
+    min-height: 160px;
+    background: var(--panel-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Skill Analysis Report</h1>
+    <div class="meta">
+      <span>Subject: <b id="m-subject">—</b></span> &nbsp;·&nbsp;
+      <span>Generated: <b id="m-generated">—</b></span> &nbsp;·&nbsp;
+      <span>Schema: <b id="m-schema">—</b></span>
+    </div>
+  </header>
+
+  <div id="parse-banner" class="banner"></div>
+
+  <section id="overview" class="overview" hidden>
+    <div id="grade" class="grade" hidden></div>
+    <p id="verdict" class="verdict"></p>
+    <p id="summary-text" class="summary" hidden></p>
+    <div id="counts" class="counts"></div>
+  </section>
+
+  <!-- Synthesis layer (themes, strengths, recommendations). Hidden when absent. -->
+  <section id="themes" class="block" hidden></section>
+  <section id="strengths" class="block" hidden></section>
+  <section id="recommendations" class="block" hidden></section>
+
+  <!-- Experience: journeys plus headless (experience). Hidden when absent. -->
+  <section id="experience" class="block" hidden></section>
+
+  <div id="toolbar" class="toolbar" hidden>
+    <button id="btn-copy" class="primary" disabled>Copy selected as paste-back prompt</button>
+    <span id="sel-count" class="sel-count">0 selected</span>
+    <button id="btn-select-all" class="link">Select all</button>
+    <button id="btn-clear" class="link">Clear</button>
+    <button id="btn-expand-all" class="link">Expand all</button>
+    <button id="btn-collapse-all" class="link">Collapse all</button>
+  </div>
+
+  <div id="fallback" class="fallback-area">
+    <p class="sel-count">Clipboard was unavailable. Copy the text below manually:</p>
+    <textarea id="fallback-text" readonly></textarea>
+  </div>
+
+  <div id="findings-root"></div>
+</div>
+
+<div id="toast" class="toast">Copied</div>
+
+<!-- scripts/render_report.py replaces the contents of this island per run.
+     The placeholder below is intentionally unusable: the shell refuses to
+     render it, so a failed injection can never look like real findings. -->
+<script type="application/json" id="report-data">
+{
+  "schema_version": 2,
+  "subject": "/home/budi/dev/prestashop-module/.claude/skills/psm-validate",
+  "generated": "2026-07-16",
+  "verdict": "Sound skill with two findings that matter — QUICKSTART-e2e.md is runtime-routed workflow content at skill root (high) and a typo'd E2E step action silently reads as green (medium); the rest is post-consolidation drift and small trims.",
+  "grade": "good",
+  "summary": "Post-Lapis 4 the skill remains disciplined: division of labor, honest degrade, and the config surface all verified healthy this round, and the prior false-pass closures hold. The two findings that matter are topology and correctness: SKILL.md's Lapis 4 routes to QUICKSTART-e2e.md at runtime, so it is progressive-disclosure content living at skill root — and its Gotchas still describe the dual skill tree removed on 2026-07-16, inverting the copy-to-another-machine advice — while in ps-e2e-run.py an unknown scenario action returns ok=true/conclusive=false and vanishes from every reporting channel, a silent false green in the TDD loop. Everything else is small drift: two token trims, a stale rule-authoring schema in ps-rules.json, and three worthwhile robustness adds.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "QUICKSTART topology and the stale dual-tree remnant",
+      "root_cause": "QUICKSTART-e2e.md was authored as a human-only runbook at skill root, but SKILL.md Lapis 4 routes to it by bare path at runtime — making it progressive-disclosure content in the wrong place — and its Gotchas still describe the dual skill tree removed on 2026-07-16, so the copy-to-another-machine advice now points the wrong way. Three lenses converged on the stale gotcha independently.",
+      "finding_ids": [
+        "architecture-1",
+        "architecture-2",
+        "architecture-3",
+        "leanness-3",
+        "customization-1"
+      ],
+      "action": "Move the file to references/e2e-quickstart.md and update the single Lapis 4 pointer; in the same edit, compress SKILL.md's visual-verification passage to a one-line pointer into it (recovers real token headroom), and rewrite the 'Struktur skill dua-pohon' gotcha as a plain psm-setup dependency note: when copying this skill to another machine, also copy .claude/skills/psm-setup/ (its resolve-psm-config.py runs at activation)."
+    },
+    {
+      "title": "Honest-degrade holes at the two remaining edges",
+      "root_cause": "The skill's honest-degrade invariant (nothing untested may read as passed; nothing absent may hard-stop the run) is enforced at every infra edge except two late arrivals: an unknown/typo'd scenario action in an authored E2E spec returns ok=true/conclusive=false and is collected into neither findings nor inconclusive — a silent false green — and On Activation step 1 hard-requires the psm-setup resolver with no sanctioned fallback even though every script already runs on canonical defaults.",
+      "finding_ids": [
+        "determinism-1",
+        "enhancement-1"
+      ],
+      "action": "Validate authored step actions against the supported set in discover_scenarios (or return ok=false/conclusive=false for unknown actions) so typos surface through the existing scenario_note/inconclusive channels, with a FakePage regression test; and append a one-clause fallback to On Activation step 1: resolver absent → proceed on the scripts' canonical defaults and note it in the summary."
+    },
+    {
+      "title": "Long-run context economy",
+      "root_cause": "A full 4-layer run (image pulls, DB boot, dual-browser E2E) is long enough to compact mid-run, yet the parent both reads the entire module source in-context for Lapis 3 and tracks layer outputs under unguessable temp names — so a compaction between layers can cost a multi-minute Docker/E2E re-run and the review gains nothing from being done by the busy orchestrator.",
+      "finding_ids": [
+        "enhancement-2",
+        "enhancement-3"
+      ],
+      "action": "Name a per-layer output convention (<psm_reports_dir>/<module>-<lapis>.json consumed by the aggregate line) so an interrupted run is resumable by listing the reports dir, and delegate the Lapis 3 read/review to one subagent returning only the findings JSON, with an explicit sequential fallback when spawning is unavailable."
+    }
+  ],
+  "strengths": [
+    "Honest-degrade discipline holds at every previously closed edge: skipped/skipped_image/skipped_browser never block and never claim pass, and the prior HIGH false-pass fix (findings nonempty ⇒ errors empty; per-browser notes channel) verified intact this round.",
+    "The deterministic layer is fully delegated and fully tested: verdict assembly lives in ps-aggregate.py (SKILL.md stays at interface altitude), the two new structure rules are deterministic with conservative silence on unparseable input, and scripts lint clean with all four scripts tested.",
+    "Single config mechanism confirmed clean: one resolver, canonical defaults mirrored exactly across resolver, config.yaml, and script fallbacks; per-run concerns (--headed, --screenshot-dir) correctly live as CLI flags, not config.",
+    "Genuinely headless-ready: the CI gate is script-wired (ps-aggregate exits 1 on fail) and no interactive gate leaks into headless mode."
+  ],
+  "recommendations": [
+    {
+      "rank": 1,
+      "action": "Relocate QUICKSTART-e2e.md to references/e2e-quickstart.md, update the SKILL.md Lapis 4 pointer, compress the visual-verification passage into a pointer, and rewrite the stale dual-tree gotcha as a psm-setup dependency note.",
+      "resolves": [
+        "architecture-1",
+        "architecture-3",
+        "leanness-3",
+        "customization-1",
+        "architecture-2"
+      ]
+    },
+    {
+      "rank": 2,
+      "action": "Close the E2E silent-pass hole: validate authored step actions in discover_scenarios (or emit ok=false/conclusive=false for unknown actions) so they surface via the existing note channels; add a FakePage regression test.",
+      "resolves": [
+        "determinism-1"
+      ]
+    },
+    {
+      "rank": 3,
+      "action": "Append the resolver-absent fallback clause to On Activation step 1: proceed on canonical script defaults and note in the summary that defaults were used.",
+      "resolves": [
+        "enhancement-1"
+      ]
+    },
+    {
+      "rank": 4,
+      "action": "Adopt predictable per-layer output paths under <psm_reports_dir> and delegate the Lapis 3 review to a subagent with a sequential fallback.",
+      "resolves": [
+        "enhancement-3",
+        "enhancement-2"
+      ]
+    },
+    {
+      "rank": 5,
+      "action": "Apply the two SKILL.md trims (Lapis 2 script-internal narration, Vonis duplicate rule) and update ps-rules.json _meta.schema to document expect-rules, plus a pattern-XOR-expect assertion in test-ps-static-scan.py.",
+      "resolves": [
+        "leanness-1",
+        "leanness-2",
+        "determinism-2"
+      ]
+    }
+  ],
+  "experience": {
+    "journeys": [
+      {
+        "name": "Interactive validate",
+        "steps": "resolve config via psm-setup resolver -> run 4 layers (static scan, flashlight+phpstan, adversarial review, browser E2E with --screenshot-dir) -> ps-aggregate verdict -> summary naming not-conclusive layers + one-line visual note from key screenshots -> handoff offers (psm-develop / re-validate)"
+      },
+      {
+        "name": "Headless CI gate",
+        "steps": "args -> run available layers without --allow-image-pull/--headed/--screenshot-dir -> honest skipped_* statuses -> ps-aggregate exit code gates the pipeline"
+      },
+      {
+        "name": "Fresh-machine E2E TDD",
+        "steps": "QUICKSTART runbook: verify toolchain before touching the module -> author red spec in <module>/tests/e2e/ -> implement until Lapis 4 green on Chrome+Firefox (runbook moves to references/ under rank 1)"
+      }
+    ],
+    "headless": "Solid — no auto-pull, no browser download, no interactive gates; degrade is honest and the exit code carries the verdict. The one dead-end is the missing-resolver hard stop at activation (enhancement-1)."
+  },
+  "findings": [
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Lapis 2 narrates script-internal orchestration the model never acts on",
+      "location": "SKILL.md:29 (Lapis 2)",
+      "evidence": "\"image-nya web-tier saja (nginx+php-fpm, tanpa MySQL), jadi skrip membangun DB+flashlight berpasangan — `docker compose` bila tersedia, else `docker run`+network manual — menunggu container `healthy`, lalu install module via PS console...\" — the compose-vs-run fallback, image composition, and PS-console install are ps-flashlight-run.py internals (canon core test: mechanics for a tool living in the wrong file). The model's only moves here are passing config flags and interpreting the degrade statuses, both of which survive without this clause; the load-bearing parts are the DB-pairing fact (explains the `healthy` failure mode) and the phpstan neon/advisory distinction (changes verdict reporting).",
+      "recommendation": "Truncate to the fact plus the two load-bearing interpretations; drop the fallback mechanics and stack narration (~30 tokens in a warn-tier file).",
+      "proposed_smallest": "**Flashlight butuh database** (image-nya web-tier saja): skrip membangun DB+flashlight berpasangan, menunggu sehat, lalu install module dan jalankan **phpstan** terhadap core asli (neon module bila ada = konklusif; bila tidak, auto-generate = advisory, tak memblok).",
+      "predicted_delta": "Nothing on real runs — invocation, flag passing, degrade handling, and verdict interpretation are unchanged; at most a one-shade-less-specific explanation to Budi when compose is absent, which the existing degrade clause (`Docker/compose absen (status: skipped)`) already covers. Route to variant eval to confirm."
+    },
+    {
+      "id": "leanness-2",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Vonis section states the don't-override-the-script rule twice within three sentences",
+      "location": "SKILL.md:37 (Vonis dan output)",
+      "evidence": "Sentence 1: \"Serahkan penggabungan ke skrip; jangan rakit vonis dengan tangan.\" Sentence 3: \"Jangan menilai ulang atau menimpa `pass`, `conclusive`, `flashlight_conclusive`, atau `e2e_conclusive` yang dikeluarkannya.\" Same rule restated within one short paragraph (canon: facts restated across sections; defensive padding). The per-layer repeats in Lapis 1 and Lapis 4 sit at genuine points of temptation and stay; this intra-section duplicate does not — only the field names in sentence 3 add contract information sentence 1 lacks.",
+      "recommendation": "Merge into one sentence that keeps the field names: \"Serahkan penggabungan ke skrip — jangan rakit vonis dengan tangan atau menimpa `pass`/`conclusive`/`flashlight_conclusive`/`e2e_conclusive` yang dikeluarkannya.\" (~20 tokens saved, no rule lost.)"
+    },
+    {
+      "id": "leanness-3",
+      "lens": "leanness",
+      "severity": "medium",
+      "title": "QUICKSTART gotcha still describes the removed dual-tree layout and its caveat now points the wrong way",
+      "location": "QUICKSTART-e2e.md:135-137 (Gotchas — \"Struktur skill dua-pohon\")",
+      "evidence": "Heading \"Struktur skill dua-pohon\" and the caveat \"pastikan file itu ada saat menyalin skill ke mesin lain (bukan hanya `.claude/skills/`)\" reference the dual skill tree that was consolidated on 2026-07-16 — `.claude/skills/` is now the single psm tree, so copying `.claude/skills/` DOES include the resolver at `.claude/skills/psm-setup/scripts/resolve-psm-config.py`. This is meta-explanation describing a system state that no longer exists (canon: negative space / stale meta), and it actively misdirects a human provisioning a fresh machine — the real hazard today is copying only the psm-validate folder without psm-setup.",
+      "recommendation": "Retitle to the actual dependency and restate the caveat in current terms, e.g. \"**Dependensi psm-setup.** Resolver config dijalankan runtime dari `.claude/skills/psm-setup/scripts/resolve-psm-config.py` — saat menyalin ke mesin lain, sertakan skill `psm-setup`, bukan hanya folder `psm-validate`.\" No variant eval needed: the doc is not model-loaded; this is a correctness-of-content trim."
+    },
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "QUICKSTART-e2e.md is runtime-routed workflow content at skill root",
+      "location": "QUICKSTART-e2e.md (routed from SKILL.md:33, Lapis 4)",
+      "evidence": "Re-examined against current evidence, the previous round's 'QUICKSTART topology correct' call does not hold. That call rested on the file being a human-only runbook, but SKILL.md's Lapis 4 routes to it by bare path at runtime ('setup mesin baru + loop TDD E2E: `QUICKSTART-e2e.md`'), so the executing agent loads it whenever the fresh-machine/E2E-prerequisite branch fires — that is progressive disclosure, not out-of-band documentation. Its content confirms this: the scenario-spec action table (goto/expect_visible/expect_no_console_error, placeholder substitutions), the TDD red-green loop commands, and the visual-verification procedure are all agent-consumable workflow knowledge, not human-only prose. skill-quality-principles is explicit ('Never put workflow content directly at skill root') and the lens spec flags root-level *.md workflow content as high. Mitigations noted honestly: the bare path resolves, the file is fully self-contained (survives compaction), and nothing breaks today — this is a topology-predictability defect, not an execution break. (.memlog.md at root is builder process memory — exempt, not a finding; the lint-paths hit on it is a known false positive.)",
+      "recommendation": "Move the file to references/e2e-quickstart.md (descriptive, one level deep) and update the single SKILL.md pointer in Lapis 4. The file already stands alone, so no other edits are needed; its dual use as a human runbook is unaffected — humans can read references/ as easily as root, and the runtime surface becomes SKILL.md-plus-references as the convention promises."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "SKILL.md in warn tier with 95 tokens of headroom; Lapis 4 visual-verification detail is the natural lift",
+      "location": "SKILL.md:33 (Lapis 4) vs org budget",
+      "evidence": "SKILL.md is 2905 tokens against the org-configured desired 2000 / hard 3000 — under budget (not a violation) but the next addition crosses the hard tier, and this skill has grown on every recent commit (Lapis 4, visual verification, struct rules). Per the principles' warn-tier rule, the section most worth lifting should be named: the Lapis 4 visual-verification passage ('Untuk verifikasi visual ... jangan di headless/CI') duplicates content that already lives nearly verbatim in QUICKSTART-e2e.md's 'Verifikasi visual' section and in ps-e2e-run.py --help, so it is paid on every invocation while only the E2E branch needs it.",
+      "recommendation": "When architecture-1's move happens, compress SKILL.md's visual-verification sentences to a one-line pointer into references/e2e-quickstart.md (which already carries the full treatment). This restores real headroom via progressive disclosure rather than prose compression, and resolves the duplication in the same edit."
+    },
+    {
+      "id": "architecture-3",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Stale 'dua-pohon' gotcha describes a repo layout that no longer exists",
+      "location": "QUICKSTART-e2e.md:135-137 (Gotchas, 'Struktur skill dua-pohon')",
+      "evidence": "The gotcha says the config resolver runs from .claude/skills/psm-setup/scripts/resolve-psm-config.py and warns 'pastikan file itu ada saat menyalin skill ke mesin lain (bukan hanya `.claude/skills/`)'. Verified on disk: the dual tree is gone — {project-root}/skills/ now contains only reports/ and no resolver; the only live resolver is .claude/skills/psm-setup/scripts/resolve-psm-config.py (exists; SKILL.md's On Activation path resolves correctly). The parenthetical is therefore inverted: copying .claude/skills/ IS now sufficient, and the 'two-tree' framing points readers at a structure that was removed. The underlying warning (psm-validate has a cross-skill dependency on psm-setup's resolver) is still valid and worth keeping.",
+      "recommendation": "Rewrite the gotcha to state the live dependency plainly — 'when copying this skill to another machine, also copy .claude/skills/psm-setup/ (its scripts/resolve-psm-config.py is executed at activation)' — and drop the two-tree framing and the '(bukan hanya `.claude/skills/`)' parenthetical."
+    },
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Unknown scenario action silently passes — authored assertion vanishes from verdict",
+      "location": "/home/budi/dev/prestashop-module/.claude/skills/psm-validate/scripts/ps-e2e-run.py:304-305 (run_steps) with /home/budi/dev/prestashop-module/.claude/skills/psm-validate/scripts/ps-e2e-run.py:313-340 (assemble_findings)",
+      "evidence": "run_steps handles an unrecognized action with `results.append(_res(action or \"?\", True, False, \"aksi tak dikenal — dilewati\", \"\"))` — ok=True, conclusive=False. assemble_findings starts with `if r[\"ok\"]: continue`, so an ok=True result is collected into neither findings nor inconclusive; it never reaches browser_notes, scenario_notes, or ps-aggregate's inconclusive_note. A typo'd action in an authored spec (e.g. \"expect_visable\") therefore contributes nothing and the scenario can read findings:[] / pass:true — a false green in the QUICKSTART TDD loop (step c defines green as findings:[] + pass:true), contradicting the skill's own honest-degrade invariant that nothing untested may read as passed. Broken spec FILES do get scenario_notes; broken spec STEPS get nothing.",
+      "recommendation": "Determinism leak direction is intra-script (a hardcoded 'unknown means ignorable-pass' judgment in the deterministic layer). Two deterministic fixes, either unit-testable with the existing FakePage harness: (a) return ok=False, conclusive=False for unknown actions so they land in `inconclusive` and surface through the existing inconclusive_note channel; or (b) apply the validation category from script-opportunities — validate each step's action against SUPPORTED actions in discover_scenarios, the same path that already skips broken JSON with a note, so a typo'd step becomes a scenario_note instead of silence."
+    },
+    {
+      "id": "determinism-2",
+      "lens": "determinism",
+      "severity": "low",
+      "title": "ps-rules.json _meta.schema no longer describes the ruleset's actual contract (expect-rules undocumented, pattern implied mandatory)",
+      "location": "/home/budi/dev/prestashop-module/.claude/skills/psm-validate/assets/ps-rules.json:4 (_meta.schema)",
+      "evidence": "_meta.schema states: \"Setiap rule: id, severity (error|warning|info), affects (...), kind (...), pattern (regex dicocokkan ke isi file), files (glob filter, opsional), message, fix.\" — `pattern` reads as mandatory and `expect` is absent. After the delta, 3 of 4 structure rules (struct-compliancy-range, struct-composer-prepend, struct-index-php) are pattern-less expect-rules dispatched by scan_structure_rule's four expect variants (present | index_php_each_dir | composer_prepend_autoloader_false | compliancy_covers_target). A pattern-less rule mis-authored under a non-structure kind would also KeyError in scan_pattern_rule (`rule[\"pattern\"]`), since only kind structure/compliancy routes around it.",
+      "recommendation": "Keep the deterministic authoring contract accurate: update _meta.schema to mark `pattern` optional-for-structure-kinds and document `expect` and its four variants (plus that kind structure|compliancy is what routes to scan_structure_rule). Optionally add one assertion to test-ps-static-scan.py that every rule has `pattern` XOR `expect` consistent with its kind — a validation-category check with a single correct answer, so it belongs in the test, not in anyone's head."
+    },
+    {
+      "id": "customization-1",
+      "lens": "customization",
+      "severity": "low",
+      "title": "QUICKSTART 'dua-pohon' gotcha describes a removed dual skill tree around the config resolver",
+      "location": "/home/budi/dev/prestashop-module/.claude/skills/psm-validate/QUICKSTART-e2e.md:135-137",
+      "evidence": "Bullet titled 'Struktur skill dua-pohon' says the resolver runs from `.claude/skills/psm-setup/scripts/resolve-psm-config.py` and warns to copy 'bukan hanya `.claude/skills/`'. The dual tree was removed (2026-07-16): `.claude/skills/` is now the single tree (verified: `/home/budi/dev/prestashop-module/skills/` contains only `reports/`, no `psm-setup`). The path given is correct, but the two-tree framing and the parenthetical warning are now backwards — the resolver lives inside `.claude/skills/`, so 'copy more than .claude/skills/' no longer makes sense and could mislead someone porting the skill about where the config mechanism lives.",
+      "recommendation": "Rewrite the bullet to drop the dual-tree framing: retitle it (e.g. 'Dependensi lintas-skill') and state that psm-validate's config resolution depends on the sibling skill `.claude/skills/psm-setup/scripts/resolve-psm-config.py`, so copying psm-validate alone to another machine breaks On Activation step 1 — copy psm-setup too."
+    },
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add: graceful degradation when the psm-setup config resolver is absent (fresh-machine walk dead-ends at On Activation step 1)",
+      "location": "/home/budi/dev/prestashop-module/.claude/skills/psm-validate/SKILL.md:On Activation step 1 (and QUICKSTART-e2e.md:Gotchas)",
+      "evidence": "Pattern: graceful degradation — applied rigorously to Docker (skipped), images (skipped_image), and browsers (skipped_browser), but not to the skill's very first action. Step 1 hard-requires `psm-setup/scripts/resolve-psm-config.py` with no sanctioned fallback ('Baca apa adanya; jangan parse config.yaml sendiri' forbids the obvious workaround), while every downstream script already runs with canonical defaults when flags are omitted. QUICKSTART-e2e.md explicitly targets the copy-to-another-machine audience and its Gotchas section acknowledges this exact failure ('pastikan file itu ada saat menyalin') — under a now-stale 'Struktur skill dua-pohon' heading, since the dual tree was collapsed on 2026-07-16.",
+      "recommendation": "One clause appended to step 1: 'Bila resolver tak ada (skill disalin tanpa psm-setup), lanjut dengan default kanonik skrip (semua flag opsional) dan catat di ringkasan bahwa config default dipakai.' ~25 tokens, consistent with the skill's honest-degrade philosophy: proceed-with-note, never silently halt. Also retitle/reword the QUICKSTART gotcha to drop the dead 'dua-pohon' framing (zero SKILL.md token cost)."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Opportunity — add: delegate the Lapis 3 source read/review to a review subagent (parent stays lean), with sequential fallback",
+      "location": "/home/budi/dev/prestashop-module/.claude/skills/psm-validate/SKILL.md:Validate, Lapis 3 paragraph",
+      "evidence": "Patterns: parallel review lenses + the 'don't read files in the parent' subagent constraint. Lapis 3 instructs the orchestrating parent to read the entire module source in-context ('Baca source module dan cari risiko...') mid-way through a heavyweight 4-layer run (Docker boots, E2E, screenshot vision review still ahead). For a medium module that is tens of thousands of tokens loaded into the parent, raising compaction risk exactly where the run state (layer output paths) lives, and the review itself gains nothing from being done by the busy orchestrator rather than a fresh reviewer.",
+      "recommendation": "Reword the read instruction to: delegate Lapis 3 to one review subagent given the module path, the four lenses (or the adversarial-checks.md checklist path), and 'Return ONLY the findings JSON per this schema'; parent writes the returned JSON to the layer file. Keep the existing lens/schema text unchanged. Add the graceful-degradation clause: bila subagent tak tersedia (mis. psm-validate sendiri dipanggil sebagai subagent oleh workflow lain — subagent tak bisa spawn subagent), baca dan review sendiri seperti sekarang. Net cost ~+35 tokens if the delegation replaces rather than supplements the current sentence; fits headroom alone but tight combined with enhancement-1 — offset by trimming the Lapis 3 lead-in ('Skrip tidak bisa menilai ini' is restatable in the delegation sentence)."
+    },
+    {
+      "id": "enhancement-3",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add: predictable per-layer output paths (lightweight working state) so a compaction mid-run doesn't cost a Docker/E2E re-run",
+      "location": "/home/budi/dev/prestashop-module/.claude/skills/psm-validate/SKILL.md:Validate + Vonis dan output",
+      "evidence": "Pattern: working state across turns, in its cheapest form. The four layer outputs are the run's only state before aggregation, yet SKILL.md never says where they land — Lapis 1/2/4 `-o` targets are unnamed placeholders (`<static.json>`) and Lapis 3 says 'file sementara'. A long run (image pulls, DB boot, dual-browser E2E) that compacts between layers loses the temp paths from context; the files survive on disk but under unguessable names, so the model's practical recovery is re-running multi-minute layers. Only the final aggregate gets a durable, predictable home (`<psm_reports_dir>/<module>-<timestamp>.json`).",
+      "recommendation": "Name a convention instead of placeholders — e.g. write each layer to `<psm_reports_dir>/<module>-<lapis>.json` (static/flashlight/adversarial/e2e) and have the aggregate line consume those same names. This is a near-zero-token word swap (replaces 'file sementara' and the four `<*.json>` placeholders), makes an interrupted run resumable by listing the reports dir, and leaves a per-layer audit trail beside the verdict for free."
+    }
+  ]
+}
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  var SEVERITIES = ["critical", "high", "medium", "low"];
+  var SEV_LABEL = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
+  var GRADES = ["excellent", "good", "fair", "poor"];
+  var PLACEHOLDER_SUBJECT = "__PLACEHOLDER__";
+
+  var els = {
+    banner: document.getElementById("parse-banner"),
+    overview: document.getElementById("overview"),
+    grade: document.getElementById("grade"),
+    verdict: document.getElementById("verdict"),
+    summaryText: document.getElementById("summary-text"),
+    counts: document.getElementById("counts"),
+    themes: document.getElementById("themes"),
+    strengths: document.getElementById("strengths"),
+    recommendations: document.getElementById("recommendations"),
+    experience: document.getElementById("experience"),
+    toolbar: document.getElementById("toolbar"),
+    root: document.getElementById("findings-root"),
+    subject: document.getElementById("m-subject"),
+    generated: document.getElementById("m-generated"),
+    schema: document.getElementById("m-schema"),
+    selCount: document.getElementById("sel-count"),
+    btnCopy: document.getElementById("btn-copy"),
+    btnSelectAll: document.getElementById("btn-select-all"),
+    btnClear: document.getElementById("btn-clear"),
+    btnExpandAll: document.getElementById("btn-expand-all"),
+    btnCollapseAll: document.getElementById("btn-collapse-all"),
+    fallback: document.getElementById("fallback"),
+    fallbackText: document.getElementById("fallback-text"),
+    toast: document.getElementById("toast")
+  };
+
+  var selected = Object.create(null);
+  var findings = [];
+  var findingsById = Object.create(null);
+  var subjectPath = "";
+  var standards = null;
+
+  function showBanner(message) {
+    els.banner.textContent = message;
+    els.banner.classList.add("show");
+  }
+
+  function esc(value) {
+    var s = value == null ? "" : String(value);
+    return s.replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Normalize an arbitrary parsed object against schema_version 2, supplying
+  // defaults so a partial or future island still renders. Unknown fields are
+  // ignored, not fatal. Severity counts are always derived from the findings
+  // array, never read from the island, so they cannot disagree with it. The
+  // synthesis blocks (grade, summary, themes, strengths, recommendations) and
+  // the experience block are OPTIONAL: each normalizes to an empty value that
+  // renders nothing rather than an empty panel or an error.
+  function normalize(raw) {
+    var obj = raw && typeof raw === "object" ? raw : {};
+    var rawFindings = Array.isArray(obj.findings) ? obj.findings : [];
+
+    var norm = {
+      schema_version: typeof obj.schema_version === "number" ? obj.schema_version : 2,
+      subject: obj.subject != null ? String(obj.subject) : "(unspecified)",
+      generated: obj.generated != null ? String(obj.generated) : "(unspecified)",
+      verdict: obj.verdict != null ? String(obj.verdict) : "(no verdict supplied)",
+      grade: GRADES.indexOf(String(obj.grade || "").toLowerCase()) >= 0
+        ? String(obj.grade).toLowerCase() : "",
+      summary: typeof obj.summary === "string" ? obj.summary : "",
+      standards: (obj.standards && typeof obj.standards === "object") ? {
+        canon: obj.standards.canon != null ? String(obj.standards.canon) : "",
+        principles: obj.standards.principles != null ? String(obj.standards.principles) : "",
+        scripts: obj.standards.scripts != null ? String(obj.standards.scripts) : ""
+      } : null,
+      themes: normalizeThemes(obj.themes),
+      strengths: normalizeStrengths(obj.strengths),
+      recommendations: normalizeRecommendations(obj.recommendations),
+      experience: normalizeExperience(obj.experience),
+      counts: { critical: 0, high: 0, medium: 0, low: 0 },
+      findings: []
+    };
+
+    rawFindings.forEach(function (f, i) {
+      if (!f || typeof f !== "object") { return; }
+      var sev = SEVERITIES.indexOf(f.severity) >= 0 ? f.severity : "low";
+      norm.findings.push({
+        id: f.id != null ? String(f.id) : "finding-" + (i + 1),
+        lens: f.lens != null ? String(f.lens) : "(unknown)",
+        severity: sev,
+        title: f.title != null ? String(f.title) : "(untitled finding)",
+        location: f.location != null ? String(f.location) : "",
+        evidence: f.evidence != null ? String(f.evidence) : "",
+        recommendation: f.recommendation != null ? String(f.recommendation) : "",
+        proposed_smallest: f.proposed_smallest != null ? String(f.proposed_smallest) : "",
+        predicted_delta: f.predicted_delta != null ? String(f.predicted_delta) : ""
+      });
+      norm.counts[sev] += 1;
+    });
+
+    return norm;
+  }
+
+  function normalizeThemes(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (t) {
+      if (!t || typeof t !== "object") { return; }
+      var ids = [];
+      if (Array.isArray(t.finding_ids)) {
+        t.finding_ids.forEach(function (id) { if (id != null) { ids.push(String(id)); } });
+      }
+      var title = t.title != null ? String(t.title) : "";
+      if (!title && !ids.length) { return; }
+      list.push({
+        title: title || "(untitled theme)",
+        root_cause: t.root_cause != null ? String(t.root_cause) : "",
+        action: t.action != null ? String(t.action) : "",
+        finding_ids: ids
+      });
+    });
+    return list;
+  }
+
+  function normalizeStrengths(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (s) {
+      if (typeof s === "string" && s) { list.push(s); }
+      else if (s && typeof s === "object" && s.title) {
+        list.push(String(s.title) + (s.detail ? " — " + String(s.detail) : ""));
+      }
+    });
+    return list;
+  }
+
+  function normalizeRecommendations(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (r, i) {
+      if (!r || typeof r !== "object") { return; }
+      var action = r.action != null ? String(r.action) : "";
+      if (!action) { return; }
+      var resolves = "";
+      if (Array.isArray(r.resolves)) { resolves = r.resolves.map(String).join(", "); }
+      else if (typeof r.resolves === "number") { resolves = r.resolves + " findings"; }
+      else if (r.resolves != null) { resolves = String(r.resolves); }
+      list.push({
+        rank: typeof r.rank === "number" ? r.rank : i + 1,
+        action: action,
+        resolves: resolves
+      });
+    });
+    list.sort(function (a, b) { return a.rank - b.rank; });
+    return list;
+  }
+
+  // Optional experience block: journeys plus a headless note. Returns null when
+  // neither is usable.
+  function normalizeExperience(raw) {
+    if (!raw || typeof raw !== "object") { return null; }
+    var journeys = [];
+    if (Array.isArray(raw.journeys)) {
+      raw.journeys.forEach(function (j) {
+        if (!j || typeof j !== "object") { return; }
+        var name = j.name != null ? String(j.name) : "";
+        var steps = j.steps != null ? String(j.steps) : "";
+        if (!name && !steps) { return; }
+        journeys.push({ name: name, steps: steps });
+      });
+    }
+    var headless = raw.headless != null ? String(raw.headless) : "";
+    if (!journeys.length && !headless) { return null; }
+    return { journeys: journeys, headless: headless };
+  }
+
+  function renderOverview(data) {
+    els.subject.textContent = data.subject;
+    els.generated.textContent = data.generated;
+    els.schema.textContent = String(data.schema_version);
+    els.verdict.textContent = data.verdict;
+
+    if (data.grade) {
+      els.grade.textContent = data.grade;
+      els.grade.className = "grade g-" + data.grade;
+      els.grade.hidden = false;
+    }
+    if (data.summary) {
+      els.summaryText.textContent = data.summary;
+      els.summaryText.hidden = false;
+    }
+
+    els.counts.innerHTML = "";
+    SEVERITIES.forEach(function (s) {
+      var pill = document.createElement("span");
+      pill.className = "pill";
+      pill.innerHTML =
+        '<span class="dot ' + s + '"></span>' +
+        '<span class="lbl">' + SEV_LABEL[s] + '</span>' +
+        '<span class="n">' + data.counts[s] + "</span>";
+      els.counts.appendChild(pill);
+    });
+    els.overview.hidden = false;
+  }
+
+  // Every copied fix prompt opens by anchoring the fixing session to the same
+  // standards that produced the findings, so the fix is held to the bar too.
+  function standardsPreamble() {
+    if (!standards || !standards.canon) { return []; }
+    var bar = standards.canon + (standards.principles ? " and " + standards.principles : "");
+    var lines = [
+      "Hold " + bar + " as the bar for every line you change — a fix that adds ceremony is a new finding, not a fix."
+    ];
+    if (standards.scripts) {
+      lines.push("If the fix adds or changes scripts, follow " + standards.scripts + ".");
+    }
+    lines.push("");
+    return lines;
+  }
+
+  function composeThemePrompt(theme, resolved) {
+    var lines = standardsPreamble();
+    lines.push("Fix the following theme in " + subjectPath + ": " + theme.title);
+    lines.push("");
+    if (theme.root_cause) { lines.push("Root cause: " + theme.root_cause); }
+    if (theme.action) { lines.push("Fix: " + theme.action); }
+    if (resolved.length) {
+      lines.push("");
+      lines.push("Findings to address:");
+      resolved.forEach(function (f, i) {
+        lines.push((i + 1) + ". " + f.title);
+        if (f.location) { lines.push("   Location: " + f.location); }
+        if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+        if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      });
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  function renderThemes(themes) {
+    if (!themes.length) { els.themes.hidden = true; return; }
+    els.themes.innerHTML = "<h2>Themes</h2>";
+    themes.forEach(function (t) {
+      var resolved = t.finding_ids
+        .map(function (id) { return findingsById[id]; })
+        .filter(function (f) { return !!f; });
+      var items = resolved.map(function (f) {
+        return '<div class="t-finding"><span class="mono">' + esc(f.id) + "</span> " +
+          esc(f.title) +
+          (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "") +
+          "</div>";
+      }).join("");
+
+      var node = document.createElement("div");
+      node.className = "theme";
+      node.innerHTML =
+        '<div class="t-head"><span class="t-title">' + esc(t.title) + "</span>" +
+        '<button class="small t-fix">Fix This Theme</button></div>' +
+        (t.root_cause ? '<div class="t-cause">Root cause: ' + esc(t.root_cause) + "</div>" : "") +
+        (t.action ? '<div class="t-action"><b>Fix:</b> ' + esc(t.action) + "</div>" : "") +
+        (items ? '<div class="t-findings">' + items + "</div>" : "");
+      node.querySelector(".t-fix").addEventListener("click", function () {
+        copyText(composeThemePrompt(t, resolved));
+      });
+      els.themes.appendChild(node);
+    });
+    els.themes.hidden = false;
+  }
+
+  function renderStrengths(list) {
+    if (!list.length) { els.strengths.hidden = true; return; }
+    els.strengths.innerHTML =
+      "<h2>Strengths</h2><ul class=\"strength-list\">" +
+      list.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") +
+      "</ul>";
+    els.strengths.hidden = false;
+  }
+
+  function renderRecommendations(recs) {
+    if (!recs.length) { els.recommendations.hidden = true; return; }
+    var html = "<h2>Recommendations</h2>";
+    recs.forEach(function (r) {
+      html += '<div class="rec"><span class="rank">#' + esc(String(r.rank)) + "</span>" +
+        esc(r.action) +
+        (r.resolves ? '<span class="resolves">resolves: ' + esc(r.resolves) + "</span>" : "") +
+        "</div>";
+    });
+    els.recommendations.innerHTML = html;
+    els.recommendations.hidden = false;
+  }
+
+  function renderExperience(exp) {
+    if (!exp) { els.experience.hidden = true; return; }
+    var html = "<h2>Experience</h2>";
+    if (exp.journeys.length) {
+      html += exp.journeys.map(function (j) {
+        return '<div class="journey">' +
+          '<div class="j-name">' + esc(j.name || "(unnamed journey)") + "</div>" +
+          (j.steps ? '<div class="j-steps">' + esc(j.steps) + "</div>" : "") +
+          "</div>";
+      }).join("");
+    }
+    if (exp.headless) {
+      html += '<dl class="kv" style="margin-top:12px"><dt>Headless</dt><dd>' +
+        esc(exp.headless) + "</dd></dl>";
+    }
+    els.experience.innerHTML = html;
+    els.experience.hidden = false;
+  }
+
+  function renderNoFindings() {
+    els.root.innerHTML =
+      '<div class="no-findings">' +
+      '<div class="big">No findings</div>' +
+      "<div>The scanners returned a clean pass for this subject.</div>" +
+      "</div>";
+  }
+
+  function findingNode(f) {
+    var node = document.createElement("div");
+    node.className = "finding sev-" + f.severity;
+    node.setAttribute("data-id", f.id);
+
+    var sub =
+      esc(f.lens) +
+      (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "");
+
+    var rows =
+      "<dt>Lens</dt><dd>" + esc(f.lens) + "</dd>" +
+      (f.location ? "<dt>Location</dt><dd><code>" + esc(f.location) + "</code></dd>" : "") +
+      (f.evidence ? "<dt>Evidence</dt><dd>" + esc(f.evidence) + "</dd>" : "") +
+      (f.recommendation ? "<dt>Recommendation</dt><dd>" + esc(f.recommendation) + "</dd>" : "") +
+      (f.proposed_smallest ? "<dt>Proposed smallest</dt><dd>" + esc(f.proposed_smallest) + "</dd>" : "") +
+      (f.predicted_delta ? "<dt>Predicted delta</dt><dd>" + esc(f.predicted_delta) + "</dd>" : "");
+
+    node.innerHTML =
+      '<div class="row">' +
+      '<input type="checkbox" class="chk" aria-label="Select finding">' +
+      '<div class="head">' +
+      '<div class="title">' + esc(f.title) + "</div>" +
+      '<div class="sub">' + sub + "</div>" +
+      "</div>" +
+      '<span class="tag">' + SEV_LABEL[f.severity] + "</span>" +
+      '<span class="caret">▸</span>' +
+      "</div>" +
+      '<div class="body"><dl>' + rows + "</dl></div>";
+
+    var chk = node.querySelector(".chk");
+    chk.checked = !!selected[f.id];
+    chk.addEventListener("change", function () {
+      if (chk.checked) { selected[f.id] = true; } else { delete selected[f.id]; }
+      updateSelection();
+    });
+
+    var head = node.querySelector(".head");
+    var caret = node.querySelector(".caret");
+    function toggle() { node.classList.toggle("open"); }
+    head.addEventListener("click", toggle);
+    caret.addEventListener("click", toggle);
+
+    return node;
+  }
+
+  function renderFindings(list) {
+    els.root.innerHTML = "";
+    if (list.length === 0) {
+      renderNoFindings();
+      els.toolbar.hidden = true;
+      return;
+    }
+    els.toolbar.hidden = false;
+
+    SEVERITIES.forEach(function (sev) {
+      var group = list.filter(function (f) { return f.severity === sev; });
+      if (group.length === 0) { return; }
+      var wrap = document.createElement("div");
+      wrap.className = "group";
+      var h = document.createElement("h2");
+      h.innerHTML = '<span class="dot ' + sev + '"></span>' + SEV_LABEL[sev] + " (" + group.length + ")";
+      wrap.appendChild(h);
+      group.forEach(function (f) { wrap.appendChild(findingNode(f)); });
+      els.root.appendChild(wrap);
+    });
+  }
+
+  function updateSelection() {
+    var n = Object.keys(selected).length;
+    els.selCount.textContent = n + " selected";
+    els.btnCopy.disabled = n === 0;
+  }
+
+  function composePrompt() {
+    var picked = findings.filter(function (f) { return selected[f.id]; });
+    if (picked.length === 0) { return ""; }
+    var lines = standardsPreamble();
+    lines.push("Fix the following issues in " + subjectPath + ":");
+    lines.push("");
+    picked.forEach(function (f, i) {
+      lines.push((i + 1) + ". " + f.title);
+      if (f.location) { lines.push("   Location: " + f.location); }
+      if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+      if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      if (f.proposed_smallest) { lines.push("   Proposed smallest: " + f.proposed_smallest); }
+      lines.push("");
+    });
+    return lines.join("\n").replace(/\n+$/, "\n");
+  }
+
+  function showToast(text) {
+    els.toast.textContent = text;
+    els.toast.classList.add("show");
+    setTimeout(function () { els.toast.classList.remove("show"); }, 1600);
+  }
+
+  function fallbackCopy(text) {
+    els.fallbackText.value = text;
+    els.fallback.classList.add("show");
+    els.fallbackText.focus();
+    els.fallbackText.select();
+    try {
+      var ok = document.execCommand && document.execCommand("copy");
+      if (ok) {
+        showToast("Copied");
+        return;
+      }
+    } catch (e) { /* fall through to manual */ }
+    showToast("Copy the text shown below");
+  }
+
+  function copyText(text) {
+    if (!text) { return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { showToast("Copied"); },
+        function () { fallbackCopy(text); }
+      );
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function doCopy() {
+    copyText(composePrompt());
+  }
+
+  function wireToolbar() {
+    els.btnCopy.addEventListener("click", doCopy);
+    els.btnSelectAll.addEventListener("click", function () {
+      findings.forEach(function (f) { selected[f.id] = true; });
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = true; });
+      updateSelection();
+    });
+    els.btnClear.addEventListener("click", function () {
+      selected = Object.create(null);
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = false; });
+      els.fallback.classList.remove("show");
+      updateSelection();
+    });
+    els.btnExpandAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.add("open"); });
+    });
+    els.btnCollapseAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.remove("open"); });
+    });
+  }
+
+  function init() {
+    var island = document.getElementById("report-data");
+    var parsed;
+    try {
+      if (!island) { throw new Error("report-data island element not found"); }
+      parsed = JSON.parse(island.textContent);
+    } catch (err) {
+      showBanner(
+        "Could not parse the report data island.\n\n" +
+        "Error: " + (err && err.message ? err.message : String(err)) + "\n\n" +
+        "The findings could not be rendered. The JSON inside the " +
+        'report-data island (the application/json script tag) is malformed.'
+      );
+      return;
+    }
+
+    var data = normalize(parsed);
+
+    if (data.subject === PLACEHOLDER_SUBJECT) {
+      els.subject.textContent = data.subject;
+      showBanner(
+        "This is the unfilled report shell.\n\n" +
+        "The report-data island still carries the placeholder subject, so " +
+        "there are no findings here. Generate a real report with " +
+        "scripts/render_report.py."
+      );
+      return;
+    }
+
+    findings = data.findings;
+    subjectPath = data.subject;
+    standards = data.standards;
+    findingsById = Object.create(null);
+    findings.forEach(function (f) { findingsById[f.id] = f; });
+
+    renderOverview(data);
+    renderThemes(data.themes);
+    renderStrengths(data.strengths);
+    renderRecommendations(data.recommendations);
+    renderExperience(data.experience);
+    renderFindings(findings);
+    wireToolbar();
+    updateSelection();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

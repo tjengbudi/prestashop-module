@@ -1,0 +1,161 @@
+# Analysis Report: /home/budi/dev/prestashop-module/.claude/skills/psm-validate
+
+Generated: 2026-07-16 · Schema: 2
+
+**Grade: Good**
+
+> Sound skill with two findings that matter — QUICKSTART-e2e.md is runtime-routed workflow content at skill root (high) and a typo'd E2E step action silently reads as green (medium); the rest is post-consolidation drift and small trims.
+
+Post-Lapis 4 the skill remains disciplined: division of labor, honest degrade, and the config surface all verified healthy this round, and the prior false-pass closures hold. The two findings that matter are topology and correctness: SKILL.md's Lapis 4 routes to QUICKSTART-e2e.md at runtime, so it is progressive-disclosure content living at skill root — and its Gotchas still describe the dual skill tree removed on 2026-07-16, inverting the copy-to-another-machine advice — while in ps-e2e-run.py an unknown scenario action returns ok=true/conclusive=false and vanishes from every reporting channel, a silent false green in the TDD loop. Everything else is small drift: two token trims, a stale rule-authoring schema in ps-rules.json, and three worthwhile robustness adds.
+
+| Severity | Count |
+| --- | --- |
+| Critical | 0 |
+| High | 1 |
+| Medium | 5 |
+| Low | 6 |
+
+## Themes
+
+### 1. QUICKSTART topology and the stale dual-tree remnant
+
+- Root cause: QUICKSTART-e2e.md was authored as a human-only runbook at skill root, but SKILL.md Lapis 4 routes to it by bare path at runtime — making it progressive-disclosure content in the wrong place — and its Gotchas still describe the dual skill tree removed on 2026-07-16, so the copy-to-another-machine advice now points the wrong way. Three lenses converged on the stale gotcha independently.
+- Fix: Move the file to references/e2e-quickstart.md and update the single Lapis 4 pointer; in the same edit, compress SKILL.md's visual-verification passage to a one-line pointer into it (recovers real token headroom), and rewrite the 'Struktur skill dua-pohon' gotcha as a plain psm-setup dependency note: when copying this skill to another machine, also copy .claude/skills/psm-setup/ (its resolve-psm-config.py runs at activation).
+- Findings:
+  - `architecture-1` QUICKSTART-e2e.md is runtime-routed workflow content at skill root — `QUICKSTART-e2e.md (routed from SKILL.md:33, Lapis 4)`
+  - `architecture-2` SKILL.md in warn tier with 95 tokens of headroom; Lapis 4 visual-verification detail is the natural lift — `SKILL.md:33 (Lapis 4) vs org budget`
+  - `architecture-3` Stale 'dua-pohon' gotcha describes a repo layout that no longer exists — `QUICKSTART-e2e.md:135-137 (Gotchas, 'Struktur skill dua-pohon')`
+  - `leanness-3` QUICKSTART gotcha still describes the removed dual-tree layout and its caveat now points the wrong way — `QUICKSTART-e2e.md:135-137 (Gotchas — "Struktur skill dua-pohon")`
+  - `customization-1` QUICKSTART 'dua-pohon' gotcha describes a removed dual skill tree around the config resolver — `/home/budi/dev/prestashop-module/.claude/skills/psm-validate/QUICKSTART-e2e.md:135-137`
+
+### 2. Honest-degrade holes at the two remaining edges
+
+- Root cause: The skill's honest-degrade invariant (nothing untested may read as passed; nothing absent may hard-stop the run) is enforced at every infra edge except two late arrivals: an unknown/typo'd scenario action in an authored E2E spec returns ok=true/conclusive=false and is collected into neither findings nor inconclusive — a silent false green — and On Activation step 1 hard-requires the psm-setup resolver with no sanctioned fallback even though every script already runs on canonical defaults.
+- Fix: Validate authored step actions against the supported set in discover_scenarios (or return ok=false/conclusive=false for unknown actions) so typos surface through the existing scenario_note/inconclusive channels, with a FakePage regression test; and append a one-clause fallback to On Activation step 1: resolver absent → proceed on the scripts' canonical defaults and note it in the summary.
+- Findings:
+  - `determinism-1` Unknown scenario action silently passes — authored assertion vanishes from verdict — `/home/budi/dev/prestashop-module/.claude/skills/psm-validate/scripts/ps-e2e-run.py:304-305 (run_steps) with /home/budi/dev/prestashop-module/.claude/skills/psm-validate/scripts/ps-e2e-run.py:313-340 (assemble_findings)`
+  - `enhancement-1` Add: graceful degradation when the psm-setup config resolver is absent (fresh-machine walk dead-ends at On Activation step 1) — `/home/budi/dev/prestashop-module/.claude/skills/psm-validate/SKILL.md:On Activation step 1 (and QUICKSTART-e2e.md:Gotchas)`
+
+### 3. Long-run context economy
+
+- Root cause: A full 4-layer run (image pulls, DB boot, dual-browser E2E) is long enough to compact mid-run, yet the parent both reads the entire module source in-context for Lapis 3 and tracks layer outputs under unguessable temp names — so a compaction between layers can cost a multi-minute Docker/E2E re-run and the review gains nothing from being done by the busy orchestrator.
+- Fix: Name a per-layer output convention (<psm_reports_dir>/<module>-<lapis>.json consumed by the aggregate line) so an interrupted run is resumable by listing the reports dir, and delegate the Lapis 3 read/review to one subagent returning only the findings JSON, with an explicit sequential fallback when spawning is unavailable.
+- Findings:
+  - `enhancement-2` Opportunity — add: delegate the Lapis 3 source read/review to a review subagent (parent stays lean), with sequential fallback — `/home/budi/dev/prestashop-module/.claude/skills/psm-validate/SKILL.md:Validate, Lapis 3 paragraph`
+  - `enhancement-3` Add: predictable per-layer output paths (lightweight working state) so a compaction mid-run doesn't cost a Docker/E2E re-run — `/home/budi/dev/prestashop-module/.claude/skills/psm-validate/SKILL.md:Validate + Vonis dan output`
+
+## Strengths
+
+- Honest-degrade discipline holds at every previously closed edge: skipped/skipped_image/skipped_browser never block and never claim pass, and the prior HIGH false-pass fix (findings nonempty ⇒ errors empty; per-browser notes channel) verified intact this round.
+- The deterministic layer is fully delegated and fully tested: verdict assembly lives in ps-aggregate.py (SKILL.md stays at interface altitude), the two new structure rules are deterministic with conservative silence on unparseable input, and scripts lint clean with all four scripts tested.
+- Single config mechanism confirmed clean: one resolver, canonical defaults mirrored exactly across resolver, config.yaml, and script fallbacks; per-run concerns (--headed, --screenshot-dir) correctly live as CLI flags, not config.
+- Genuinely headless-ready: the CI gate is script-wired (ps-aggregate exits 1 on fail) and no interactive gate leaks into headless mode.
+
+## Recommendations
+
+1. Relocate QUICKSTART-e2e.md to references/e2e-quickstart.md, update the SKILL.md Lapis 4 pointer, compress the visual-verification passage into a pointer, and rewrite the stale dual-tree gotcha as a psm-setup dependency note. (resolves: architecture-1, architecture-3, leanness-3, customization-1, architecture-2)
+2. Close the E2E silent-pass hole: validate authored step actions in discover_scenarios (or emit ok=false/conclusive=false for unknown actions) so they surface via the existing note channels; add a FakePage regression test. (resolves: determinism-1)
+3. Append the resolver-absent fallback clause to On Activation step 1: proceed on canonical script defaults and note in the summary that defaults were used. (resolves: enhancement-1)
+4. Adopt predictable per-layer output paths under <psm_reports_dir> and delegate the Lapis 3 review to a subagent with a sequential fallback. (resolves: enhancement-3, enhancement-2)
+5. Apply the two SKILL.md trims (Lapis 2 script-internal narration, Vonis duplicate rule) and update ps-rules.json _meta.schema to document expect-rules, plus a pattern-XOR-expect assertion in test-ps-static-scan.py. (resolves: leanness-1, leanness-2, determinism-2)
+
+## Experience
+
+- **Interactive validate** — resolve config via psm-setup resolver -> run 4 layers (static scan, flashlight+phpstan, adversarial review, browser E2E with --screenshot-dir) -> ps-aggregate verdict -> summary naming not-conclusive layers + one-line visual note from key screenshots -> handoff offers (psm-develop / re-validate)
+- **Headless CI gate** — args -> run available layers without --allow-image-pull/--headed/--screenshot-dir -> honest skipped_* statuses -> ps-aggregate exit code gates the pipeline
+- **Fresh-machine E2E TDD** — QUICKSTART runbook: verify toolchain before touching the module -> author red spec in <module>/tests/e2e/ -> implement until Lapis 4 green on Chrome+Firefox (runbook moves to references/ under rank 1)
+- Headless: Solid — no auto-pull, no browser download, no interactive gates; degrade is honest and the exit code carries the verdict. The one dead-end is the missing-resolver hard stop at activation (enhancement-1).
+
+## Findings
+
+### High (1)
+
+#### architecture-1 — QUICKSTART-e2e.md is runtime-routed workflow content at skill root
+
+- Lens: architecture
+- Location: `QUICKSTART-e2e.md (routed from SKILL.md:33, Lapis 4)`
+- Evidence: Re-examined against current evidence, the previous round's 'QUICKSTART topology correct' call does not hold. That call rested on the file being a human-only runbook, but SKILL.md's Lapis 4 routes to it by bare path at runtime ('setup mesin baru + loop TDD E2E: `QUICKSTART-e2e.md`'), so the executing agent loads it whenever the fresh-machine/E2E-prerequisite branch fires — that is progressive disclosure, not out-of-band documentation. Its content confirms this: the scenario-spec action table (goto/expect_visible/expect_no_console_error, placeholder substitutions), the TDD red-green loop commands, and the visual-verification procedure are all agent-consumable workflow knowledge, not human-only prose. skill-quality-principles is explicit ('Never put workflow content directly at skill root') and the lens spec flags root-level *.md workflow content as high. Mitigations noted honestly: the bare path resolves, the file is fully self-contained (survives compaction), and nothing breaks today — this is a topology-predictability defect, not an execution break. (.memlog.md at root is builder process memory — exempt, not a finding; the lint-paths hit on it is a known false positive.)
+- Recommendation: Move the file to references/e2e-quickstart.md (descriptive, one level deep) and update the single SKILL.md pointer in Lapis 4. The file already stands alone, so no other edits are needed; its dual use as a human runbook is unaffected — humans can read references/ as easily as root, and the runtime surface becomes SKILL.md-plus-references as the convention promises.
+
+### Medium (5)
+
+#### leanness-3 — QUICKSTART gotcha still describes the removed dual-tree layout and its caveat now points the wrong way
+
+- Lens: leanness
+- Location: `QUICKSTART-e2e.md:135-137 (Gotchas — "Struktur skill dua-pohon")`
+- Evidence: Heading "Struktur skill dua-pohon" and the caveat "pastikan file itu ada saat menyalin skill ke mesin lain (bukan hanya `.claude/skills/`)" reference the dual skill tree that was consolidated on 2026-07-16 — `.claude/skills/` is now the single psm tree, so copying `.claude/skills/` DOES include the resolver at `.claude/skills/psm-setup/scripts/resolve-psm-config.py`. This is meta-explanation describing a system state that no longer exists (canon: negative space / stale meta), and it actively misdirects a human provisioning a fresh machine — the real hazard today is copying only the psm-validate folder without psm-setup.
+- Recommendation: Retitle to the actual dependency and restate the caveat in current terms, e.g. "**Dependensi psm-setup.** Resolver config dijalankan runtime dari `.claude/skills/psm-setup/scripts/resolve-psm-config.py` — saat menyalin ke mesin lain, sertakan skill `psm-setup`, bukan hanya folder `psm-validate`." No variant eval needed: the doc is not model-loaded; this is a correctness-of-content trim.
+
+#### determinism-1 — Unknown scenario action silently passes — authored assertion vanishes from verdict
+
+- Lens: determinism
+- Location: `/home/budi/dev/prestashop-module/.claude/skills/psm-validate/scripts/ps-e2e-run.py:304-305 (run_steps) with /home/budi/dev/prestashop-module/.claude/skills/psm-validate/scripts/ps-e2e-run.py:313-340 (assemble_findings)`
+- Evidence: run_steps handles an unrecognized action with `results.append(_res(action or "?", True, False, "aksi tak dikenal — dilewati", ""))` — ok=True, conclusive=False. assemble_findings starts with `if r["ok"]: continue`, so an ok=True result is collected into neither findings nor inconclusive; it never reaches browser_notes, scenario_notes, or ps-aggregate's inconclusive_note. A typo'd action in an authored spec (e.g. "expect_visable") therefore contributes nothing and the scenario can read findings:[] / pass:true — a false green in the QUICKSTART TDD loop (step c defines green as findings:[] + pass:true), contradicting the skill's own honest-degrade invariant that nothing untested may read as passed. Broken spec FILES do get scenario_notes; broken spec STEPS get nothing.
+- Recommendation: Determinism leak direction is intra-script (a hardcoded 'unknown means ignorable-pass' judgment in the deterministic layer). Two deterministic fixes, either unit-testable with the existing FakePage harness: (a) return ok=False, conclusive=False for unknown actions so they land in `inconclusive` and surface through the existing inconclusive_note channel; or (b) apply the validation category from script-opportunities — validate each step's action against SUPPORTED actions in discover_scenarios, the same path that already skips broken JSON with a note, so a typo'd step becomes a scenario_note instead of silence.
+
+#### enhancement-1 — Add: graceful degradation when the psm-setup config resolver is absent (fresh-machine walk dead-ends at On Activation step 1)
+
+- Lens: enhancement
+- Location: `/home/budi/dev/prestashop-module/.claude/skills/psm-validate/SKILL.md:On Activation step 1 (and QUICKSTART-e2e.md:Gotchas)`
+- Evidence: Pattern: graceful degradation — applied rigorously to Docker (skipped), images (skipped_image), and browsers (skipped_browser), but not to the skill's very first action. Step 1 hard-requires `psm-setup/scripts/resolve-psm-config.py` with no sanctioned fallback ('Baca apa adanya; jangan parse config.yaml sendiri' forbids the obvious workaround), while every downstream script already runs with canonical defaults when flags are omitted. QUICKSTART-e2e.md explicitly targets the copy-to-another-machine audience and its Gotchas section acknowledges this exact failure ('pastikan file itu ada saat menyalin') — under a now-stale 'Struktur skill dua-pohon' heading, since the dual tree was collapsed on 2026-07-16.
+- Recommendation: One clause appended to step 1: 'Bila resolver tak ada (skill disalin tanpa psm-setup), lanjut dengan default kanonik skrip (semua flag opsional) dan catat di ringkasan bahwa config default dipakai.' ~25 tokens, consistent with the skill's honest-degrade philosophy: proceed-with-note, never silently halt. Also retitle/reword the QUICKSTART gotcha to drop the dead 'dua-pohon' framing (zero SKILL.md token cost).
+
+#### enhancement-2 — Opportunity — add: delegate the Lapis 3 source read/review to a review subagent (parent stays lean), with sequential fallback
+
+- Lens: enhancement
+- Location: `/home/budi/dev/prestashop-module/.claude/skills/psm-validate/SKILL.md:Validate, Lapis 3 paragraph`
+- Evidence: Patterns: parallel review lenses + the 'don't read files in the parent' subagent constraint. Lapis 3 instructs the orchestrating parent to read the entire module source in-context ('Baca source module dan cari risiko...') mid-way through a heavyweight 4-layer run (Docker boots, E2E, screenshot vision review still ahead). For a medium module that is tens of thousands of tokens loaded into the parent, raising compaction risk exactly where the run state (layer output paths) lives, and the review itself gains nothing from being done by the busy orchestrator rather than a fresh reviewer.
+- Recommendation: Reword the read instruction to: delegate Lapis 3 to one review subagent given the module path, the four lenses (or the adversarial-checks.md checklist path), and 'Return ONLY the findings JSON per this schema'; parent writes the returned JSON to the layer file. Keep the existing lens/schema text unchanged. Add the graceful-degradation clause: bila subagent tak tersedia (mis. psm-validate sendiri dipanggil sebagai subagent oleh workflow lain — subagent tak bisa spawn subagent), baca dan review sendiri seperti sekarang. Net cost ~+35 tokens if the delegation replaces rather than supplements the current sentence; fits headroom alone but tight combined with enhancement-1 — offset by trimming the Lapis 3 lead-in ('Skrip tidak bisa menilai ini' is restatable in the delegation sentence).
+
+#### enhancement-3 — Add: predictable per-layer output paths (lightweight working state) so a compaction mid-run doesn't cost a Docker/E2E re-run
+
+- Lens: enhancement
+- Location: `/home/budi/dev/prestashop-module/.claude/skills/psm-validate/SKILL.md:Validate + Vonis dan output`
+- Evidence: Pattern: working state across turns, in its cheapest form. The four layer outputs are the run's only state before aggregation, yet SKILL.md never says where they land — Lapis 1/2/4 `-o` targets are unnamed placeholders (`<static.json>`) and Lapis 3 says 'file sementara'. A long run (image pulls, DB boot, dual-browser E2E) that compacts between layers loses the temp paths from context; the files survive on disk but under unguessable names, so the model's practical recovery is re-running multi-minute layers. Only the final aggregate gets a durable, predictable home (`<psm_reports_dir>/<module>-<timestamp>.json`).
+- Recommendation: Name a convention instead of placeholders — e.g. write each layer to `<psm_reports_dir>/<module>-<lapis>.json` (static/flashlight/adversarial/e2e) and have the aggregate line consume those same names. This is a near-zero-token word swap (replaces 'file sementara' and the four `<*.json>` placeholders), makes an interrupted run resumable by listing the reports dir, and leaves a per-layer audit trail beside the verdict for free.
+
+### Low (6)
+
+#### leanness-1 — Lapis 2 narrates script-internal orchestration the model never acts on
+
+- Lens: leanness
+- Location: `SKILL.md:29 (Lapis 2)`
+- Evidence: "image-nya web-tier saja (nginx+php-fpm, tanpa MySQL), jadi skrip membangun DB+flashlight berpasangan — `docker compose` bila tersedia, else `docker run`+network manual — menunggu container `healthy`, lalu install module via PS console..." — the compose-vs-run fallback, image composition, and PS-console install are ps-flashlight-run.py internals (canon core test: mechanics for a tool living in the wrong file). The model's only moves here are passing config flags and interpreting the degrade statuses, both of which survive without this clause; the load-bearing parts are the DB-pairing fact (explains the `healthy` failure mode) and the phpstan neon/advisory distinction (changes verdict reporting).
+- Recommendation: Truncate to the fact plus the two load-bearing interpretations; drop the fallback mechanics and stack narration (~30 tokens in a warn-tier file).
+- Proposed smallest: **Flashlight butuh database** (image-nya web-tier saja): skrip membangun DB+flashlight berpasangan, menunggu sehat, lalu install module dan jalankan **phpstan** terhadap core asli (neon module bila ada = konklusif; bila tidak, auto-generate = advisory, tak memblok).
+- Predicted delta: Nothing on real runs — invocation, flag passing, degrade handling, and verdict interpretation are unchanged; at most a one-shade-less-specific explanation to Budi when compose is absent, which the existing degrade clause (`Docker/compose absen (status: skipped)`) already covers. Route to variant eval to confirm.
+
+#### leanness-2 — Vonis section states the don't-override-the-script rule twice within three sentences
+
+- Lens: leanness
+- Location: `SKILL.md:37 (Vonis dan output)`
+- Evidence: Sentence 1: "Serahkan penggabungan ke skrip; jangan rakit vonis dengan tangan." Sentence 3: "Jangan menilai ulang atau menimpa `pass`, `conclusive`, `flashlight_conclusive`, atau `e2e_conclusive` yang dikeluarkannya." Same rule restated within one short paragraph (canon: facts restated across sections; defensive padding). The per-layer repeats in Lapis 1 and Lapis 4 sit at genuine points of temptation and stay; this intra-section duplicate does not — only the field names in sentence 3 add contract information sentence 1 lacks.
+- Recommendation: Merge into one sentence that keeps the field names: "Serahkan penggabungan ke skrip — jangan rakit vonis dengan tangan atau menimpa `pass`/`conclusive`/`flashlight_conclusive`/`e2e_conclusive` yang dikeluarkannya." (~20 tokens saved, no rule lost.)
+
+#### architecture-2 — SKILL.md in warn tier with 95 tokens of headroom; Lapis 4 visual-verification detail is the natural lift
+
+- Lens: architecture
+- Location: `SKILL.md:33 (Lapis 4) vs org budget`
+- Evidence: SKILL.md is 2905 tokens against the org-configured desired 2000 / hard 3000 — under budget (not a violation) but the next addition crosses the hard tier, and this skill has grown on every recent commit (Lapis 4, visual verification, struct rules). Per the principles' warn-tier rule, the section most worth lifting should be named: the Lapis 4 visual-verification passage ('Untuk verifikasi visual ... jangan di headless/CI') duplicates content that already lives nearly verbatim in QUICKSTART-e2e.md's 'Verifikasi visual' section and in ps-e2e-run.py --help, so it is paid on every invocation while only the E2E branch needs it.
+- Recommendation: When architecture-1's move happens, compress SKILL.md's visual-verification sentences to a one-line pointer into references/e2e-quickstart.md (which already carries the full treatment). This restores real headroom via progressive disclosure rather than prose compression, and resolves the duplication in the same edit.
+
+#### architecture-3 — Stale 'dua-pohon' gotcha describes a repo layout that no longer exists
+
+- Lens: architecture
+- Location: `QUICKSTART-e2e.md:135-137 (Gotchas, 'Struktur skill dua-pohon')`
+- Evidence: The gotcha says the config resolver runs from .claude/skills/psm-setup/scripts/resolve-psm-config.py and warns 'pastikan file itu ada saat menyalin skill ke mesin lain (bukan hanya `.claude/skills/`)'. Verified on disk: the dual tree is gone — {project-root}/skills/ now contains only reports/ and no resolver; the only live resolver is .claude/skills/psm-setup/scripts/resolve-psm-config.py (exists; SKILL.md's On Activation path resolves correctly). The parenthetical is therefore inverted: copying .claude/skills/ IS now sufficient, and the 'two-tree' framing points readers at a structure that was removed. The underlying warning (psm-validate has a cross-skill dependency on psm-setup's resolver) is still valid and worth keeping.
+- Recommendation: Rewrite the gotcha to state the live dependency plainly — 'when copying this skill to another machine, also copy .claude/skills/psm-setup/ (its scripts/resolve-psm-config.py is executed at activation)' — and drop the two-tree framing and the '(bukan hanya `.claude/skills/`)' parenthetical.
+
+#### determinism-2 — ps-rules.json _meta.schema no longer describes the ruleset's actual contract (expect-rules undocumented, pattern implied mandatory)
+
+- Lens: determinism
+- Location: `/home/budi/dev/prestashop-module/.claude/skills/psm-validate/assets/ps-rules.json:4 (_meta.schema)`
+- Evidence: _meta.schema states: "Setiap rule: id, severity (error|warning|info), affects (...), kind (...), pattern (regex dicocokkan ke isi file), files (glob filter, opsional), message, fix." — `pattern` reads as mandatory and `expect` is absent. After the delta, 3 of 4 structure rules (struct-compliancy-range, struct-composer-prepend, struct-index-php) are pattern-less expect-rules dispatched by scan_structure_rule's four expect variants (present | index_php_each_dir | composer_prepend_autoloader_false | compliancy_covers_target). A pattern-less rule mis-authored under a non-structure kind would also KeyError in scan_pattern_rule (`rule["pattern"]`), since only kind structure/compliancy routes around it.
+- Recommendation: Keep the deterministic authoring contract accurate: update _meta.schema to mark `pattern` optional-for-structure-kinds and document `expect` and its four variants (plus that kind structure|compliancy is what routes to scan_structure_rule). Optionally add one assertion to test-ps-static-scan.py that every rule has `pattern` XOR `expect` consistent with its kind — a validation-category check with a single correct answer, so it belongs in the test, not in anyone's head.
+
+#### customization-1 — QUICKSTART 'dua-pohon' gotcha describes a removed dual skill tree around the config resolver
+
+- Lens: customization
+- Location: `/home/budi/dev/prestashop-module/.claude/skills/psm-validate/QUICKSTART-e2e.md:135-137`
+- Evidence: Bullet titled 'Struktur skill dua-pohon' says the resolver runs from `.claude/skills/psm-setup/scripts/resolve-psm-config.py` and warns to copy 'bukan hanya `.claude/skills/`'. The dual tree was removed (2026-07-16): `.claude/skills/` is now the single tree (verified: `/home/budi/dev/prestashop-module/skills/` contains only `reports/`, no `psm-setup`). The path given is correct, but the two-tree framing and the parenthetical warning are now backwards — the resolver lives inside `.claude/skills/`, so 'copy more than .claude/skills/' no longer makes sense and could mislead someone porting the skill about where the config mechanism lives.
+- Recommendation: Rewrite the bullet to drop the dual-tree framing: retitle it (e.g. 'Dependensi lintas-skill') and state that psm-validate's config resolution depends on the sibling skill `.claude/skills/psm-setup/scripts/resolve-psm-config.py`, so copying psm-validate alone to another machine breaks On Activation step 1 — copy psm-setup too.

@@ -101,6 +101,54 @@ def main():
         ok &= check("index.php hilang -> struct-index-php",
                     "struct-index-php" in [f["id"] for f in res["versions"]["8.1"]["findings"]])
 
+        # 5. compliancy range: min 9.0 -> gagal di 1.7.8 saja
+        ranged = make_module(tmp, "rangemod", GOOD_MAIN.replace("'min' => '1.7.0.0'", "'min' => '9.0'"))
+        res, _ = run_scan(ranged, "1.7.8,9.1")
+        ok &= check("min 9.0 -> struct-compliancy-range kena di 1.7.8",
+                    "struct-compliancy-range" in [f["id"] for f in res["versions"]["1.7.8"]["findings"]])
+        ok &= check("min 9.0 -> range TIDAK kena di 9.1",
+                    "struct-compliancy-range" not in [f["id"] for f in res["versions"]["9.1"]["findings"]])
+
+        # 6. max literal terlalu rendah -> gagal di 9.1; max _PS_VERSION_ aman semua versi
+        maxed = make_module(tmp, "maxmod", GOOD_MAIN.replace("'max' => _PS_VERSION_", "'max' => '8.99'"))
+        res, _ = run_scan(maxed, "9.1")
+        ok &= check("max 8.99 -> struct-compliancy-range kena di 9.1",
+                    "struct-compliancy-range" in [f["id"] for f in res["versions"]["9.1"]["findings"]])
+        res, _ = run_scan(good, "1.7.8,8.1,9.1")
+        ok &= check("max _PS_VERSION_ -> range aman semua versi", all(
+            "struct-compliancy-range" not in [f["id"] for f in v["findings"]] for v in res["versions"].values()))
+        ok &= check("tanpa composer.json -> tak ada struct-composer-prepend", all(
+            "struct-composer-prepend" not in [f["id"] for f in v["findings"]] for v in res["versions"].values()))
+
+        # 7. composer.json tanpa prepend-autoloader=false -> error; dengan -> aman
+        comp = make_module(tmp, "compmod", GOOD_MAIN)
+        (comp / "composer.json").write_text('{"name": "x/compmod"}')
+        res, _ = run_scan(comp, "8.1")
+        ok &= check("composer tanpa prepend-autoloader=false -> struct-composer-prepend",
+                    "struct-composer-prepend" in [f["id"] for f in res["versions"]["8.1"]["findings"]])
+        (comp / "composer.json").write_text('{"config": {"prepend-autoloader": false}}')
+        res, _ = run_scan(comp, "8.1")
+        ok &= check("prepend-autoloader false -> tak ada struct-composer-prepend",
+                    "struct-composer-prepend" not in [f["id"] for f in res["versions"]["8.1"]["findings"]])
+
+    # 8. Kontrak authoring ruleset: pattern/expect konsisten dgn kind (rule salah-tulis
+    #    ketahuan di test, bukan KeyError saat scan)
+    EXPECTS = {"present", "index_php_each_dir", "composer_prepend_autoloader_false", "compliancy_covers_target"}
+    rules_doc = json.loads((SCAN.parent.parent / "assets" / "ps-rules.json").read_text(encoding="utf-8"))
+    bad_rules = []
+    for grp, items in rules_doc.items():
+        if grp == "_meta":
+            continue
+        for r in items:
+            structural = r.get("kind") in ("structure", "compliancy")
+            if not all(k in r for k in ("id", "severity", "affects", "kind", "message")):
+                bad_rules.append(f"{grp}:{r.get('id', '?')} field wajib hilang")
+            elif structural and (r.get("expect") not in EXPECTS or (r["expect"] == "present" and "pattern" not in r)):
+                bad_rules.append(f"{r['id']}: expect tak valid utk rule struktural")
+            elif not structural and "pattern" not in r:
+                bad_rules.append(f"{r['id']}: rule non-struktural tanpa pattern (KeyError saat scan)")
+    ok &= check(f"kontrak ruleset: pattern/expect konsisten dgn kind ({bad_rules or 'bersih'})", not bad_rules)
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 
