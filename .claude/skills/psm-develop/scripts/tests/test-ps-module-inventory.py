@@ -181,6 +181,58 @@ def main():
         ok &= check("item non-diterapkan diabaikan reconcile",
                     all(m["function"] != "belum" for m in rdj["drift"]))
 
+        # --- pair-check: pasangan sinkron -> ok, rc=0 ---
+        (mod / ".psm-develop-plan.md").write_text(
+            "# Rencana invmod\n\n## wishlist\nStatus: direncanakan\nDetail naratif.\n\n"
+            "## loyalty\n- **Status:** diterapkan\nDetail lain.\n")
+        (mod / ".psm-develop-plan.json").write_text(json.dumps({"items": [
+            {"function": "wishlist", "status": "direncanakan"},
+            {"function": "loyalty", "status": "diterapkan"}]}))
+        pc = subprocess.run(["uv", "run", str(INV), str(mod), "--pair-check"],
+                            capture_output=True, text=True)
+        pcj = json.loads(pc.stdout)
+        ok &= check("pair-check sinkron rc=0 (marker polos & bullet-bold)",
+                    pc.returncode == 0 and pcj["ok"] is True and pcj["pair_drift"] == [])
+
+        # --- pair-check: status beda + item hilang di tiap sisi -> drift, rc=1 ---
+        (mod / ".psm-develop-plan.json").write_text(json.dumps({"items": [
+            {"function": "wishlist", "status": "diterapkan"},     # .md bilang direncanakan
+            {"function": "seo", "status": "direncanakan"}]}))      # tak ada di .md
+        pd = subprocess.run(["uv", "run", str(INV), str(mod), "--pair-check"],
+                            capture_output=True, text=True)
+        pdj = json.loads(pd.stdout)
+        pkinds = {i["kind"] for i in pdj["pair_drift"]}
+        ok &= check("pair-check drift rc=1", pd.returncode == 1)
+        ok &= check("pair-check status_mismatch + missing di dua arah",
+                    pkinds == {"status_mismatch", "missing_in_json", "missing_in_md"})
+
+        # --- pair-check: .md tanpa marker (format lama) -> no_markers ---
+        (mod / ".psm-develop-plan.md").write_text("# Rencana lama\n\n## wishlist\nTanpa baris status.\n")
+        pn = subprocess.run(["uv", "run", str(INV), str(mod), "--pair-check"],
+                            capture_output=True, text=True)
+        pnj = json.loads(pn.stdout)
+        ok &= check("pair-check no_markers untuk .md format lama",
+                    pn.returncode == 1 and [i["kind"] for i in pnj["pair_drift"]] == ["no_markers"])
+
+        # --- pair-check: .json hilang -> json_missing; tanpa pasangan sama sekali -> rc=2 ---
+        (mod / ".psm-develop-plan.json").unlink()
+        pj = subprocess.run(["uv", "run", str(INV), str(mod), "--pair-check"],
+                            capture_output=True, text=True)
+        pjj = json.loads(pj.stdout)
+        ok &= check("pair-check json_missing",
+                    pj.returncode == 1 and [i["kind"] for i in pjj["pair_drift"]] == ["json_missing"])
+        (mod / ".psm-develop-plan.md").unlink()
+        p0 = subprocess.run(["uv", "run", str(INV), str(mod), "--pair-check"],
+                            capture_output=True, text=True)
+        ok &= check("pair-check tanpa pasangan rc=2", p0.returncode == 2)
+
+        # --- anchor skema: --help memuat skema kanonik + marker pair-check ---
+        ph = subprocess.run(["uv", "run", str(INV), "--help"], capture_output=True, text=True)
+        ok &= check("--help memuat skema items[] kanonik",
+                    "add_hooks" in ph.stdout and "changes_objectmodel" in ph.stdout)
+        ok &= check("--help memuat kontrak marker Status:",
+                    "Status: <status>" in ph.stdout)
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

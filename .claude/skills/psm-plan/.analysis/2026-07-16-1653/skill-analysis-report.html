@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill Analysis Report</title>
+<style>
+  :root {
+    --bg: #0f1b2d;
+    --panel: #16263d;
+    --panel-2: #1d3250;
+    --ink: #e9eef6;
+    --ink-dim: #9fb0c7;
+    --line: #294366;
+    --accent: #b66d46;
+    --accent-ink: #f4d9c8;
+    --critical: #e05656;
+    --high: #e0904a;
+    --medium: #d8c24a;
+    --low: #5aa0d0;
+    --ok: #4caf72;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 20px 80px; }
+  header h1 { font-size: 22px; margin: 0 0 4px; }
+  header .meta { color: var(--ink-dim); font-size: 13px; }
+  header .meta b { color: var(--ink); font-weight: 600; }
+
+  .banner {
+    display: none;
+    background: #3a1414;
+    border: 1px solid var(--critical);
+    color: #ffd9d9;
+    padding: 14px 16px;
+    border-radius: 8px;
+    margin: 16px 0;
+    white-space: pre-wrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+  .banner.show { display: block; }
+
+  .overview {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .grade {
+    font-size: 34px;
+    font-weight: 800;
+    margin: 0 0 8px;
+    text-transform: capitalize;
+  }
+  .grade.g-excellent { color: var(--ok); }
+  .grade.g-good { color: var(--low); }
+  .grade.g-fair { color: var(--medium); }
+  .grade.g-poor { color: var(--critical); }
+  .verdict { font-size: 16px; font-weight: 600; margin: 0 0 14px; }
+  .summary { color: var(--ink-dim); margin: 0 0 14px; }
+  .counts { display: flex; flex-wrap: wrap; gap: 10px; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .pill .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .pill .n { font-weight: 700; }
+  .dot.critical { background: var(--critical); }
+  .dot.high { background: var(--high); }
+  .dot.medium { background: var(--medium); }
+  .dot.low { background: var(--low); }
+
+  /* Generic synthesis/agent-block panel */
+  .block {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .block > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 12px;
+  }
+  .block .mono, .block code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .kv { margin: 0; display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; }
+  .kv dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .kv dd { margin: 0; }
+
+  /* Themes */
+  .theme { padding: 12px 0; border-top: 1px solid var(--line); }
+  .theme:first-of-type { border-top: none; padding-top: 0; }
+  .theme .t-head { display: flex; align-items: center; gap: 10px; }
+  .theme .t-title { font-weight: 600; flex: 1 1 auto; min-width: 0; }
+  .theme .t-cause { color: var(--ink-dim); margin-top: 4px; }
+  .theme .t-action { margin-top: 4px; }
+  .theme .t-findings { margin-top: 8px; padding-left: 12px; border-left: 2px solid var(--line); }
+  .theme .t-finding { font-size: 13px; color: var(--ink-dim); padding: 2px 0; }
+
+  /* Strengths */
+  .strength-list { margin: 0; padding-left: 20px; }
+  .strength-list li { padding: 2px 0; }
+
+  /* Recommendations */
+  .rec { padding: 8px 0; border-top: 1px solid var(--line); }
+  .rec:first-of-type { border-top: none; padding-top: 0; }
+  .rec .rank { font-weight: 700; color: var(--accent-ink); margin-right: 8px; }
+  .rec .resolves { color: var(--ink-dim); font-size: 12px; margin-left: 8px; }
+
+  /* Experience journeys */
+  .block .journey { padding: 8px 0; border-top: 1px solid var(--line); }
+  .block .journey:first-of-type { border-top: none; padding-top: 0; }
+  .block .journey .j-name { font-weight: 600; }
+  .block .journey .j-steps { color: var(--ink-dim); margin-top: 2px; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 18px 0 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar .sel-count { color: var(--ink-dim); font-size: 13px; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--ink);
+    padding: 8px 14px;
+  }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #1a0e07;
+    font-weight: 600;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.link {
+    background: none;
+    border: none;
+    color: var(--accent-ink);
+    padding: 4px 6px;
+    font-size: 13px;
+  }
+  button.small { padding: 5px 10px; font-size: 13px; flex: 0 0 auto; }
+
+  .no-findings {
+    background: var(--panel);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    padding: 28px;
+    text-align: center;
+    color: var(--ink-dim);
+  }
+  .no-findings .big { font-size: 18px; color: var(--ok); margin-bottom: 6px; }
+
+  .group { margin: 18px 0; }
+  .group > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .finding {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--line);
+    border-radius: 8px;
+    margin: 8px 0;
+    overflow: hidden;
+  }
+  .finding.sev-critical { border-left-color: var(--critical); }
+  .finding.sev-high { border-left-color: var(--high); }
+  .finding.sev-medium { border-left-color: var(--medium); }
+  .finding.sev-low { border-left-color: var(--low); }
+
+  .finding .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .finding .row .chk { width: 16px; height: 16px; flex: 0 0 auto; cursor: pointer; }
+  .finding .row .head { flex: 1 1 auto; cursor: pointer; min-width: 0; }
+  .finding .row .title { font-weight: 600; }
+  .finding .row .sub { color: var(--ink-dim); font-size: 12px; margin-top: 2px; }
+  .finding .tag {
+    flex: 0 0 auto;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+  }
+  .finding .caret { flex: 0 0 auto; color: var(--ink-dim); transition: transform 0.15s; cursor: pointer; }
+  .finding.open .caret { transform: rotate(90deg); }
+
+  .finding .body {
+    display: none;
+    padding: 0 14px 14px 42px;
+    border-top: 1px solid var(--line);
+  }
+  .finding.open .body { display: block; }
+  .finding .body dl { margin: 12px 0 0; display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; }
+  .finding .body dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .finding .body dd { margin: 0; }
+  .finding .body code, .finding .body .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%);
+    background: var(--ok);
+    color: #06160c;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  .fallback-area { margin-top: 12px; display: none; }
+  .fallback-area.show { display: block; }
+  .fallback-area textarea {
+    width: 100%;
+    min-height: 160px;
+    background: var(--panel-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Skill Analysis Report</h1>
+    <div class="meta">
+      <span>Subject: <b id="m-subject">—</b></span> &nbsp;·&nbsp;
+      <span>Generated: <b id="m-generated">—</b></span> &nbsp;·&nbsp;
+      <span>Schema: <b id="m-schema">—</b></span>
+    </div>
+  </header>
+
+  <div id="parse-banner" class="banner"></div>
+
+  <section id="overview" class="overview" hidden>
+    <div id="grade" class="grade" hidden></div>
+    <p id="verdict" class="verdict"></p>
+    <p id="summary-text" class="summary" hidden></p>
+    <div id="counts" class="counts"></div>
+  </section>
+
+  <!-- Synthesis layer (themes, strengths, recommendations). Hidden when absent. -->
+  <section id="themes" class="block" hidden></section>
+  <section id="strengths" class="block" hidden></section>
+  <section id="recommendations" class="block" hidden></section>
+
+  <!-- Experience: journeys plus headless (experience). Hidden when absent. -->
+  <section id="experience" class="block" hidden></section>
+
+  <div id="toolbar" class="toolbar" hidden>
+    <button id="btn-copy" class="primary" disabled>Copy selected as paste-back prompt</button>
+    <span id="sel-count" class="sel-count">0 selected</span>
+    <button id="btn-select-all" class="link">Select all</button>
+    <button id="btn-clear" class="link">Clear</button>
+    <button id="btn-expand-all" class="link">Expand all</button>
+    <button id="btn-collapse-all" class="link">Collapse all</button>
+  </div>
+
+  <div id="fallback" class="fallback-area">
+    <p class="sel-count">Clipboard was unavailable. Copy the text below manually:</p>
+    <textarea id="fallback-text" readonly></textarea>
+  </div>
+
+  <div id="findings-root"></div>
+</div>
+
+<div id="toast" class="toast">Copied</div>
+
+<!-- scripts/render_report.py replaces the contents of this island per run.
+     The placeholder below is intentionally unusable: the shell refuses to
+     render it, so a failed injection can never look like real findings. -->
+<script type="application/json" id="report-data">
+{
+  "schema_version": 2,
+  "subject": "/home/budi/dev/prestashop-module/.claude/skills/psm-plan",
+  "generated": "2026-07-16",
+  "verdict": "Contract-solid and gate-complete — the artifact pair, cross-skill wiring, version-default hygiene, and stop discipline all verify clean against the real scripts; what remains is three medium findings: an unowned duplicated plan-JSON schema, a write-scope promise the headless memlog contradicts, and an inherited hardcoded psm-setup path.",
+  "grade": "good",
+  "summary": "psm-plan is a disciplined planning-only skill: all five requested contract checks (artifact pair vs psm-develop resume, cross-skill path integrity, no version-default duplication, all four gates, stop-after-approval) pass against the actual scripts and disk. The remaining work is consolidation, not correction — give the shared plan-JSON schema a single owner, reconcile two headless edges, and fix a family-baseline path hardcode that shipped psm-develop shares. No finding touches the resume contract itself: psm-develop can consume psm-plan's artifacts today.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "Plan-JSON schema has no single owner",
+      "root_cause": "The shared .psm-develop-plan.json item schema is hand-inlined verbatim in both psm-plan and psm-develop SKILL.md, while its deterministic authority (ps-module-inventory.py --validate-plan/--reconcile) exercises the fields without documenting the shape — three places to drift silently, and the inline copy is also the bulk of psm-plan's 128-token overage.",
+      "finding_ids": [
+        "determinism-2",
+        "architecture-3",
+        "architecture-4"
+      ],
+      "action": "Document the canonical item schema once in ps-module-inventory.py (--help or docstring), replace both SKILL.md inline copies with a pointer plus the single psm-plan-specific fact (initial status 'direncanakan'), recovering ~130 tokens back under the desired budget."
+    },
+    {
+      "title": "Headless contract has two unreconciled edges",
+      "root_cause": "The interactive sections make promises the headless section quietly breaks or leaves open: 'the only files this skill writes are the plan pair' contradicts the headless memlog write, and nothing defines behavior when the function argument is absent in headless mode.",
+      "finding_ids": [
+        "architecture-1",
+        "enhancement-2"
+      ],
+      "action": "Qualify the write-scope promise with '(plus <module-path>/.memlog.md in headless mode)' and add one clause deciding the missing-function case — either sanctioned catalog-driven inference logged to memlog, or required-argument with gagal on absence."
+    },
+    {
+      "title": "Lines inherited verbatim from psm-develop carry its existing weaknesses",
+      "root_cause": "psm-plan deliberately mirrors psm-develop's activation/resume lines for contract fidelity, which also imported two family-baseline defects: the hardcoded {project-root}/.claude/skills/psm-setup resolver path that violates the skill's own <skills-dir> rule, and the prompt-side .md-vs-.json pair-drift detection that no script covers.",
+      "finding_ids": [
+        "architecture-2",
+        "determinism-1"
+      ],
+      "action": "Fix as a coordinated family pass over psm-plan and psm-develop together: switch the resolver call to <skills-dir>/psm-setup/... in both files now; optionally add a --pair-check mode to ps-module-inventory.py (with a machine-readable per-item status marker in the .md) so pair-drift detection becomes deterministic for both skills."
+    }
+  ],
+  "strengths": [
+    "Artifact contract verified against the real scripts: the JSON schema is identical character-for-character with psm-develop, the canonical paths match, and --reconcile (ps-module-inventory.py line 157) only inspects status 'diterapkan'/'applied' — so psm-plan's initial 'direncanakan' items pass resume reconciliation safely.",
+    "All seven cross-skill references resolve on disk (ps-module-inventory.py, ps-static-scan.py, ecommerce-function-catalog.md, version-safe-patterns.md, resolve-psm-config.py, memlog.py, and the optional augment catalog) with zero catalog/pattern content copied in — the zero-drift reuse design holds.",
+    "No hardcoded target versions or flashlight tags anywhere in SKILL.md; config flows solely through resolve-psm-config.py, verified to emit psm_target_versions.",
+    "All four gates intact: Budi confirmation with re-validation on revision, the psm-scaffold target gate on the script-owned looks_like_module rule, the mechanical-vs-scope-changing conflict split, and three-status headless with explicit BMad mapping.",
+    "Scope discipline is explicit and enforced at the point of action: stop after approval, with named prohibitions on touching module files, calling psm-validate, and committing — no apply/verify/commit step leaked in from psm-develop.",
+    "Intelligence placement is exemplary: inventory, drift, plan validation, config resolution, and the risky-API baseline are all scripted, with judgment explicitly reserved for the model."
+  ],
+  "recommendations": [
+    {
+      "rank": 1,
+      "action": "Anchor the plan-item schema in ps-module-inventory.py (--help or docstring) and replace both inline SKILL.md copies with a pointer, keeping only the initial-status 'direncanakan' fact inline.",
+      "resolves": [
+        "determinism-2",
+        "architecture-3",
+        "architecture-4"
+      ]
+    },
+    {
+      "rank": 2,
+      "action": "Reconcile the headless contract: qualify the write-scope promise for the headless memlog write, and define the missing-function-argument behavior (inference-with-memlog or required-argument → gagal).",
+      "resolves": [
+        "architecture-1",
+        "enhancement-2"
+      ]
+    },
+    {
+      "rank": 3,
+      "action": "Add one design-section sentence routing to psm-cross-version when baseline scan hits intersect planned insertion points (headless: memlog assumption, or butuh intervensi when severe).",
+      "resolves": [
+        "enhancement-1"
+      ]
+    },
+    {
+      "rank": 4,
+      "action": "Switch the resolve-psm-config.py call to <skills-dir>/psm-setup/scripts/resolve-psm-config.py in psm-plan and fix psm-develop's identical line in the same pass.",
+      "resolves": [
+        "architecture-2"
+      ]
+    },
+    {
+      "rank": 5,
+      "action": "Compress the Overview stop clause to 'lalu berhenti setelah rencana disetujui', keeping the enumerated prohibitions only in Konfirmasi & berhenti.",
+      "resolves": [
+        "leanness-1"
+      ]
+    },
+    {
+      "rank": 6,
+      "action": "Optional and larger: add a deterministic pair-drift check (--pair-check plus a machine-readable status marker in the .md format), coordinated with psm-develop as a shared-contract change.",
+      "resolves": [
+        "determinism-1"
+      ]
+    }
+  ],
+  "experience": {
+    "journeys": [
+      {
+        "name": "Guided planning",
+        "steps": "Resolve config → identify module & functions → resume/reconcile if a plan exists → inventory + static-scan batch (psm-scaffold gate) → design from catalog + version-safe patterns → write .md/.json pair → --validate-plan → split conflicts (auto-fix mechanical, escalate scope-changing) → confirm with Budi → stop, handing off to psm-develop"
+      },
+      {
+        "name": "Headless planning",
+        "steps": "Args replace questions → same flow with every assumption logged to memlog → return selesai/gagal/butuh intervensi with a one-line reason plus artifact and memlog paths"
+      },
+      {
+        "name": "Revision / resume",
+        "steps": "Read existing pair → regenerate stale .json from the .md → --reconcile against the filesystem → revise both artifacts → re-validate → re-confirm"
+      }
+    ],
+    "headless": "Three-state return (selesai=complete; gagal and butuh intervensi=blocked) with a memlog audit trail; approval is deliberately the caller's responsibility — two edges to close: the write-scope wording and the missing-function argument."
+  },
+  "findings": [
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Prompt-side .md-vs-.json pair-drift detection and JSON regeneration on resume",
+      "location": ".claude/skills/psm-plan/SKILL.md:On Activation #3",
+      "evidence": "\"bila `.psm-develop-plan.json` hilang atau status-nya tertinggal dari `.md`, regenerasi dulu dari status terkini `.md`\" — the model itself must detect whether the JSON's per-item status lags the narrative .md (a compare-two-files-for-drift operation, an explicit determinism-leak tell) and then re-extract the structured items from prose. The scripted --reconcile only covers .json-vs-filesystem drift; the .md-vs-.json half of the pair contract is enforced purely by prompt, on every resume, and a silently wrong regeneration corrupts the artifact pair psm-develop's resume consumes.",
+      "recommendation": "Determinism leak (prompt doing comparison/extraction work). 'Status of item X differs between artifacts' is unit-testable with an expected output, so it belongs in a script. Add a machine-readable per-item status marker to the .md format (a shared-contract change coordinated with psm-develop, which carries the identical instruction) and a small pair-check mode (e.g., ps-module-inventory.py --pair-check) emitting compact JSON drift per item. The model keeps only the genuinely narrative regeneration; the drift verdict becomes exact and free."
+    },
+    {
+      "id": "determinism-2",
+      "lens": "determinism",
+      "severity": "low",
+      "title": "Plan-JSON schema inlined in prompt duplicates the interface the script owns",
+      "location": ".claude/skills/psm-plan/SKILL.md:Rancang fungsi & rencana",
+      "evidence": "The items schema is hand-inlined, while the deterministic authority on that shape is ps-module-inventory.py --validate-plan/--reconcile. The same schema is inlined a second time in psm-develop/SKILL.md, so the interface now lives in three places and any script-side field change drifts the two prompts silently — a failure mode this repo has already hit with its 4-layer version-defaults sync.",
+      "recommendation": "Define the interface once at the script (document the plan schema in --help or a --schema flag on ps-module-inventory) and have both SKILL.md files point there, keeping only the one psm-plan-specific fact inline (initial status 'direncanakan'). Downstream --validate-plan (rc=1) already provides the post-processing structural check, so no new validation script is needed."
+    },
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Write-scope promise contradicted by headless memlog write",
+      "location": ".claude/skills/psm-plan/SKILL.md:49 vs :53",
+      "evidence": "Konfirmasi & berhenti states 'satu-satunya file yang skill ini tulis adalah pasangan artefak rencana', but Mode headless instructs writing a third file, <module-path>/.memlog.md (init dulu bila belum ada), via memlog.py. Two explicit instructions conflict; an agent holding the promise as a hard guardrail may skip the memlog and break the headless audit trail. Sibling psm-develop makes no such 'only file' claim, so this is psm-plan-specific.",
+      "recommendation": "Qualify the promise where it is stated: 'satu-satunya file yang skill ini tulis adalah pasangan artefak rencana (plus <module-path>/.memlog.md di mode headless)'. One clause resolves the contradiction without weakening the no-module-source-changes guardrail."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Sibling psm-setup referenced by hardcoded install path, violating the skill's own Resolution rule",
+      "location": ".claude/skills/psm-plan/SKILL.md:22 (On Activation #1) vs :16 (Resolution rules)",
+      "evidence": "Resolution rules mandate install-relative sibling references ('Rujuk sibling lewat <skills-dir>/psm-develop/…'), yet On Activation #1 loads config via 'uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py' — a hardcoded install location for sibling psm-setup. Every other sibling call in the file correctly uses <skills-dir>. The hardcode breaks the first activation step if the psm family is ever installed anywhere other than .claude/skills/. The same line exists in shipped sibling psm-develop SKILL.md:22, so this is a family baseline, not a psm-plan regression.",
+      "recommendation": "Change to 'uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}'. Fix psm-develop's identical line in the same pass so the family convention stays uniform."
+    },
+    {
+      "id": "architecture-3",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Shared plan-JSON schema duplicated verbatim in two sibling SKILL.md files with no single anchor",
+      "location": ".claude/skills/psm-plan/SKILL.md:41 and .claude/skills/psm-develop/SKILL.md:43",
+      "evidence": "The .psm-develop-plan.json item schema is maintained as two identical inline copies. The family's zero-own-references design exists precisely to prevent sibling drift, but this shared contract has no single owner: ps-module-inventory.py's --validate-plan/--reconcile only exercise a field subset, so a schema edit in one SKILL.md would strand the other without any deterministic signal. Copies are currently identical and the status vocabulary (direncanakan/diterapkan) aligns, so this is drift risk, not present breakage.",
+      "recommendation": "Anchor the schema in the artifact's owning script — extend ps-module-inventory.py --help (already cited as '(lihat --help)') or its docstring with the canonical item schema — and let both SKILL.md lines carry only the pointer plus the one psm-plan-specific fact (initial status 'direncanakan'). Alternatively keep the duplication but add it to the existing test-guard pattern the family already uses for module.yaml/PSM_DEFAULTS pairs."
+    },
+    {
+      "id": "architecture-4",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "SKILL.md in warn tier (2128 > 2000 desired); trim, don't carve",
+      "location": ".claude/skills/psm-plan/SKILL.md",
+      "evidence": "Pre-pass: 2128 tokens against desired 2000 / budget 3000 — the warn-and-name-a-section tier. The zero-references design makes lifting to references/ the wrong move here (it would recreate the drift surface the design eliminates), so the heaviest section, Rancang fungsi & rencana, should shrink by trimming: the inline JSON schema (see architecture-3's pointer move) recovers most of the overage, and explanatory clauses like 'bukan salah tulis' (Resolution rules :18) fail the canon's truncate test.",
+      "recommendation": "Recover ~130 tokens by replacing the inline schema with the script-anchored pointer and cutting reader-inert clauses; stay single-file. Non-blocking — under budget."
+    },
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Stop-scope triple enumerated in both Overview and Konfirmasi & berhenti",
+      "location": "SKILL.md:Overview + SKILL.md:Konfirmasi & berhenti",
+      "evidence": "Overview: 'lalu **berhenti** setelah rencana disetujui: tanpa menerapkan perubahan ke file module, tanpa verifikasi, tanpa commit' restates the identical triple that Konfirmasi & berhenti carries at the point of action ('jangan menyentuh file module, jangan memanggil psm-validate, jangan commit'). Canon core-test re-teach shape: facts restated across sections. The skill sits 128 tokens over the project desired 2000, so the ~15-word duplicate is not free.",
+      "recommendation": "Keep the enumeration once, in Konfirmasi & berhenti where it is enforceable and already paired with the positive constraint ('satu-satunya file yang skill ini tulis adalah pasangan artefak rencana'). Compress the Overview clause to 'lalu **berhenti** setelah rencana disetujui' — the Overview keeps the scope boundary, the operational section keeps the command."
+    },
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add: named psm-cross-version routing when the baseline scan collides with planned insertion points",
+      "location": "SKILL.md: Pahami module existing / Rancang fungsi & rencana",
+      "evidence": "Pattern: wrong-state routing (the skill already has it for the not-a-module case, gating to psm-scaffold). ps-static-scan is run so the plan is not 'dibangun di atas masalah lama tanpa menyebutnya', but the skill never says what to do when baseline hits intersect the files/hooks the plan will touch. Sibling psm-develop surfaces exactly this as a scope decision ('port dulu via psm-cross-version?') — but only at its Verify phase, after apply. psm-plan is the session whose entire purpose is surfacing such decisions early, yet the port-first option has no name here; a first-timer planning on a legacy module discovers the porting prerequisite weeks later, mid-execution.",
+      "recommendation": "One sentence in the design section: when baseline errors intersect the planned insertion points, raise psm-cross-version-first as an explicit short option to Budi and record the choice in the plan narrative (headless: log the assumption to memlog, or return butuh intervensi when the overlap is severe). Mirrors the scope-decision language psm-develop already uses at verify."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "low",
+      "title": "Add: define headless behavior when the function argument is absent",
+      "location": "SKILL.md: Mode headless",
+      "evidence": "Pattern: headless parameter-replaces-question discipline. Headless says 'ambil module-path, fungsi, & versi dari argumen alih-alih bertanya', and the memlog list ('fungsi yang dipilih') implies the skill may choose functions itself — but On Activation's fallback for ambiguity ('tanya satu pertanyaan') cannot fire headless, and neither gagal nor butuh intervensi names the missing-function case. A caller passing only a module path gets undefined behavior: silent catalog-driven invention returned as selesai, or an unexplained stop.",
+      "recommendation": "One clause deciding it: either sanction inference (infer functions from module domain + catalog, log each as an assumption memlog entry, proceed) or declare the argument required (missing → gagal with a one-line reason). Either is fine for a planning-only skill; the point is that the choice is written down."
+    },
+    {
+      "id": "customization-1",
+      "lens": "customization",
+      "severity": "low",
+      "title": "Produce-and-stop shape is a textbook on_complete candidate, but opting in is not warranted today",
+      "location": ".claude/skills/psm-plan/SKILL.md:Konfirmasi & berhenti",
+      "evidence": "The skill writes the plan artifact pair and hard-stops, closing with a fixed suggestion to run psm-develop — exactly the produce-an-artifact-and-stop shape that flags an on_complete hook candidate. Everything else weighs against opting in: the build decision on record declined customization (default no, not requested), no psm-* sibling carries a workflow customization surface, there are zero hardcoded templates (the two sibling references loaded are shared knowledge files, and the catalog already has a project-level augment point), and the artifact path is a deliberate shared resume contract with psm-develop that must not be exposed as an output_path knob.",
+      "recommendation": "No action now. Revisit only if a recurring post-plan routing need appears beyond the fixed psm-develop handoff; at that point opt in with the universal four defaults plus a single on_complete scalar rather than forking, and keep the plan-artifact path hardcoded since it is a cross-skill contract, not a customization point."
+    }
+  ]
+}
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  var SEVERITIES = ["critical", "high", "medium", "low"];
+  var SEV_LABEL = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
+  var GRADES = ["excellent", "good", "fair", "poor"];
+  var PLACEHOLDER_SUBJECT = "__PLACEHOLDER__";
+
+  var els = {
+    banner: document.getElementById("parse-banner"),
+    overview: document.getElementById("overview"),
+    grade: document.getElementById("grade"),
+    verdict: document.getElementById("verdict"),
+    summaryText: document.getElementById("summary-text"),
+    counts: document.getElementById("counts"),
+    themes: document.getElementById("themes"),
+    strengths: document.getElementById("strengths"),
+    recommendations: document.getElementById("recommendations"),
+    experience: document.getElementById("experience"),
+    toolbar: document.getElementById("toolbar"),
+    root: document.getElementById("findings-root"),
+    subject: document.getElementById("m-subject"),
+    generated: document.getElementById("m-generated"),
+    schema: document.getElementById("m-schema"),
+    selCount: document.getElementById("sel-count"),
+    btnCopy: document.getElementById("btn-copy"),
+    btnSelectAll: document.getElementById("btn-select-all"),
+    btnClear: document.getElementById("btn-clear"),
+    btnExpandAll: document.getElementById("btn-expand-all"),
+    btnCollapseAll: document.getElementById("btn-collapse-all"),
+    fallback: document.getElementById("fallback"),
+    fallbackText: document.getElementById("fallback-text"),
+    toast: document.getElementById("toast")
+  };
+
+  var selected = Object.create(null);
+  var findings = [];
+  var findingsById = Object.create(null);
+  var subjectPath = "";
+  var standards = null;
+
+  function showBanner(message) {
+    els.banner.textContent = message;
+    els.banner.classList.add("show");
+  }
+
+  function esc(value) {
+    var s = value == null ? "" : String(value);
+    return s.replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Normalize an arbitrary parsed object against schema_version 2, supplying
+  // defaults so a partial or future island still renders. Unknown fields are
+  // ignored, not fatal. Severity counts are always derived from the findings
+  // array, never read from the island, so they cannot disagree with it. The
+  // synthesis blocks (grade, summary, themes, strengths, recommendations) and
+  // the experience block are OPTIONAL: each normalizes to an empty value that
+  // renders nothing rather than an empty panel or an error.
+  function normalize(raw) {
+    var obj = raw && typeof raw === "object" ? raw : {};
+    var rawFindings = Array.isArray(obj.findings) ? obj.findings : [];
+
+    var norm = {
+      schema_version: typeof obj.schema_version === "number" ? obj.schema_version : 2,
+      subject: obj.subject != null ? String(obj.subject) : "(unspecified)",
+      generated: obj.generated != null ? String(obj.generated) : "(unspecified)",
+      verdict: obj.verdict != null ? String(obj.verdict) : "(no verdict supplied)",
+      grade: GRADES.indexOf(String(obj.grade || "").toLowerCase()) >= 0
+        ? String(obj.grade).toLowerCase() : "",
+      summary: typeof obj.summary === "string" ? obj.summary : "",
+      standards: (obj.standards && typeof obj.standards === "object") ? {
+        canon: obj.standards.canon != null ? String(obj.standards.canon) : "",
+        principles: obj.standards.principles != null ? String(obj.standards.principles) : "",
+        scripts: obj.standards.scripts != null ? String(obj.standards.scripts) : ""
+      } : null,
+      themes: normalizeThemes(obj.themes),
+      strengths: normalizeStrengths(obj.strengths),
+      recommendations: normalizeRecommendations(obj.recommendations),
+      experience: normalizeExperience(obj.experience),
+      counts: { critical: 0, high: 0, medium: 0, low: 0 },
+      findings: []
+    };
+
+    rawFindings.forEach(function (f, i) {
+      if (!f || typeof f !== "object") { return; }
+      var sev = SEVERITIES.indexOf(f.severity) >= 0 ? f.severity : "low";
+      norm.findings.push({
+        id: f.id != null ? String(f.id) : "finding-" + (i + 1),
+        lens: f.lens != null ? String(f.lens) : "(unknown)",
+        severity: sev,
+        title: f.title != null ? String(f.title) : "(untitled finding)",
+        location: f.location != null ? String(f.location) : "",
+        evidence: f.evidence != null ? String(f.evidence) : "",
+        recommendation: f.recommendation != null ? String(f.recommendation) : "",
+        proposed_smallest: f.proposed_smallest != null ? String(f.proposed_smallest) : "",
+        predicted_delta: f.predicted_delta != null ? String(f.predicted_delta) : ""
+      });
+      norm.counts[sev] += 1;
+    });
+
+    return norm;
+  }
+
+  function normalizeThemes(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (t) {
+      if (!t || typeof t !== "object") { return; }
+      var ids = [];
+      if (Array.isArray(t.finding_ids)) {
+        t.finding_ids.forEach(function (id) { if (id != null) { ids.push(String(id)); } });
+      }
+      var title = t.title != null ? String(t.title) : "";
+      if (!title && !ids.length) { return; }
+      list.push({
+        title: title || "(untitled theme)",
+        root_cause: t.root_cause != null ? String(t.root_cause) : "",
+        action: t.action != null ? String(t.action) : "",
+        finding_ids: ids
+      });
+    });
+    return list;
+  }
+
+  function normalizeStrengths(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (s) {
+      if (typeof s === "string" && s) { list.push(s); }
+      else if (s && typeof s === "object" && s.title) {
+        list.push(String(s.title) + (s.detail ? " — " + String(s.detail) : ""));
+      }
+    });
+    return list;
+  }
+
+  function normalizeRecommendations(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (r, i) {
+      if (!r || typeof r !== "object") { return; }
+      var action = r.action != null ? String(r.action) : "";
+      if (!action) { return; }
+      var resolves = "";
+      if (Array.isArray(r.resolves)) { resolves = r.resolves.map(String).join(", "); }
+      else if (typeof r.resolves === "number") { resolves = r.resolves + " findings"; }
+      else if (r.resolves != null) { resolves = String(r.resolves); }
+      list.push({
+        rank: typeof r.rank === "number" ? r.rank : i + 1,
+        action: action,
+        resolves: resolves
+      });
+    });
+    list.sort(function (a, b) { return a.rank - b.rank; });
+    return list;
+  }
+
+  // Optional experience block: journeys plus a headless note. Returns null when
+  // neither is usable.
+  function normalizeExperience(raw) {
+    if (!raw || typeof raw !== "object") { return null; }
+    var journeys = [];
+    if (Array.isArray(raw.journeys)) {
+      raw.journeys.forEach(function (j) {
+        if (!j || typeof j !== "object") { return; }
+        var name = j.name != null ? String(j.name) : "";
+        var steps = j.steps != null ? String(j.steps) : "";
+        if (!name && !steps) { return; }
+        journeys.push({ name: name, steps: steps });
+      });
+    }
+    var headless = raw.headless != null ? String(raw.headless) : "";
+    if (!journeys.length && !headless) { return null; }
+    return { journeys: journeys, headless: headless };
+  }
+
+  function renderOverview(data) {
+    els.subject.textContent = data.subject;
+    els.generated.textContent = data.generated;
+    els.schema.textContent = String(data.schema_version);
+    els.verdict.textContent = data.verdict;
+
+    if (data.grade) {
+      els.grade.textContent = data.grade;
+      els.grade.className = "grade g-" + data.grade;
+      els.grade.hidden = false;
+    }
+    if (data.summary) {
+      els.summaryText.textContent = data.summary;
+      els.summaryText.hidden = false;
+    }
+
+    els.counts.innerHTML = "";
+    SEVERITIES.forEach(function (s) {
+      var pill = document.createElement("span");
+      pill.className = "pill";
+      pill.innerHTML =
+        '<span class="dot ' + s + '"></span>' +
+        '<span class="lbl">' + SEV_LABEL[s] + '</span>' +
+        '<span class="n">' + data.counts[s] + "</span>";
+      els.counts.appendChild(pill);
+    });
+    els.overview.hidden = false;
+  }
+
+  // Every copied fix prompt opens by anchoring the fixing session to the same
+  // standards that produced the findings, so the fix is held to the bar too.
+  function standardsPreamble() {
+    if (!standards || !standards.canon) { return []; }
+    var bar = standards.canon + (standards.principles ? " and " + standards.principles : "");
+    var lines = [
+      "Hold " + bar + " as the bar for every line you change — a fix that adds ceremony is a new finding, not a fix."
+    ];
+    if (standards.scripts) {
+      lines.push("If the fix adds or changes scripts, follow " + standards.scripts + ".");
+    }
+    lines.push("");
+    return lines;
+  }
+
+  function composeThemePrompt(theme, resolved) {
+    var lines = standardsPreamble();
+    lines.push("Fix the following theme in " + subjectPath + ": " + theme.title);
+    lines.push("");
+    if (theme.root_cause) { lines.push("Root cause: " + theme.root_cause); }
+    if (theme.action) { lines.push("Fix: " + theme.action); }
+    if (resolved.length) {
+      lines.push("");
+      lines.push("Findings to address:");
+      resolved.forEach(function (f, i) {
+        lines.push((i + 1) + ". " + f.title);
+        if (f.location) { lines.push("   Location: " + f.location); }
+        if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+        if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      });
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  function renderThemes(themes) {
+    if (!themes.length) { els.themes.hidden = true; return; }
+    els.themes.innerHTML = "<h2>Themes</h2>";
+    themes.forEach(function (t) {
+      var resolved = t.finding_ids
+        .map(function (id) { return findingsById[id]; })
+        .filter(function (f) { return !!f; });
+      var items = resolved.map(function (f) {
+        return '<div class="t-finding"><span class="mono">' + esc(f.id) + "</span> " +
+          esc(f.title) +
+          (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "") +
+          "</div>";
+      }).join("");
+
+      var node = document.createElement("div");
+      node.className = "theme";
+      node.innerHTML =
+        '<div class="t-head"><span class="t-title">' + esc(t.title) + "</span>" +
+        '<button class="small t-fix">Fix This Theme</button></div>' +
+        (t.root_cause ? '<div class="t-cause">Root cause: ' + esc(t.root_cause) + "</div>" : "") +
+        (t.action ? '<div class="t-action"><b>Fix:</b> ' + esc(t.action) + "</div>" : "") +
+        (items ? '<div class="t-findings">' + items + "</div>" : "");
+      node.querySelector(".t-fix").addEventListener("click", function () {
+        copyText(composeThemePrompt(t, resolved));
+      });
+      els.themes.appendChild(node);
+    });
+    els.themes.hidden = false;
+  }
+
+  function renderStrengths(list) {
+    if (!list.length) { els.strengths.hidden = true; return; }
+    els.strengths.innerHTML =
+      "<h2>Strengths</h2><ul class=\"strength-list\">" +
+      list.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") +
+      "</ul>";
+    els.strengths.hidden = false;
+  }
+
+  function renderRecommendations(recs) {
+    if (!recs.length) { els.recommendations.hidden = true; return; }
+    var html = "<h2>Recommendations</h2>";
+    recs.forEach(function (r) {
+      html += '<div class="rec"><span class="rank">#' + esc(String(r.rank)) + "</span>" +
+        esc(r.action) +
+        (r.resolves ? '<span class="resolves">resolves: ' + esc(r.resolves) + "</span>" : "") +
+        "</div>";
+    });
+    els.recommendations.innerHTML = html;
+    els.recommendations.hidden = false;
+  }
+
+  function renderExperience(exp) {
+    if (!exp) { els.experience.hidden = true; return; }
+    var html = "<h2>Experience</h2>";
+    if (exp.journeys.length) {
+      html += exp.journeys.map(function (j) {
+        return '<div class="journey">' +
+          '<div class="j-name">' + esc(j.name || "(unnamed journey)") + "</div>" +
+          (j.steps ? '<div class="j-steps">' + esc(j.steps) + "</div>" : "") +
+          "</div>";
+      }).join("");
+    }
+    if (exp.headless) {
+      html += '<dl class="kv" style="margin-top:12px"><dt>Headless</dt><dd>' +
+        esc(exp.headless) + "</dd></dl>";
+    }
+    els.experience.innerHTML = html;
+    els.experience.hidden = false;
+  }
+
+  function renderNoFindings() {
+    els.root.innerHTML =
+      '<div class="no-findings">' +
+      '<div class="big">No findings</div>' +
+      "<div>The scanners returned a clean pass for this subject.</div>" +
+      "</div>";
+  }
+
+  function findingNode(f) {
+    var node = document.createElement("div");
+    node.className = "finding sev-" + f.severity;
+    node.setAttribute("data-id", f.id);
+
+    var sub =
+      esc(f.lens) +
+      (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "");
+
+    var rows =
+      "<dt>Lens</dt><dd>" + esc(f.lens) + "</dd>" +
+      (f.location ? "<dt>Location</dt><dd><code>" + esc(f.location) + "</code></dd>" : "") +
+      (f.evidence ? "<dt>Evidence</dt><dd>" + esc(f.evidence) + "</dd>" : "") +
+      (f.recommendation ? "<dt>Recommendation</dt><dd>" + esc(f.recommendation) + "</dd>" : "") +
+      (f.proposed_smallest ? "<dt>Proposed smallest</dt><dd>" + esc(f.proposed_smallest) + "</dd>" : "") +
+      (f.predicted_delta ? "<dt>Predicted delta</dt><dd>" + esc(f.predicted_delta) + "</dd>" : "");
+
+    node.innerHTML =
+      '<div class="row">' +
+      '<input type="checkbox" class="chk" aria-label="Select finding">' +
+      '<div class="head">' +
+      '<div class="title">' + esc(f.title) + "</div>" +
+      '<div class="sub">' + sub + "</div>" +
+      "</div>" +
+      '<span class="tag">' + SEV_LABEL[f.severity] + "</span>" +
+      '<span class="caret">▸</span>' +
+      "</div>" +
+      '<div class="body"><dl>' + rows + "</dl></div>";
+
+    var chk = node.querySelector(".chk");
+    chk.checked = !!selected[f.id];
+    chk.addEventListener("change", function () {
+      if (chk.checked) { selected[f.id] = true; } else { delete selected[f.id]; }
+      updateSelection();
+    });
+
+    var head = node.querySelector(".head");
+    var caret = node.querySelector(".caret");
+    function toggle() { node.classList.toggle("open"); }
+    head.addEventListener("click", toggle);
+    caret.addEventListener("click", toggle);
+
+    return node;
+  }
+
+  function renderFindings(list) {
+    els.root.innerHTML = "";
+    if (list.length === 0) {
+      renderNoFindings();
+      els.toolbar.hidden = true;
+      return;
+    }
+    els.toolbar.hidden = false;
+
+    SEVERITIES.forEach(function (sev) {
+      var group = list.filter(function (f) { return f.severity === sev; });
+      if (group.length === 0) { return; }
+      var wrap = document.createElement("div");
+      wrap.className = "group";
+      var h = document.createElement("h2");
+      h.innerHTML = '<span class="dot ' + sev + '"></span>' + SEV_LABEL[sev] + " (" + group.length + ")";
+      wrap.appendChild(h);
+      group.forEach(function (f) { wrap.appendChild(findingNode(f)); });
+      els.root.appendChild(wrap);
+    });
+  }
+
+  function updateSelection() {
+    var n = Object.keys(selected).length;
+    els.selCount.textContent = n + " selected";
+    els.btnCopy.disabled = n === 0;
+  }
+
+  function composePrompt() {
+    var picked = findings.filter(function (f) { return selected[f.id]; });
+    if (picked.length === 0) { return ""; }
+    var lines = standardsPreamble();
+    lines.push("Fix the following issues in " + subjectPath + ":");
+    lines.push("");
+    picked.forEach(function (f, i) {
+      lines.push((i + 1) + ". " + f.title);
+      if (f.location) { lines.push("   Location: " + f.location); }
+      if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+      if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      if (f.proposed_smallest) { lines.push("   Proposed smallest: " + f.proposed_smallest); }
+      lines.push("");
+    });
+    return lines.join("\n").replace(/\n+$/, "\n");
+  }
+
+  function showToast(text) {
+    els.toast.textContent = text;
+    els.toast.classList.add("show");
+    setTimeout(function () { els.toast.classList.remove("show"); }, 1600);
+  }
+
+  function fallbackCopy(text) {
+    els.fallbackText.value = text;
+    els.fallback.classList.add("show");
+    els.fallbackText.focus();
+    els.fallbackText.select();
+    try {
+      var ok = document.execCommand && document.execCommand("copy");
+      if (ok) {
+        showToast("Copied");
+        return;
+      }
+    } catch (e) { /* fall through to manual */ }
+    showToast("Copy the text shown below");
+  }
+
+  function copyText(text) {
+    if (!text) { return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { showToast("Copied"); },
+        function () { fallbackCopy(text); }
+      );
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function doCopy() {
+    copyText(composePrompt());
+  }
+
+  function wireToolbar() {
+    els.btnCopy.addEventListener("click", doCopy);
+    els.btnSelectAll.addEventListener("click", function () {
+      findings.forEach(function (f) { selected[f.id] = true; });
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = true; });
+      updateSelection();
+    });
+    els.btnClear.addEventListener("click", function () {
+      selected = Object.create(null);
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = false; });
+      els.fallback.classList.remove("show");
+      updateSelection();
+    });
+    els.btnExpandAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.add("open"); });
+    });
+    els.btnCollapseAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.remove("open"); });
+    });
+  }
+
+  function init() {
+    var island = document.getElementById("report-data");
+    var parsed;
+    try {
+      if (!island) { throw new Error("report-data island element not found"); }
+      parsed = JSON.parse(island.textContent);
+    } catch (err) {
+      showBanner(
+        "Could not parse the report data island.\n\n" +
+        "Error: " + (err && err.message ? err.message : String(err)) + "\n\n" +
+        "The findings could not be rendered. The JSON inside the " +
+        'report-data island (the application/json script tag) is malformed.'
+      );
+      return;
+    }
+
+    var data = normalize(parsed);
+
+    if (data.subject === PLACEHOLDER_SUBJECT) {
+      els.subject.textContent = data.subject;
+      showBanner(
+        "This is the unfilled report shell.\n\n" +
+        "The report-data island still carries the placeholder subject, so " +
+        "there are no findings here. Generate a real report with " +
+        "scripts/render_report.py."
+      );
+      return;
+    }
+
+    findings = data.findings;
+    subjectPath = data.subject;
+    standards = data.standards;
+    findingsById = Object.create(null);
+    findings.forEach(function (f) { findingsById[f.id] = f; });
+
+    renderOverview(data);
+    renderThemes(data.themes);
+    renderStrengths(data.strengths);
+    renderRecommendations(data.recommendations);
+    renderExperience(data.experience);
+    renderFindings(findings);
+    wireToolbar();
+    updateSelection();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

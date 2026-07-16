@@ -1,0 +1,182 @@
+{
+  "schema_version": 2,
+  "subject": "/home/budi/dev/prestashop-module/.claude/skills/psm-plan",
+  "generated": "2026-07-16",
+  "verdict": "Contract-solid and gate-complete — the artifact pair, cross-skill wiring, version-default hygiene, and stop discipline all verify clean against the real scripts; what remains is three medium findings: an unowned duplicated plan-JSON schema, a write-scope promise the headless memlog contradicts, and an inherited hardcoded psm-setup path.",
+  "grade": "good",
+  "summary": "psm-plan is a disciplined planning-only skill: all five requested contract checks (artifact pair vs psm-develop resume, cross-skill path integrity, no version-default duplication, all four gates, stop-after-approval) pass against the actual scripts and disk. The remaining work is consolidation, not correction — give the shared plan-JSON schema a single owner, reconcile two headless edges, and fix a family-baseline path hardcode that shipped psm-develop shares. No finding touches the resume contract itself: psm-develop can consume psm-plan's artifacts today.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "Plan-JSON schema has no single owner",
+      "root_cause": "The shared .psm-develop-plan.json item schema is hand-inlined verbatim in both psm-plan and psm-develop SKILL.md, while its deterministic authority (ps-module-inventory.py --validate-plan/--reconcile) exercises the fields without documenting the shape — three places to drift silently, and the inline copy is also the bulk of psm-plan's 128-token overage.",
+      "finding_ids": ["determinism-2", "architecture-3", "architecture-4"],
+      "action": "Document the canonical item schema once in ps-module-inventory.py (--help or docstring), replace both SKILL.md inline copies with a pointer plus the single psm-plan-specific fact (initial status 'direncanakan'), recovering ~130 tokens back under the desired budget."
+    },
+    {
+      "title": "Headless contract has two unreconciled edges",
+      "root_cause": "The interactive sections make promises the headless section quietly breaks or leaves open: 'the only files this skill writes are the plan pair' contradicts the headless memlog write, and nothing defines behavior when the function argument is absent in headless mode.",
+      "finding_ids": ["architecture-1", "enhancement-2"],
+      "action": "Qualify the write-scope promise with '(plus <module-path>/.memlog.md in headless mode)' and add one clause deciding the missing-function case — either sanctioned catalog-driven inference logged to memlog, or required-argument with gagal on absence."
+    },
+    {
+      "title": "Lines inherited verbatim from psm-develop carry its existing weaknesses",
+      "root_cause": "psm-plan deliberately mirrors psm-develop's activation/resume lines for contract fidelity, which also imported two family-baseline defects: the hardcoded {project-root}/.claude/skills/psm-setup resolver path that violates the skill's own <skills-dir> rule, and the prompt-side .md-vs-.json pair-drift detection that no script covers.",
+      "finding_ids": ["architecture-2", "determinism-1"],
+      "action": "Fix as a coordinated family pass over psm-plan and psm-develop together: switch the resolver call to <skills-dir>/psm-setup/... in both files now; optionally add a --pair-check mode to ps-module-inventory.py (with a machine-readable per-item status marker in the .md) so pair-drift detection becomes deterministic for both skills."
+    }
+  ],
+  "strengths": [
+    "Artifact contract verified against the real scripts: the JSON schema is identical character-for-character with psm-develop, the canonical paths match, and --reconcile (ps-module-inventory.py line 157) only inspects status 'diterapkan'/'applied' — so psm-plan's initial 'direncanakan' items pass resume reconciliation safely.",
+    "All seven cross-skill references resolve on disk (ps-module-inventory.py, ps-static-scan.py, ecommerce-function-catalog.md, version-safe-patterns.md, resolve-psm-config.py, memlog.py, and the optional augment catalog) with zero catalog/pattern content copied in — the zero-drift reuse design holds.",
+    "No hardcoded target versions or flashlight tags anywhere in SKILL.md; config flows solely through resolve-psm-config.py, verified to emit psm_target_versions.",
+    "All four gates intact: Budi confirmation with re-validation on revision, the psm-scaffold target gate on the script-owned looks_like_module rule, the mechanical-vs-scope-changing conflict split, and three-status headless with explicit BMad mapping.",
+    "Scope discipline is explicit and enforced at the point of action: stop after approval, with named prohibitions on touching module files, calling psm-validate, and committing — no apply/verify/commit step leaked in from psm-develop.",
+    "Intelligence placement is exemplary: inventory, drift, plan validation, config resolution, and the risky-API baseline are all scripted, with judgment explicitly reserved for the model."
+  ],
+  "recommendations": [
+    {
+      "rank": 1,
+      "action": "Anchor the plan-item schema in ps-module-inventory.py (--help or docstring) and replace both inline SKILL.md copies with a pointer, keeping only the initial-status 'direncanakan' fact inline.",
+      "resolves": ["determinism-2", "architecture-3", "architecture-4"]
+    },
+    {
+      "rank": 2,
+      "action": "Reconcile the headless contract: qualify the write-scope promise for the headless memlog write, and define the missing-function-argument behavior (inference-with-memlog or required-argument → gagal).",
+      "resolves": ["architecture-1", "enhancement-2"]
+    },
+    {
+      "rank": 3,
+      "action": "Add one design-section sentence routing to psm-cross-version when baseline scan hits intersect planned insertion points (headless: memlog assumption, or butuh intervensi when severe).",
+      "resolves": ["enhancement-1"]
+    },
+    {
+      "rank": 4,
+      "action": "Switch the resolve-psm-config.py call to <skills-dir>/psm-setup/scripts/resolve-psm-config.py in psm-plan and fix psm-develop's identical line in the same pass.",
+      "resolves": ["architecture-2"]
+    },
+    {
+      "rank": 5,
+      "action": "Compress the Overview stop clause to 'lalu berhenti setelah rencana disetujui', keeping the enumerated prohibitions only in Konfirmasi & berhenti.",
+      "resolves": ["leanness-1"]
+    },
+    {
+      "rank": 6,
+      "action": "Optional and larger: add a deterministic pair-drift check (--pair-check plus a machine-readable status marker in the .md format), coordinated with psm-develop as a shared-contract change.",
+      "resolves": ["determinism-1"]
+    }
+  ],
+  "experience": {
+    "journeys": [
+      {
+        "name": "Guided planning",
+        "steps": "Resolve config → identify module & functions → resume/reconcile if a plan exists → inventory + static-scan batch (psm-scaffold gate) → design from catalog + version-safe patterns → write .md/.json pair → --validate-plan → split conflicts (auto-fix mechanical, escalate scope-changing) → confirm with Budi → stop, handing off to psm-develop"
+      },
+      {
+        "name": "Headless planning",
+        "steps": "Args replace questions → same flow with every assumption logged to memlog → return selesai/gagal/butuh intervensi with a one-line reason plus artifact and memlog paths"
+      },
+      {
+        "name": "Revision / resume",
+        "steps": "Read existing pair → regenerate stale .json from the .md → --reconcile against the filesystem → revise both artifacts → re-validate → re-confirm"
+      }
+    ],
+    "headless": "Three-state return (selesai=complete; gagal and butuh intervensi=blocked) with a memlog audit trail; approval is deliberately the caller's responsibility — two edges to close: the write-scope wording and the missing-function argument."
+  },
+  "findings": [
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Prompt-side .md-vs-.json pair-drift detection and JSON regeneration on resume",
+      "location": ".claude/skills/psm-plan/SKILL.md:On Activation #3",
+      "evidence": "\"bila `.psm-develop-plan.json` hilang atau status-nya tertinggal dari `.md`, regenerasi dulu dari status terkini `.md`\" — the model itself must detect whether the JSON's per-item status lags the narrative .md (a compare-two-files-for-drift operation, an explicit determinism-leak tell) and then re-extract the structured items from prose. The scripted --reconcile only covers .json-vs-filesystem drift; the .md-vs-.json half of the pair contract is enforced purely by prompt, on every resume, and a silently wrong regeneration corrupts the artifact pair psm-develop's resume consumes.",
+      "recommendation": "Determinism leak (prompt doing comparison/extraction work). 'Status of item X differs between artifacts' is unit-testable with an expected output, so it belongs in a script. Add a machine-readable per-item status marker to the .md format (a shared-contract change coordinated with psm-develop, which carries the identical instruction) and a small pair-check mode (e.g., ps-module-inventory.py --pair-check) emitting compact JSON drift per item. The model keeps only the genuinely narrative regeneration; the drift verdict becomes exact and free."
+    },
+    {
+      "id": "determinism-2",
+      "lens": "determinism",
+      "severity": "low",
+      "title": "Plan-JSON schema inlined in prompt duplicates the interface the script owns",
+      "location": ".claude/skills/psm-plan/SKILL.md:Rancang fungsi & rencana",
+      "evidence": "The items schema is hand-inlined, while the deterministic authority on that shape is ps-module-inventory.py --validate-plan/--reconcile. The same schema is inlined a second time in psm-develop/SKILL.md, so the interface now lives in three places and any script-side field change drifts the two prompts silently — a failure mode this repo has already hit with its 4-layer version-defaults sync.",
+      "recommendation": "Define the interface once at the script (document the plan schema in --help or a --schema flag on ps-module-inventory) and have both SKILL.md files point there, keeping only the one psm-plan-specific fact inline (initial status 'direncanakan'). Downstream --validate-plan (rc=1) already provides the post-processing structural check, so no new validation script is needed."
+    },
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Write-scope promise contradicted by headless memlog write",
+      "location": ".claude/skills/psm-plan/SKILL.md:49 vs :53",
+      "evidence": "Konfirmasi & berhenti states 'satu-satunya file yang skill ini tulis adalah pasangan artefak rencana', but Mode headless instructs writing a third file, <module-path>/.memlog.md (init dulu bila belum ada), via memlog.py. Two explicit instructions conflict; an agent holding the promise as a hard guardrail may skip the memlog and break the headless audit trail. Sibling psm-develop makes no such 'only file' claim, so this is psm-plan-specific.",
+      "recommendation": "Qualify the promise where it is stated: 'satu-satunya file yang skill ini tulis adalah pasangan artefak rencana (plus <module-path>/.memlog.md di mode headless)'. One clause resolves the contradiction without weakening the no-module-source-changes guardrail."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Sibling psm-setup referenced by hardcoded install path, violating the skill's own Resolution rule",
+      "location": ".claude/skills/psm-plan/SKILL.md:22 (On Activation #1) vs :16 (Resolution rules)",
+      "evidence": "Resolution rules mandate install-relative sibling references ('Rujuk sibling lewat <skills-dir>/psm-develop/…'), yet On Activation #1 loads config via 'uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py' — a hardcoded install location for sibling psm-setup. Every other sibling call in the file correctly uses <skills-dir>. The hardcode breaks the first activation step if the psm family is ever installed anywhere other than .claude/skills/. The same line exists in shipped sibling psm-develop SKILL.md:22, so this is a family baseline, not a psm-plan regression.",
+      "recommendation": "Change to 'uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}'. Fix psm-develop's identical line in the same pass so the family convention stays uniform."
+    },
+    {
+      "id": "architecture-3",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Shared plan-JSON schema duplicated verbatim in two sibling SKILL.md files with no single anchor",
+      "location": ".claude/skills/psm-plan/SKILL.md:41 and .claude/skills/psm-develop/SKILL.md:43",
+      "evidence": "The .psm-develop-plan.json item schema is maintained as two identical inline copies. The family's zero-own-references design exists precisely to prevent sibling drift, but this shared contract has no single owner: ps-module-inventory.py's --validate-plan/--reconcile only exercise a field subset, so a schema edit in one SKILL.md would strand the other without any deterministic signal. Copies are currently identical and the status vocabulary (direncanakan/diterapkan) aligns, so this is drift risk, not present breakage.",
+      "recommendation": "Anchor the schema in the artifact's owning script — extend ps-module-inventory.py --help (already cited as '(lihat --help)') or its docstring with the canonical item schema — and let both SKILL.md lines carry only the pointer plus the one psm-plan-specific fact (initial status 'direncanakan'). Alternatively keep the duplication but add it to the existing test-guard pattern the family already uses for module.yaml/PSM_DEFAULTS pairs."
+    },
+    {
+      "id": "architecture-4",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "SKILL.md in warn tier (2128 > 2000 desired); trim, don't carve",
+      "location": ".claude/skills/psm-plan/SKILL.md",
+      "evidence": "Pre-pass: 2128 tokens against desired 2000 / budget 3000 — the warn-and-name-a-section tier. The zero-references design makes lifting to references/ the wrong move here (it would recreate the drift surface the design eliminates), so the heaviest section, Rancang fungsi & rencana, should shrink by trimming: the inline JSON schema (see architecture-3's pointer move) recovers most of the overage, and explanatory clauses like 'bukan salah tulis' (Resolution rules :18) fail the canon's truncate test.",
+      "recommendation": "Recover ~130 tokens by replacing the inline schema with the script-anchored pointer and cutting reader-inert clauses; stay single-file. Non-blocking — under budget."
+    },
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Stop-scope triple enumerated in both Overview and Konfirmasi & berhenti",
+      "location": "SKILL.md:Overview + SKILL.md:Konfirmasi & berhenti",
+      "evidence": "Overview: 'lalu **berhenti** setelah rencana disetujui: tanpa menerapkan perubahan ke file module, tanpa verifikasi, tanpa commit' restates the identical triple that Konfirmasi & berhenti carries at the point of action ('jangan menyentuh file module, jangan memanggil psm-validate, jangan commit'). Canon core-test re-teach shape: facts restated across sections. The skill sits 128 tokens over the project desired 2000, so the ~15-word duplicate is not free.",
+      "recommendation": "Keep the enumeration once, in Konfirmasi & berhenti where it is enforceable and already paired with the positive constraint ('satu-satunya file yang skill ini tulis adalah pasangan artefak rencana'). Compress the Overview clause to 'lalu **berhenti** setelah rencana disetujui' — the Overview keeps the scope boundary, the operational section keeps the command."
+    },
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add: named psm-cross-version routing when the baseline scan collides with planned insertion points",
+      "location": "SKILL.md: Pahami module existing / Rancang fungsi & rencana",
+      "evidence": "Pattern: wrong-state routing (the skill already has it for the not-a-module case, gating to psm-scaffold). ps-static-scan is run so the plan is not 'dibangun di atas masalah lama tanpa menyebutnya', but the skill never says what to do when baseline hits intersect the files/hooks the plan will touch. Sibling psm-develop surfaces exactly this as a scope decision ('port dulu via psm-cross-version?') — but only at its Verify phase, after apply. psm-plan is the session whose entire purpose is surfacing such decisions early, yet the port-first option has no name here; a first-timer planning on a legacy module discovers the porting prerequisite weeks later, mid-execution.",
+      "recommendation": "One sentence in the design section: when baseline errors intersect the planned insertion points, raise psm-cross-version-first as an explicit short option to Budi and record the choice in the plan narrative (headless: log the assumption to memlog, or return butuh intervensi when the overlap is severe). Mirrors the scope-decision language psm-develop already uses at verify."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "low",
+      "title": "Add: define headless behavior when the function argument is absent",
+      "location": "SKILL.md: Mode headless",
+      "evidence": "Pattern: headless parameter-replaces-question discipline. Headless says 'ambil module-path, fungsi, & versi dari argumen alih-alih bertanya', and the memlog list ('fungsi yang dipilih') implies the skill may choose functions itself — but On Activation's fallback for ambiguity ('tanya satu pertanyaan') cannot fire headless, and neither gagal nor butuh intervensi names the missing-function case. A caller passing only a module path gets undefined behavior: silent catalog-driven invention returned as selesai, or an unexplained stop.",
+      "recommendation": "One clause deciding it: either sanction inference (infer functions from module domain + catalog, log each as an assumption memlog entry, proceed) or declare the argument required (missing → gagal with a one-line reason). Either is fine for a planning-only skill; the point is that the choice is written down."
+    },
+    {
+      "id": "customization-1",
+      "lens": "customization",
+      "severity": "low",
+      "title": "Produce-and-stop shape is a textbook on_complete candidate, but opting in is not warranted today",
+      "location": ".claude/skills/psm-plan/SKILL.md:Konfirmasi & berhenti",
+      "evidence": "The skill writes the plan artifact pair and hard-stops, closing with a fixed suggestion to run psm-develop — exactly the produce-an-artifact-and-stop shape that flags an on_complete hook candidate. Everything else weighs against opting in: the build decision on record declined customization (default no, not requested), no psm-* sibling carries a workflow customization surface, there are zero hardcoded templates (the two sibling references loaded are shared knowledge files, and the catalog already has a project-level augment point), and the artifact path is a deliberate shared resume contract with psm-develop that must not be exposed as an output_path knob.",
+      "recommendation": "No action now. Revisit only if a recurring post-plan routing need appears beyond the fixed psm-develop handoff; at that point opt in with the universal four defaults plus a single on_complete scalar rather than forking, and keep the plan-artifact path hardcoded since it is a cross-skill contract, not a customization point."
+    }
+  ]
+}

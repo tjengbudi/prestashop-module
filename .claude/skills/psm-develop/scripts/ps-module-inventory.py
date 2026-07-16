@@ -17,7 +17,7 @@ fungsi dengan aman, sehingga model tak perlu mem-parse PHP mentah tiap run:
 - detection: "direct-parent-only" — class dikenali hanya dari parent langsung;
   inheritance tak langsung (extends subclass konkret) tak terdeteksi
 
-Tiga mode:
+Empat mode:
 - default: emit JSON inventaris (peta titik sisip aman).
 - --validate-plan <plan.json>: cocokkan item rencana dengan inventaris dan emit
   mismatch deterministik per item (set/list-membership yang punya satu jawaban
@@ -27,6 +27,13 @@ Tiga mode:
 - --reconcile <plan.json>: saat resume, cek item ber-status 'diterapkan' yang
   buktinya hilang dari inventaris (drift, mis. Budi git-revert) — inversi
   validate-plan. Keputusan atas drift (koreksi status/tanya Budi) tetap milik model.
+- --pair-check: cek drift antar pasangan artefak rencana di <module-path>
+  (.psm-develop-plan.md vs .json) lewat marker 'Status:' per fungsi di .md —
+  json hilang/invalid, .md tanpa marker, status beda, item hilang di salah satu
+  sisi. Tak butuh inventaris. Keputusan atas drift tetap milik model.
+
+Skema kanonik pasangan artefak (kontrak bersama psm-plan/psm-develop) ada di
+PLAN_SCHEMA / epilog --help; SKILL.md kedua skill hanya menunjuk ke sini.
 """
 import argparse
 import json
@@ -35,6 +42,22 @@ import sys
 from pathlib import Path
 
 SKIP_DIRS = {"vendor", "node_modules", ".git"}
+
+PLAN_MD = ".psm-develop-plan.md"
+PLAN_JSON = ".psm-develop-plan.json"
+
+PLAN_SCHEMA = """\
+Skema kanonik <module-path>/.psm-develop-plan.json (kontrak bersama psm-plan/psm-develop):
+  {"items": [{"function": str, "status": str, "add_hooks": [str],
+              "insert_files": [str], "add_tables": [str], "add_classes": [str],
+              "changes_objectmodel": bool}]}
+  status: 'direncanakan' saat direncanakan (psm-plan); 'diterapkan' setelah apply
+  (psm-develop) — --reconcile hanya memeriksa item 'diterapkan'/'applied'.
+
+Marker pasangan di <module-path>/.psm-develop-plan.md (dibaca --pair-check):
+tiap fungsi adalah seksi '## <function>' yang memuat baris 'Status: <status>';
+<function> harus sama persis dengan field 'function' di .json.
+"""
 
 
 def iter_php(module_dir):
@@ -176,20 +199,103 @@ def reconcile_plan(inv, plan):
     return {"module": inv["module"], "ok": not drift, "drift": drift}
 
 
+def parse_md_statuses(md_text):
+    """Ambil {function: status} dari marker pasangan di .md: seksi '## <function>'
+    yang memuat baris 'Status: <status>' (toleran bullet/bold; H2 saja)."""
+    status_re = re.compile(r"^\s*(?:-\s+)?Status\s*:\s*(\S+)", re.IGNORECASE)
+    statuses = {}
+    current = None
+    for line in md_text.splitlines():
+        h = re.match(r"^##\s+(.+?)\s*$", line)
+        if h:
+            current = h.group(1)
+            continue
+        # bold/italic di sekitar marker tak mengubah makna — buang sebelum match
+        m = status_re.match(line.replace("*", ""))
+        if m and current is not None and current not in statuses:
+            statuses[current] = m.group(1)
+    return statuses
+
+
+def pair_check(module_dir):
+    """Cek drift antar pasangan artefak rencana (.md vs .json) di module_dir.
+
+    Deterministik murni: json hilang/invalid, .md hilang, .md tanpa marker
+    (format lama), status beda per fungsi, item hilang di salah satu sisi.
+    Regenerasi/koreksi tetap kerja model; skrip hanya memvonis drift.
+    """
+    md_path = module_dir / PLAN_MD
+    json_path = module_dir / PLAN_JSON
+    issues = []
+
+    def result():
+        return {"module": module_dir.name, "ok": not issues, "pair_drift": issues}
+
+    if not md_path.exists() and not json_path.exists():
+        return None  # tak ada pasangan sama sekali — error, bukan drift
+    if not json_path.exists():
+        issues.append({"function": None, "kind": "json_missing",
+                       "detail": f"{PLAN_JSON} tak ada — regenerasi dari status terkini {PLAN_MD}"})
+        return result()
+    try:
+        plan = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        issues.append({"function": None, "kind": "json_invalid",
+                       "detail": f"gagal baca {PLAN_JSON}: {e}"})
+        return result()
+    json_statuses = {str(it.get("function", "?")): str(it.get("status", ""))
+                     for it in plan.get("items", [])}
+    if not md_path.exists():
+        issues.append({"function": None, "kind": "md_missing",
+                       "detail": f"{PLAN_MD} tak ada padahal {PLAN_JSON} ada"})
+        return result()
+    md_statuses = parse_md_statuses(md_path.read_text(encoding="utf-8", errors="replace"))
+    if not md_statuses:
+        issues.append({"function": None, "kind": "no_markers",
+                       "detail": f"tak ada marker 'Status:' per seksi '## <function>' di {PLAN_MD} "
+                                 "(format lama?) — backfill marker dari status terkini sebelum mengandalkan pair-check"})
+        return result()
+    for fn, st in md_statuses.items():
+        if fn not in json_statuses:
+            issues.append({"function": fn, "kind": "missing_in_json",
+                           "detail": f"fungsi '{fn}' ada di .md tapi tak ada di items[] .json"})
+        elif st.lower() != json_statuses[fn].lower():
+            issues.append({"function": fn, "kind": "status_mismatch",
+                           "detail": f"status .md '{st}' != .json '{json_statuses[fn]}'"})
+    for fn in json_statuses:
+        if fn not in md_statuses:
+            issues.append({"function": fn, "kind": "missing_in_md",
+                           "detail": f"fungsi '{fn}' ada di .json tapi tak ada seksi '## {fn}' ber-Status di .md"})
+    return result()
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Inventaris struktur module PrestaShop + validasi/rekonsiliasi rencana -> JSON.")
+    ap = argparse.ArgumentParser(
+        description="Inventaris struktur module PrestaShop + validasi/rekonsiliasi/pair-check rencana -> JSON.",
+        formatter_class=argparse.RawDescriptionHelpFormatter, epilog=PLAN_SCHEMA)
     ap.add_argument("module_path", help="Path folder module")
     ap.add_argument("-o", "--output", help="Tulis JSON ke file (default stdout)")
     ap.add_argument("--validate-plan", metavar="PLAN.json",
                     help="Cocokkan rencana dengan inventaris, emit mismatch per item (rc=1 bila ada mismatch)")
     ap.add_argument("--reconcile", metavar="PLAN.json",
                     help="Cek drift status 'diterapkan' vs bukti aktual saat resume (rc=1 bila ada drift)")
+    ap.add_argument("--pair-check", action="store_true",
+                    help=f"Cek drift pasangan {PLAN_MD} vs {PLAN_JSON} di <module-path> via marker 'Status:' (rc=1 bila drift)")
     args = ap.parse_args()
 
     module_dir = Path(args.module_path).resolve()
     if not module_dir.is_dir():
         print(f"error: bukan folder: {module_dir}", file=sys.stderr)
         return 2
+
+    if args.pair_check:
+        result = pair_check(module_dir)
+        if result is None:
+            print(f"error: tak ada pasangan artefak rencana di {module_dir}", file=sys.stderr)
+            return 2
+        out = json.dumps(result, indent=2, ensure_ascii=False)
+        (Path(args.output).write_text(out, encoding="utf-8") if args.output else print(out))
+        return 0 if result["ok"] else 1
 
     inv = build_inventory(module_dir)
 

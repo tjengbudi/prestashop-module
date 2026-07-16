@@ -19,9 +19,9 @@ Bertindak sebagai pendamping pengembangan module PrestaShop: operator (Budi) mem
 
 ## On Activation
 
-1. Muat config resolved via `uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri).
+1. Muat config resolved via `uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri).
 2. Tentukan module yang dikembangkan (path folder) dan fungsi yang diinginkan dari permintaan Budi. Bila ambigu, tanya satu pertanyaan.
-3. Resume: bila `<module-path>/.psm-develop-plan.md` ada, baca untuk melanjutkan dari keadaan terakhir. **Rekonsiliasi dulu, jangan percaya status buta:** bila `.psm-develop-plan.json` hilang atau status-nya tertinggal dari `.md`, regenerasi dulu dari status terkini `.md`; lalu jalankan `uv run scripts/ps-module-inventory.py <module-path> --reconcile <module-path>/.psm-develop-plan.json` → skrip emit drift deterministik (item ber-status "diterapkan" yang buktinya hilang, mis. Budi git-revert). Keputusan atas drift milikmu: koreksi status di kedua artefak sebelum lanjut. Baca juga `verify_attempts` saat resume (lihat Verifikasi).
+3. Resume: bila `<module-path>/.psm-develop-plan.md` ada, baca untuk melanjutkan dari keadaan terakhir. **Rekonsiliasi dulu, jangan percaya status buta** — dua cek deterministik dari `uv run scripts/ps-module-inventory.py <module-path>`: `--pair-check` → drift .md↔.json (json hilang, status beda, item hilang; `no_markers` = .md lama tanpa marker `Status:` — hanya pada kasus itu regenerasi/backfill dari naratif `.md`), lalu `--reconcile <module-path>/.psm-develop-plan.json` → item ber-status "diterapkan" yang buktinya hilang (mis. Budi git-revert). Keputusan atas drift milikmu: koreksi status di kedua artefak sebelum lanjut. Baca juga `verify_attempts` saat resume (lihat Verifikasi).
 4. **Augment katalog bila ada.** Bila `{project-root}/_bmad/psm/memory/ecommerce/function-catalog.md` ada, baca untuk fungsi tambahan di luar `references/ecommerce-function-catalog.md`. Bila belum, lanjut — katalog inti sudah di-embed.
 
 ## Pahami module existing
@@ -38,9 +38,9 @@ Sisamu: menilai *di mana titik sisip aman*.
 
 Tawarkan fungsi e-commerce yang relevan dengan maksud Budi memakai `references/ecommerce-function-catalog.md` (peta fungsi per domain; patuhi aturan menambah-ke-existing di bagian akhirnya). Untuk fungsi terpilih, rancang implementasi version-safe dengan `<skills-dir>/psm-cross-version/references/version-safe-patterns.md` sebagai rujukan teknis lintas versi.
 
-Tulis rencana ke `<module-path>/.psm-develop-plan.md`: per fungsi — file & titik sisip, hook/tabel/service yang ditambah, perubahan per versi, dan alasan. Rencana adalah artefak yang dapat direvisi dan sumber resume.
+Tulis rencana ke `<module-path>/.psm-develop-plan.md`: seksi `## <function>` per fungsi, dibuka baris `Status: direncanakan` (marker yang dibaca `--pair-check`), lalu file & titik sisip, hook/tabel/service yang ditambah, perubahan per versi, dan alasan. Rencana adalah artefak yang dapat direvisi dan sumber resume.
 
-**Validasi rencana terhadap inventaris sebelum konfirmasi.** Tulis item rencana terstruktur ke `<module-path>/.psm-develop-plan.json` — `{"items":[{"function","status","add_hooks":[…],"insert_files":[…],"add_tables":[…],"add_classes":[…],"changes_objectmodel":bool}]}` (field `status`/`add_tables`/`add_classes` dipakai `--reconcile` saat resume) — lalu jalankan `uv run scripts/ps-module-inventory.py <module-path> --validate-plan <module-path>/.psm-develop-plan.json` (rc=1 bila ada mismatch) → skrip emit mismatch deterministik per item (hook sudah ada di `registered_hooks`; titik sisip file tak ada; `$definition` diubah tanpa `upgrade/` — cek `has_upgrade_dir`). Sisamu: penilaian bermaksud yang tak bisa di-skrip — apakah suatu perubahan menyentuh `$definition` ObjectModel yang **sedang terpakai** (butuh migrasi tabel existing).
+**Validasi rencana terhadap inventaris sebelum konfirmasi.** Tulis item rencana terstruktur ke `<module-path>/.psm-develop-plan.json` sesuai skema kanonik `items[]` di `--help` ps-module-inventory.py (field `status`/`add_tables`/`add_classes` dipakai `--reconcile` saat resume) — lalu jalankan `uv run scripts/ps-module-inventory.py <module-path> --validate-plan <module-path>/.psm-develop-plan.json` (rc=1 bila ada mismatch) → skrip emit mismatch deterministik per item (hook sudah ada di `registered_hooks`; titik sisip file tak ada; `$definition` diubah tanpa `upgrade/` — cek `has_upgrade_dir`). Sisamu: penilaian bermaksud yang tak bisa di-skrip — apakah suatu perubahan menyentuh `$definition` ObjectModel yang **sedang terpakai** (butuh migrasi tabel existing).
 
 Bedakan dua jenis konflik dari mismatch:
 - **Mekanis** (nama hook salah, upgrade script kurang) → perbaiki di rencana langsung.
@@ -52,7 +52,7 @@ Perbaiki konflik dulu, lalu tampilkan rencana ke Budi dan **minta persetujuan se
 
 Sebelum menyentuh file, pastikan `<module-path>` di repo git dengan working tree bersih (`git status`) — itu satu-satunya jaring undo untuk operasi tak-mudah-dibalik ini. Bila tidak, peringatkan Budi / tawarkan backup folder sebelum lanjut (headless: jangan terapkan diam tanpa jaring undo — buat backup folder otomatis lalu catat path-nya ke memlog, atau bila tak bisa kembalikan `butuh intervensi`).
 
-Setelah disetujui, terapkan sesuai rencana pada module di tempat. Tambah, jangan rusak — patuhi **Aturan menambah-ke-existing** di `references/ecommerce-function-catalog.md`. Tandai status tiap fungsi saat diterapkan di **kedua** artefak rencana — `.md` untuk Budi, `.json` untuk `--reconcile` — agar gerbang drift saat resume membaca status terkini.
+Setelah disetujui, terapkan sesuai rencana pada module di tempat. Tambah, jangan rusak — patuhi **Aturan menambah-ke-existing** di `references/ecommerce-function-catalog.md`. Tandai status tiap fungsi saat diterapkan di **kedua** artefak rencana — baris `Status:` di `.md` (dibaca `--pair-check`), field `status` di `.json` (dibaca `--reconcile`) — agar gerbang drift saat resume membaca status terkini.
 
 ## Verifikasi (gerbang wajib)
 
