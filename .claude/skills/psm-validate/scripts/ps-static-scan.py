@@ -143,8 +143,75 @@ def scan_structure_rule(rule, module_dir, main_file, target_ver=None):
     return []
 
 
+STRUCT_EXPECTS = {"present", "index_php_each_dir", "composer_prepend_autoloader_false",
+                  "compliancy_covers_target"}
+
+
+def _check_regex(notes, rid, field, value):
+    """Field regex harus string DAN compile. Non-string bikin re.compile lempar
+    TypeError (bukan re.error) — kalau tak dijaga, validator sendiri yang meledak."""
+    if not isinstance(value, str):
+        notes.append(f"{rid}: '{field}' bertipe {type(value).__name__}, harus string")
+        return
+    try:
+        re.compile(value)
+    except re.error as e:
+        notes.append(f"{rid}: '{field}' bukan regex valid ({e})")
+
+
+def validate_extra_rules(extra):
+    """Validasi ruleset tambahan buatan model. Return list pelanggaran (kosong = lolos).
+
+    Menjaga TIPE tiap field yang benar-benar disentuh kode pindai — bukan sekadar
+    keberadaannya. Tanpa itu aturan tambahan gagal DIAM-DIAM (grup salah-nama -> 0
+    rule di-merge, sementara prompt dilarang memindai dengan tangan) atau meledak
+    KeyError/TypeError -> exit 1 = kode "module punya error". Pelanggaran = input
+    rusak (exit 2), supaya exit 1 tetap berarti satu hal saja: module bermasalah.
+    """
+    notes = []
+    if not isinstance(extra, dict):
+        return ["extra-rules bukan JSON object — bentuk: {\"<grup>\": [ {rule}, ... ]}"]
+    unknown = [g for g in extra if g not in RULE_GROUPS and g != "_meta"]
+    if unknown:
+        notes.append(f"grup tak dikenal (rule-nya TAK akan dipakai): {', '.join(sorted(unknown))}"
+                     f" — grup sah: {', '.join(RULE_GROUPS)}")
+    for grp in RULE_GROUPS:
+        items = extra.get(grp, [])
+        if not isinstance(items, list):
+            notes.append(f"{grp}: bertipe {type(items).__name__}, harus list")
+            continue
+        for i, r in enumerate(items):
+            rid = r.get("id", f"{grp}[{i}]") if isinstance(r, dict) else f"{grp}[{i}]"
+            if not isinstance(r, dict):
+                notes.append(f"{rid}: bertipe {type(r).__name__}, harus object")
+                continue
+            missing = [k for k in ("id", "severity", "kind", "message", "affects") if k not in r]
+            if missing:
+                notes.append(f"{rid}: field wajib hilang: {', '.join(missing)}")
+            if r.get("severity") not in ("error", "warning"):
+                notes.append(f"{rid}: severity '{r.get('severity')}' di luar enum error|warning")
+            if "affects" in r and not isinstance(r["affects"], list):
+                notes.append(f"{rid}: 'affects' bertipe {type(r['affects']).__name__}, harus list")
+            if "files" in r and not isinstance(r["files"], list):
+                notes.append(f"{rid}: 'files' bertipe {type(r['files']).__name__}, harus list")
+            structural = r.get("kind") in ("structure", "compliancy")
+            if structural and r.get("expect") not in STRUCT_EXPECTS:
+                notes.append(f"{rid}: expect '{r.get('expect')}' tak dikenal untuk rule struktural"
+                             f" — sah: {', '.join(sorted(STRUCT_EXPECTS))}")
+            # `pattern` dipakai rule non-struktural DAN rule struktural expect=present.
+            if ("pattern" not in r) and (not structural or r.get("expect") == "present"):
+                notes.append(f"{rid}: rule ini butuh 'pattern' (kind={r.get('kind')!r}"
+                             f"{', expect=present' if structural else ''})")
+            if "pattern" in r:
+                _check_regex(notes, rid, "pattern", r["pattern"])
+            if "negate_pattern" in r:
+                _check_regex(notes, rid, "negate_pattern", r["negate_pattern"])
+    return notes
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Pindai module PrestaShop terhadap aturan kompatibilitas lintas versi.")
+    ap = argparse.ArgumentParser(description="Pindai module PrestaShop terhadap aturan kompatibilitas lintas versi.",
+                                 epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module_path", help="Path folder module PrestaShop")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma (default: 1.7.8,8.1,9.1)")
     ap.add_argument("--rules", default=str(DEFAULT_RULES), help="Path ps-rules.json (default: assets/ps-rules.json)")
@@ -169,6 +236,14 @@ def main():
             extra = json.loads(Path(args.extra_rules).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
             print(f"error: gagal baca extra-rules: {e}", file=sys.stderr)
+            return 2
+        violations = validate_extra_rules(extra)
+        if violations:
+            print("error: extra-rules tak lolos validasi skema:", file=sys.stderr)
+            for n in violations:
+                print(f"  - {n}", file=sys.stderr)
+            print("perbaiki file aturan tambahan lalu jalankan ulang "
+                  f"(skema: {DEFAULT_RULES.name} _meta.schema)", file=sys.stderr)
             return 2
         for grp in RULE_GROUPS:
             rules.setdefault(grp, []).extend(extra.get(grp, []))

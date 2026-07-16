@@ -123,7 +123,9 @@ def fatal_sign_in(html):
 INSTALL_SH = r'''
 if ! cp -r /ps-module-src "/var/www/html/modules/$MOD_NAME" 2>&1; then echo PSM_COPY_FAIL; fi
 cd /var/www/html || echo PSM_NO_PSROOT
-if php -d memory_limit=-1 bin/console prestashop:module --no-interaction install "$MOD_NAME" 2>&1; then
+if [ ! -f bin/console ]; then
+  echo PSM_NO_CONSOLE
+elif php -d memory_limit=-1 bin/console prestashop:module --no-interaction install "$MOD_NAME" 2>&1; then
   echo PSM_INSTALL_OK
 else
   echo PSM_INSTALL_FAIL
@@ -287,9 +289,9 @@ def run_steps(page, steps, ctx):
     """Eksekusi langkah skenario terhadap `page` (Playwright-like). Return list hasil.
 
     `page` cukup mengekspos goto()->response(status), content()->str, locator(sel)
-    (.first.is_visible()/.count()), click(sel), fill(sel,val) — sehingga logika ini
-    teruji dengan page-tiruan. `click_optional` = klik bila elemen ada, lewati tanpa
-    gagal bila tidak (interstitial yang muncul hanya di sebagian versi).
+    (.first.is_visible()/.count()), get_by_text(txt)(.count()), click(sel), fill(sel,val)
+    — sehingga logika ini teruji dengan page-tiruan. `click_optional` = klik bila elemen
+    ada, lewati tanpa gagal bila tidak (interstitial yang muncul hanya di sebagian versi).
     Assertion di area BO konklusif hanya bila ctx['bo_authed'] True. `expect_no_console_error`
     membaca error JS/console yang ditangkap drive_engine (ctx['console_sink'] sejak
     ctx['console_base']). Screenshot otomatis diambil sesudah goto & pada kegagalan bila
@@ -327,7 +329,10 @@ def run_steps(page, steps, ctx):
                 except Exception:  # noqa: BLE001 — settle best-effort, assertion tetap dievaluasi
                     pass
                 txt = substitute(step.get("text", ""), ctx)
-                present = txt in (page.content() or "")
+                # Teks TERLIHAT lewat locator, BUKAN substring di HTML terserialisasi:
+                # kamus terjemahan/JSON di <script> memuat frasa yang tak pernah dirender,
+                # jadi substring bisa LOLOS konklusif atas halaman yang gagal (false pass).
+                present = page.get_by_text(txt).count() > 0
                 results.append(_res(action, present, conclusive, f"text present={present}: {txt[:50]}", area))
             elif action == "expect_no_console_error":
                 errs = ctx.get("console_sink", [])[ctx.get("console_base", 0):]
@@ -460,7 +465,8 @@ def install_module(session, mod_name, timeout):
     inst = fl.parse_install(out)
     if inst.get("copy_fail"):
         return {"ok": False}, "gagal menyalin module ke dalam container"
-    return {"ok": inst["ok"], "no_console": inst.get("no_console", False)}, None
+    return {"ok": inst["ok"], "no_console": inst.get("no_console", False),
+            "no_psroot": inst.get("no_psroot", False)}, None
 
 
 def _bo_login(page, ctx):
@@ -644,11 +650,18 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
             return res
 
         install, ierr = install_module(session, mod_name, op_timeout)
-        res["install"] = {"ok": install["ok"], "no_console": install.get("no_console", False)}
+        res["install"] = {"ok": install["ok"], "no_console": install.get("no_console", False),
+                          "no_psroot": install.get("no_psroot", False)}
         if ierr or not install["ok"]:
             # Install adalah wilayah vonis Lapis 2; di sini cuma prasyarat E2E → tak konklusif.
-            res["errors"].append(
-                ierr or "module gagal install — E2E tak bisa menilai perilaku (Lapis 2 flashlight yang memvonis install)")
+            # Bedakan infra (image tanpa bin/console / PS root) dari module ditolak core:
+            # keduanya tak memblok di sini, tapi alasannya harus jujur, bukan disamarkan.
+            if install.get("no_console") or install.get("no_psroot"):
+                res["errors"].append(
+                    "image tak punya bin/console / PS root — module tak bisa di-install, E2E tak bisa menilai perilaku")
+            else:
+                res["errors"].append(
+                    ierr or "module gagal install — E2E tak bisa menilai perilaku (Lapis 2 flashlight yang memvonis install)")
             return res
 
         fo, bo = base_urls(ps_domain, admin_path)
@@ -721,12 +734,14 @@ def _emit(result, output):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Lapis 4 — uji perilaku browser (E2E) module di Docker flashlight, per versi & browser.")
+        description="Lapis 4 — uji perilaku browser (E2E) module di Docker flashlight, per versi & browser.",
+        epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module_path", help="Path folder module PrestaShop")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
     ap.add_argument("--browsers", default=DEFAULT_BROWSERS,
                     help=f"Engine Playwright dipisah koma (default: {DEFAULT_BROWSERS}; didukung: {','.join(SUPPORTED_ENGINES)})")
-    ap.add_argument("--tag-map", default="", help="Pemetaan versi=tag dipisah koma, mis. '9.1=9.1.4-nginx'")
+    ap.add_argument("--tag-map", default="", help="Peta LENGKAP versi=tag dipisah koma (MENGGANTI default)")
+    ap.add_argument("--extra-tag-map", default="", help="Tag TAMBAHAN versi=tag (MENAMBAH di atas peta)")
     ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default="auto",
                     help="Cara menghidupkan DB+flashlight (default: auto)")
     ap.add_argument("--db-image", default=fl.DEFAULT_DB_IMAGE, help=f"Image server DB (default: {fl.DEFAULT_DB_IMAGE})")
@@ -776,7 +791,7 @@ def main():
     authored, notes = discover_scenarios(module_dir)
     scenarios = [universal_smoke()] + authored
 
-    tag_map = fl.parse_tag_map(args.tag_map)
+    tag_map = fl.parse_tag_map(args.tag_map, args.extra_tag_map)
     result = {"module": mod_name, "e2e_available": True, "status": "ran",
               "orchestrator": args.orchestrator, "browsers": requested, "browsers_available": usable,
               "headed": args.headed, "screenshot_dir": args.screenshot_dir,

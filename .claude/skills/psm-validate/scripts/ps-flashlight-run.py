@@ -61,7 +61,9 @@ DB_NAME = "prestashop"
 INNER_SH = r'''
 if ! cp -r /ps-module-src "/var/www/html/modules/$MOD_NAME" 2>&1; then echo PSM_COPY_FAIL; fi
 cd /var/www/html || echo PSM_NO_PSROOT
-if php -d memory_limit=-1 bin/console prestashop:module --no-interaction install "$MOD_NAME" 2>&1; then
+if [ ! -f bin/console ]; then
+  echo PSM_NO_CONSOLE
+elif php -d memory_limit=-1 bin/console prestashop:module --no-interaction install "$MOD_NAME" 2>&1; then
   echo PSM_INSTALL_OK
 else
   echo PSM_INSTALL_FAIL
@@ -123,23 +125,41 @@ def image_present(image_ref):
         return False
 
 
-def parse_tag_map(raw):
-    """Format: '1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx' -> dict. Kosong -> default."""
-    if not raw:
-        return dict(DEFAULT_TAG_MAP)
+def _parse_pairs(raw):
+    """'1.7.8=1.7.8.11,8.1=8.1.6-nginx' -> dict. Tanpa pasangan valid -> {}."""
     out = {}
-    for pair in raw.split(","):
+    for pair in (raw or "").split(","):
         if "=" in pair:
             k, v = pair.split("=", 1)
             out[k.strip()] = v.strip()
-    return out or dict(DEFAULT_TAG_MAP)
+    return out
+
+
+def parse_tag_map(raw, extra=None):
+    """Peta versi->tag. `raw` MENGGANTI peta default; `extra` MENAMBAH di atasnya.
+
+    Dua kanal karena dua maksud berbeda: --tag-map memasang peta lengkap (mis. dari
+    config psm_flashlight_tag_map), --extra-tag-map menambal satu-dua versi tanpa
+    menjatuhkan sisanya. Dulu hanya ada kanal pengganti, sehingga satu tag tambahan
+    membuang tag versi lain -> tag telanjang -> image tak ada -> lapis void diam-diam.
+    """
+    base = _parse_pairs(raw) or dict(DEFAULT_TAG_MAP)
+    base.update(_parse_pairs(extra))
+    return base
 
 
 def parse_install(out):
-    """Baca penanda hasil install dari output inner-script."""
+    """Baca penanda hasil install dari output inner-script.
+
+    `no_console`/`no_psroot` = kondisi INFRASTRUKTUR (image tanpa bin/console, PS root
+    tak ada): pemanggil memperlakukannya tak konklusif, bukan module gagal install.
+    Keduanya benar-benar diemit inner-script — sentinel yang dibaca tapi tak pernah
+    ditulis = jalur degrade mati, dan infra jatuh jadi vonis memblok palsu.
+    """
     if "PSM_COPY_FAIL" in out:
-        return {"ok": False, "no_console": False, "copy_fail": True}
-    return {"ok": "PSM_INSTALL_OK" in out, "no_console": "PSM_NO_CONSOLE" in out, "copy_fail": False}
+        return {"ok": False, "no_console": False, "no_psroot": False, "copy_fail": True}
+    return {"ok": "PSM_INSTALL_OK" in out, "no_console": "PSM_NO_CONSOLE" in out,
+            "no_psroot": "PSM_NO_PSROOT" in out, "copy_fail": False}
 
 
 def parse_phpstan(out):
@@ -408,6 +428,7 @@ def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_ima
             res["errors"].append("gagal menyalin module ke dalam container")
             return res
         res["install"] = {"ok": inst["ok"], "no_console": inst.get("no_console", False),
+                          "no_psroot": inst.get("no_psroot", False),
                           "log": out.split("PSM_PHPSTAN", 1)[0][-2000:]}
         res["coding_standard"] = parse_phpstan(out)
         cs = res["coding_standard"]
@@ -420,10 +441,14 @@ def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_ima
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Validasi module PrestaShop di Docker flashlight (DB-backed), per versi.")
+        description="Validasi module PrestaShop di Docker flashlight (DB-backed), per versi.",
+        epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module_path", help="Path folder module PrestaShop")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
-    ap.add_argument("--tag-map", default="", help="Pemetaan versi=tag dipisah koma, mis. '9.1=9.1.4-nginx'")
+    ap.add_argument("--tag-map", default="", help="Peta LENGKAP versi=tag dipisah koma (MENGGANTI default), "
+                                                  "mis. '1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx'")
+    ap.add_argument("--extra-tag-map", default="", help="Tag TAMBAHAN versi=tag (MENAMBAH di atas peta), "
+                                                        "mis. '9.2=9.2.0-nginx' — versi lain tak terpengaruh")
     ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default="auto",
                     help="Cara menghidupkan DB+flashlight (default: auto = compose bila ada, else manual)")
     ap.add_argument("--db-image", default=DEFAULT_DB_IMAGE, help=f"Image server DB (default: {DEFAULT_DB_IMAGE})")
@@ -452,7 +477,7 @@ def main():
         (Path(args.output).write_text(out, encoding="utf-8") if args.output else print(out))
         return 0  # bukan error: degrade terkontrol
 
-    tag_map = parse_tag_map(args.tag_map)
+    tag_map = parse_tag_map(args.tag_map, args.extra_tag_map)
     result = {"module": mod_name, "docker_available": True, "status": "ran",
               "orchestrator": args.orchestrator, "versions": {}}
     overall_pass = True

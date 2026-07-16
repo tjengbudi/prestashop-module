@@ -9,7 +9,10 @@ konklusif; lapis flashlight tak konklusif (skipped/pull-fail/timeout/no-console)
 TAK PERNAH memblok. Jalankan: uv run scripts/tests/test-ps-aggregate.py
 """
 import importlib.util
+import json
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 MOD_PATH = Path(__file__).resolve().parent.parent / "ps-aggregate.py"
@@ -95,6 +98,17 @@ def main():
     r = mod.merge_version("8.1", static, flash_nocon, None, None, TV)
     ok &= check("flashlight no_console tak memblok", r["pass"] and not r["flashlight_conclusive"])
 
+    # 5b. no_psroot (PS root absen) -> infra juga: tak konklusif, tak memblok (determinism-6)
+    flash_nopsroot = {"module": "m", "docker_available": True, "status": "ran",
+                      "versions": {"8.1": {"version": "8.1", "image": "img",
+                                           "install": {"ok": False, "no_psroot": True, "log": ""},
+                                           "coding_standard": {"available": False},
+                                           "errors": [], "pass": False}}}
+    r = mod.merge_version("8.1", static, flash_nopsroot, None, None, TV)
+    ok &= check("flashlight no_psroot -> infra, tak memblok",
+                r["pass"] and not r["flashlight_conclusive"]
+                and r["layers"]["flashlight"]["state"] == "not_conclusive")
+
     # 6. Flashlight KONKLUSIF + install ditolak -> MEMBLOK (uji nyata gagal)
     flash_fail = {"module": "m", "docker_available": True, "status": "ran",
                   "versions": {"8.1": {"version": "8.1", "image": "img",
@@ -175,6 +189,27 @@ def main():
                 len(notes_nonstr) == 1 and "bukan string" in notes_nonstr[0])
     ok &= check("_version_matches: token non-string di-coerce (tak meledak)",
                 mod._version_matches(8, "8.1") is True)
+    # REGRESI determinism-4: BENTUK container digerbang sebelum nilai field. Dulu
+    # payload salah-bentuk -> AttributeError -> exit 1 = kode vonis-gagal (file rusak
+    # terbaca "module gagal"). Sekarang pelanggaran skema bersih (exit 2).
+    ok &= check("payload list telanjang -> pelanggaran, bukan crash",
+                len(mod.validate_adversarial([{"id": "x"}], TV)) == 1)
+    ok &= check("'findings' bukan list (dict) -> pelanggaran, bukan crash",
+                len(mod.validate_adversarial({"findings": {"a": {}}}, TV)) == 1)
+    notes_str = mod.validate_adversarial({"findings": ["cuma string"]}, TV)
+    ok &= check("entri findings bertipe string -> pelanggaran, bukan crash",
+                len(notes_str) == 1 and "harus object" in notes_str[0])
+    # 'versions' skalar truthy: dulu lolos gerbang lalu TypeError saat di-iterasi
+    # -> exit 1 = kode vonis-gagal (file rusak terbaca "module gagal").
+    for bad in (8.1, True, {"a": 1}):
+        n = mod.validate_adversarial({"findings": [
+            {"id": "v", "severity": "error", "message": "x", "versions": bad}]}, TV)
+        ok &= check(f"'versions' bertipe {type(bad).__name__} -> pelanggaran, bukan crash",
+                    len(n) == 1 and "harus list" in n[0])
+    n_str = mod.validate_adversarial({"findings": [
+        {"id": "v", "severity": "error", "message": "x", "versions": "8.1"}]}, TV)
+    ok &= check("'versions' string (bukan list) -> pelanggaran (iterasi per-karakter dicegah)",
+                len(n_str) == 1 and "harus list" in n_str[0])
 
     # --- Lapis 4 (E2E) — semantik konklusif-memblok, flaky-tak-memblok ---
 
@@ -269,6 +304,36 @@ def main():
 
     # 11. e2e_layer langsung: skipped -> findings kosong
     ok &= check("e2e_layer skipped -> findings kosong", mod.e2e_layer(e2e_skip, "8.1")["findings"] == [])
+
+    # 12. Cakupan E2E disurface di vonis (enhancement-1) — lewat CLI, logikanya di main().
+    # Tanpa penanda ini, module TANPA spec authored (cuma smoke) bervonis identik dgn
+    # yang punya skenario use-case lengkap: "E2E konklusif lolos" terbaca lebih dari faktanya.
+    def _aggregate(e2e_payload, static_payload=static):
+        with tempfile.TemporaryDirectory() as td:
+            sp, ep, op = Path(td) / "s.json", Path(td) / "e.json", Path(td) / "o.json"
+            sp.write_text(json.dumps(static_payload), encoding="utf-8")
+            ep.write_text(json.dumps(e2e_payload), encoding="utf-8")
+            subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp), "--e2e", str(ep),
+                            "--versions", "8.1", "-o", str(op)], capture_output=True, text=True)
+            return json.loads(op.read_text(encoding="utf-8"))
+
+    def _e2e_ran(sources):
+        return {"module": "m", "e2e_available": True, "status": "ran",
+                "scenario_sources": sources,
+                "versions": {"8.1": {"version": "8.1", "install": {"ok": True},
+                                     "browsers": ["chromium"], "findings": [], "inconclusive": [],
+                                     "browser_notes": [], "errors": [], "pass": True}}}
+
+    smoke = _aggregate(_e2e_ran(["builtin:psm-universal-smoke"]))
+    ok &= check("E2E hanya smoke -> e2e_smoke_only True (cakupan jujur, walau lolos)",
+                smoke["pass"] is True and smoke.get("e2e_smoke_only") is True)
+    authored = _aggregate(_e2e_ran(["builtin:psm-universal-smoke", "configure.json"]))
+    ok &= check("E2E dgn spec authored -> e2e_smoke_only False",
+                authored.get("e2e_smoke_only") is False
+                and "configure.json" in authored.get("e2e_scenario_sources", []))
+    noe2e = _aggregate(e2e_skip)
+    ok &= check("E2E tak jalan -> tak ada klaim cakupan sama sekali",
+                "e2e_smoke_only" not in noe2e)
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

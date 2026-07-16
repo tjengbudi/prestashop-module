@@ -1,0 +1,211 @@
+{
+  "schema_version": 2,
+  "subject": "/home/budi/dev/prestashop-module/.claude/skills/psm-validate",
+  "generated": "2026-07-17",
+  "verdict": "Every one of the 20 prior fixes verified genuinely closed and test-backed — but the pass fixed instances rather than classes, so the same defects survive at sibling seams (expect_text still substring-matches, now yielding a silent false PASS), and the SKILL.md trim left psm_flashlight_tag_map wired to nothing.",
+  "grade": "fair",
+  "summary": "The fix pass did real work: all four determinism closures, all three enhancement closures, both customization closures and the architecture closures were independently verified against the current code, the long-standing false-pass invariants still hold by construction, and no trim cut anything load-bearing. The dominant opportunity is that each fix landed exactly at the site its finding named while the defect class survived one seam over — the structural-not-substring insight never reached expect_text, the merge-not-replace insight never reached --tag-map, and the schema-gate insight never reached --extra-rules or container shape. Compounding it, the trim orphaned psm_flashlight_tag_map (three lenses converged independently) and handed the model a per-run mtime computation that belongs in a script.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "psm_flashlight_tag_map is a dead wire, and its prose calls a replace a merge",
+      "root_cause": "Three lenses converged independently on one broken wire. The resolver emits psm_flashlight_tag_map with a populated default, but the On Activation trim removed the key's only mention and Lapis 2's config-to-flag list names four flags without --tag-map, so a config-level tag repin resolves and is discarded — invisible today only because the script's DEFAULT_TAG_MAP happens to equal the config default. Worse, the fix pass's own step-3 rewrite files --tag-map under 'tag flashlight tambahan' in the same sentence as the genuinely-additive --extra-rules, while parse_tag_map replaces the map wholesale: a model following that sentence with one KB tag drops every other version's tag, those versions fall back to a bare version token as image tag, and the image is missing -> skipped_image -> the whole flashlight layer silently voids.",
+      "finding_ids": ["customization-1", "architecture-1", "determinism-2"],
+      "action": "Add --tag-map (from psm_flashlight_tag_map) to Lapis 2's enumerated flag list, which Lapis 4 already inherits; then either give the script an --extra-tag-map that merges over DEFAULT_TAG_MAP (mirroring --extra-rules, so the flag name teaches the semantics) or state in step 3 that KB tags must be merged into the config map and the complete map passed. Do not leave a replace flag and an append flag sharing the word 'tambahan'."
+    },
+    {
+      "title": "Each fix landed at the site its finding named; the defect class survived one seam over",
+      "root_cause": "The pass treated four findings as four sites rather than four classes, and every one of them has a sibling the same reasoning covers. determinism-2's 'structural signal, not substring' hardened _bo_login and created fatal_sign_in, but expect_text still matches raw serialized HTML — reproduced: a failed save whose success banner never rendered PASSES conclusively because 'Update successful' sits in an inline translation dictionary, i.e. the fix pass converted a loud false block into a silent false pass one function away. determinism-4's schema gate validates field values but never the container, so a model writing findings as a dict or a bare list crashes with AttributeError and exit 1 — colliding with the verdict-fail code the gate's own docstring warns about. determinism-3's --extra-rules got the flag but not the gate: an unknown group name contributes zero rules silently while the prompt is forbidden to compensate. leanness-7's placeholder drift was fixed in the docstring, but argparse hardcodes a one-line description with no epilog, so the --help both SKILL.md and the quickstart cite as authoritative prints none of it.",
+      "finding_ids": ["determinism-1", "determinism-4", "determinism-5", "leanness-1"],
+      "action": "Carry each insight to its class in one pass: route expect_text through a visible-text locator (or the shared fatal_sign_in-style helper) so it reads rendered text; add a shape check at the top of validate_adversarial before the field loop; port validate_adversarial's pattern to a validate_extra_rules gate (unknown groups named, patterns compiled, exit 2); and set epilog=__doc__ with RawDescriptionHelpFormatter so both --help pointers stop lying."
+    },
+    {
+      "title": "Honest degrade — the skill's signature pattern — has holes exactly where coverage is claimed",
+      "root_cause": "The premise 'vonis tak pernah mengklaim coverage yang tak diuji' is enforced on the axes someone thought to check and absent on three others. A module with zero authored E2E specs runs only the universal smoke yet produces a verdict byte-identical to one with a dozen passing use-case scenarios (e2e state pass, conclusive true, no coverage key anywhere) — verified by running the aggregate on a smoke-only payload. The headless/CI channel gates on `pass`, which is len(blocking)==0 and blind to conclusiveness, so a Docker-less runner goes green with two of four layers never executed, and there is no status/blocked channel to distinguish 'module failed' from 'skill could not run' — which also contradicts Vonis's 'jangan tambah prosa' against Mode headless's 'ringkasan satu baris'. And flashlight's documented escape hatch is dead code: no_console reads a PSM_NO_CONSOLE sentinel that neither in-container script ever emits, so a console-less image takes the install-fail branch and blocks a healthy module as a false conclusive error.",
+      "finding_ids": ["enhancement-1", "enhancement-2", "architecture-2", "determinism-6"],
+      "action": "Extend the honest rule to the axes it misses: echo scenario coverage (e2e_smoke_only or scenario_sources) to the verdict top level and name it in Vonis's field list; make the headless return a small JSON object with status complete|blocked plus a reason, and gate CI on pass AND conclusiveness; emit PSM_NO_CONSOLE (and parse PSM_NO_PSROOT) so the infra branch the aggregate already reads becomes reachable."
+    },
+    {
+      "title": "Trim rebound: the model was handed work a script should own",
+      "root_cause": "The token trim was net-positive (2993 to 2669, headroom 7 to 331, nothing load-bearing cut), but the new resume guard added in the same pass asks the model to compute a recursive max mtime over the module tree, stat up to four layer files, parse each one's version scope and set-compare it against --versions, every single run — with no script owning any of it (grep for mtime/stale/reuse across scripts returns nothing). All three determinism-test questions land on 'script', and the failure is asymmetric: reuse a stale layer file and the verdict claims coverage over code that changed, which ps-aggregate structurally cannot detect because it trusts whatever JSON it is handed. Two small re-teach clauses landed alongside it.",
+      "finding_ids": ["determinism-3", "leanness-2"],
+      "action": "Move the freshness decision into a ps-plan-layers.py pre-pass that walks the module tree (reusing iter_files' vendor exclusion), stats the layer files, and emits reuse/rerun JSON the prompt consumes — collapsing the SKILL.md rule to one line and paying for the two re-teach trims at the same time."
+    }
+  ],
+  "strengths": [
+    "Every prior closure verified independently against the current code, not assumed: all four determinism fixes (structural _bo_login auth + retry, fatal_sign_in script-stripping incl. the unterminated-script case, --extra-rules merge, validate_adversarial exit 2), all three enhancement fixes ({browser} reaching path/url/text/value with no cross-engine contamination, BO warm-up with its return discarded so it cannot leak into errors, bounded expect_text settle), both customization fixes (zero engine names survive anywhere in SKILL.md), and architecture-2/3 (memlog init-then-append is real wiring and correctly dodges init-on-existing exit 2).",
+    "The long-standing false-pass invariants still hold by construction, re-verified rather than trusted: every errors.append path in run_one_version returns immediately, so findings!=[] implies errors==[]; per-browser launch-fail and probe-miss route to browser_notes and never to errors; verdict assembly stays wholly in ps-aggregate.py.",
+    "The trim cut nothing load-bearing — six of seven leanness closures hold, and the lens explicitly declined to cut Lapis 3's fallback checklist, the freshness rule's intent, and the memlog wiring, each of which a naive pass would have removed.",
+    "Clean deterministic floor: workflow integrity pass with 0 issues, scan-scripts 0/0/0 with all four Python scripts tested (165 asserts across 4 suites, all green), path lint 0 live findings, 0 waste patterns, 0 back-references.",
+    "The single-resolver config design remains sound and the four values added by the fix pass (SETTLE_TIMEOUT_MS, the login retry, the memlog path convention, the --extra-rules source path) were each judged correctly placed as constants or flags rather than config keys.",
+    "The Overview's hard promise (never pass a module missing ps_versions_compliancy or using forbidden PS9 dependencies) traces cleanly through severity:error in the ruleset to the aggregate's pass computation."
+  ],
+  "recommendations": [
+    { "rank": 1, "action": "Wire psm_flashlight_tag_map to --tag-map at Lapis 2 and resolve the replace-vs-merge collision in step 3 (merging --extra-tag-map, or instruct passing the complete merged map) — three lenses converged here and the fix is a flag plus a sentence.", "resolves": ["customization-1", "architecture-1", "determinism-2"] },
+    { "rank": 2, "action": "Carry each prior fix to its class: visible-text locator for expect_text (closes the silent false PASS), shape check before the field loop in validate_adversarial, a validate_extra_rules gate mirroring it, and epilog=__doc__ so the --help both pointers cite actually prints the spec format.", "resolves": ["determinism-1", "determinism-4", "determinism-5", "leanness-1"] },
+    { "rank": 3, "action": "Close honest-degrade at the three coverage axes it misses: surface smoke-only E2E coverage in the verdict and the honest rule, give the headless return status/blocked and gate CI on conclusiveness as well as pass, and emit the PSM_NO_CONSOLE sentinel the aggregate already reads.", "resolves": ["enhancement-1", "enhancement-2", "architecture-2", "determinism-6"] },
+    { "rank": 4, "action": "Move the layer-reuse freshness computation out of the prompt into a ps-plan-layers.py pre-pass, and apply the two re-teach trims to pay for it.", "resolves": ["determinism-3", "leanness-2"] },
+    { "rank": 5, "action": "Resolve a bare module name against psm_modules_dir before falling back to asking; leave the warn-tier token weight alone unless Lapis 3's fallback checklist is lifted to a reference (which reaches ~2450, not the 2000 desired).", "resolves": ["customization-2", "architecture-3"] },
+    { "rank": 6, "action": "DECISION NEEDED, do not action unasked: enhancement-3 proposes replacing the interactive scope menu with a default — but that menu is an explicit user direction recorded in the memlog (2026-07-16). The lens did not know this. Ask before touching it.", "resolves": ["enhancement-3"] }
+  ],
+  "experience": {
+    "journeys": [
+      { "name": "Interactive full validate", "steps": "Resolver config (fallback to canonical defaults if absent) -> scope selection for versions and browsers -> four layers cheap-first with per-layer JSON outputs -> ps-aggregate assembles the verdict -> model reviews key screenshots and writes the honest summary. Gap: a config tag-map override never reaches the layers." },
+      { "name": "Headless CI gate", "steps": "Module path and scope from args/config, no questions -> layers run with mandatory no-image-pull gating -> aggregate JSON + exit code + memlog assumption trail. Gap: exit gates on `pass` alone, so a runner without Docker goes green with two of four layers unrun, and there is no blocked channel." },
+      { "name": "E2E spec author", "steps": "references/e2e-quickstart.md -> author declarative tests/e2e/*.json specs with {mod}/{fo}/{bo}/{browser} placeholders -> unknown actions rejected with notes. Gap: both pointers to the authoritative spec format lead to a --help that prints nothing of it." }
+    ],
+    "headless": "Question-free and complete on inputs (scope from args/config, honest per-layer degrade, memlog assumption trail now real wiring), but the return contract is prose+paths with no status/blocked signal and a CI exit blind to conclusiveness (enhancement-2, architecture-2)."
+  },
+  "findings": [
+    {
+      "id": "customization-1",
+      "lens": "customization",
+      "severity": "high",
+      "title": "psm_flashlight_tag_map is resolved every run but reaches no flag — config override silently no-ops to the script's baked tag map",
+      "location": "SKILL.md:19 (On Activation step 1) + :29 (Lapis 2 flag list) + :33 (Lapis 4)",
+      "evidence": "The trim's premise — 'Setiap lapis menerima setelannya sebagai flag di titik pakainya' — makes dropping the key enumeration safe only if every key appears at its point of use. It holds for db_image/ps_domain/orchestrator/startup_timeout, target_versions, e2e_browsers, e2e_enabled, reports_dir; it fails for psm_flashlight_tag_map: grep of psm_* over SKILL.md returns only psm_reports_dir, psm_e2e_*, psm_target_versions, psm_flashlight_ps_domain, whereas HEAD's step 1 still named it — a regression introduced by the trim. Lapis 2's flag list omits --tag-map and Lapis 4 inherits it; the only --tag-map left (step 3, line 21) is conditional on the knowledge base existing and carries KB tags, not config tags. The scripts cannot compensate (no script reads config; they are flag-driven only), so SKILL.md is the sole bridge. ps-flashlight-run.py:426 defaults --tag-map to \"\" and parse_tag_map returns dict(DEFAULT_TAG_MAP) on empty. Net: an operator pinning 9.1=9.1.5-nginx has it resolved correctly and discarded; Layers 2 and 4 boot the script's tag and the verdict reports '9.1 pass' for a core image the operator did not configure.",
+      "recommendation": "Add --tag-map to the Lapis 2 flag list beside the four it already names, sourced from psm_flashlight_tag_map; Lapis 4 inherits it via the existing 'setelan flashlight sama seperti Lapis 2' clause. While doing it, state the precedence between config tags and step 3's knowledge-base tags — --tag-map takes one comma-separated string, so both sources cannot be passed independently and the model must emit one merged value."
+    },
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "psm_flashlight_tag_map is never wired to --tag-map, and step 3's \"tambahan\" framing collides with the flag's replace semantics",
+      "location": "SKILL.md:19 (step 1), :21 (step 3), :29 (Lapis 2), :33 (Lapis 4)",
+      "evidence": "resolve-psm-config.py:41 emits psm_flashlight_tag_map with a POPULATED default; the string appears nowhere in SKILL.md or references/, and no skill reads it. Both consumers accept the flag (ps-flashlight-run.py:426, ps-e2e-run.py:729, each default=\"\"). An org repinning tags in config gets silently ignored — parse_tag_map falls back to DEFAULT_TAG_MAP (ps-flashlight-run.py:48), which happens to equal the resolver default today, making the dead wire invisible on the default path. This is the principles' 'override silently does nothing' shape. Compounding: step 3 introduces --tag-map as the channel for 'tag flashlight tambahan' in the same sentence as --extra-rules, but the two have OPPOSITE merge semantics — --extra-rules is additive (ps-static-scan.py:173-174), while --tag-map replaces wholesale (ps-flashlight-run.py:135, 'return out or dict(DEFAULT_TAG_MAP)'). A model passing one KB tag as 'tambahan' drops every other version's tag; ps-flashlight-run.py:460 then falls back to the bare version token as the image tag, which does not resolve -> skipped_image -> silent loss of Lapis 2/4 coverage on the untouched versions.",
+      "recommendation": "Add --tag-map (from psm_flashlight_tag_map) to Lapis 2's enumerated config-to-flag list, which Lapis 4 already inherits. In step 3, state that KB tags must be MERGED into the config map and the COMPLETE map passed, because --tag-map replaces rather than appends — do not let it sit beside --extra-rules under one 'tambahan' banner while the two behave oppositely. Alternative: make the script's --tag-map additive over DEFAULT_TAG_MAP so the flag's behavior matches the word already used for it."
+    },
+    {
+      "id": "determinism-2",
+      "lens": "determinism",
+      "severity": "high",
+      "title": "--tag-map REPLACES the tag map instead of merging — the exact defect --extra-rules was created to fix, left on the sibling seam named in the same SKILL.md sentence",
+      "location": "scripts/ps-flashlight-run.py:126-135 (parse_tag_map) + SKILL.md:21 (step 3) and :29 (Lapis 2)",
+      "evidence": "SKILL.md step 3 routes KB tags with 'tag flashlight tambahan diteruskan sebagai --tag-map' — 'tambahan' means additional, i.e. the author intends merge. parse_tag_map does the opposite: any single parsed pair discards DEFAULT_TAG_MAP entirely. Reproduced: --tag-map '9.2=9.2.0-nginx' yields {'9.2': '9.2.0-nginx'}, so the three core targets fall through to bare tags — 1.7.8 -> flashlight:1.7.8 (needs 1.7.8.11), 8.1 -> flashlight:8.1 (needs 8.1.6-nginx), 9.1 -> flashlight:9.1 (needs 9.1.4-nginx). Those tags do not exist, so image_present() is False -> skipped_image -> all three versions non-conclusive: one KB tag silently voids the entire Lapis 2 layer. The same fix pass diagnosed this precise replace-vs-merge hazard for rules and added --extra-rules ('--rules MENGGANTI, ini MENAMBAH') while leaving its twin, cited one clause earlier in the same sentence, untouched.",
+      "recommendation": "(a) Add --extra-tag-map that merges over DEFAULT_TAG_MAP (out = dict(DEFAULT_TAG_MAP); out.update(parsed)), mirroring --extra-rules exactly, and point step 3's KB tags at it — the flag naming then teaches the merge/replace distinction consistently across both KB seams. (b) Close the routing gap by giving each layer script --config <resolved.json> (explicit flags win), so the config-to-flag mapping lives in one unit-tested place instead of being re-derived from an enumerated prose list that has already silently dropped a key."
+    },
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "high",
+      "title": "expect_text matches raw serialized HTML including <script> — false PASS, the exact hazard fatal_sign_in was just hardened against",
+      "location": "scripts/ps-e2e-run.py:329-331 (run_steps, action expect_text)",
+      "evidence": "present = txt in (page.content() or \"\") — a substring match over the full serialization. determinism-2's fix added fatal_sign_in() specifically because, in this file's own words, 'halaman PS sehat meng-embed kamus terjemahan/JSON di inline script yang bisa memuat frasa ini'. That admission applies identically to expect_text, which never got the helper. Reproduced: on a page whose success banner never rendered (visible markup shows only <div class=\"alert-danger\">Terjadi kegagalan</div>) but whose head contains <script>var trans={\"msg\":\"Update successful\"};</script>, expect_text 'successful' returns ok=True, conclusive=True — a conclusive PASS on a failed save, while fatal_sign_in on the analogous input correctly returns None. The docstring's canonical authored example is exactly this shape. The fix pass touched this very function to add a wait_for_load_state settle ('anti false-fail timing'), raising trust in it while leaving the worse false-PASS open.",
+      "recommendation": "Apply the structural principle the _bo_login fix established (locator count, not substring-in-HTML): use Playwright's visible-text locator — page.get_by_text(txt).count() > 0 — so the assertion reads rendered text, adding get_by_text to FakePage to keep the duck-type contract. Minimum viable alternative: route expect_text through the existing fatal_sign_in-style helper so both share one definition of 'visible markup'. Note the asymmetry: expect_no_fatal's leak caused false blocks (loud); expect_text's causes false passes (silent) in a skill whose stated premise is never claiming untested coverage."
+    },
+    {
+      "id": "determinism-3",
+      "lens": "determinism",
+      "severity": "high",
+      "title": "NEW prompt-side leak: layer-reuse freshness rule makes the model stat mtimes and diff version scopes on every invocation",
+      "location": "SKILL.md:25 (Validate, opening paragraph) — added by this fix pass",
+      "evidence": "'Pakai ulang file lapis hanya bila lebih baru dari modifikasi terakhir module dan cakupan versinya sama; selain itu jalankan ulang lapisnya.' The diff confirms this clause is new in the fix pass. It asks the model to, every run: compute a recursive max mtime over the module tree, stat up to four layer files, compare timestamps, parse each layer file's version scope, set-compare it against the requested --versions, then decide reuse-or-rerun. grep of mtime|st_mtime|getmtime|stale|reuse across scripts/ returns nothing — no script owns any of it. All three determinism-test questions land on 'script'. Failure modes are asymmetric and expensive: reuse a stale flashlight/e2e file and the verdict claims coverage over code that changed — a false pass ps-aggregate structurally cannot detect, since it trusts whatever JSON it is handed — while a wrongly-conservative rerun costs a multi-GB Docker boot per version.",
+      "recommendation": "Apply the pre-pass JSON pattern: add scripts/ps-plan-layers.py --module <path> --reports-dir <dir> --versions <t> that walks the module tree (excluding vendor/, as iter_files already does), stats the existing layer files, and emits compact JSON the prompt consumes instead of stat'ing by hand. SKILL.md then collapses to one line: run the pre-pass, run the layers it marks reuse:false."
+    },
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "high",
+      "title": "Both pointers send the model to a --help that never prints the E2E spec format",
+      "location": "SKILL.md:33 (Lapis 4) + references/e2e-quickstart.md:104, against scripts/ps-e2e-run.py:723-724",
+      "evidence": "Prior leanness-7 fixed the drift in the wrong artifact. The module docstring is now correct, but the parser is built as ArgumentParser(description=\"Lapis 4 — uji perilaku browser (E2E) module di Docker flashlight, per versi & browser.\"): a hardcoded one-liner, no epilog, __doc__ unused. Running --help prints the option list and zero spec-format content (verified). Meanwhile SKILL.md Lapis 4 says 'lihat --help untuk format spec' and the quickstart closes its spec table with 'Rujukan otoritatif: uv run scripts/ps-e2e-run.py --help' — so when the quickstart table and reality disagree, the model is explicitly told to trust the silent source. A model authoring tests/e2e/*.json that follows either pointer gets nothing and must guess the schema; a guessed-wrong spec is 'dilewati dengan catatan, bukan crash', so the scenario is silently dropped and the E2E layer reads green on less coverage than believed. Not critical only because the correct table is one hop away in the quickstart, which Lapis 4 also points to.",
+      "recommendation": "One line in the script closes the drift class permanently: ArgumentParser(description=..., epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter). Both pointers become true, the docstring stays the single source, and the quickstart table degrades to a convenience copy that can no longer lie."
+    },
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Add: honest-degrade not applied to E2E authored-scenario coverage",
+      "location": "scripts/ps-aggregate.py:296-319 + SKILL.md:39 (Vonis dan output)",
+      "evidence": "The skill's signature pattern is honest degradation ('vonis tak pernah mengklaim coverage yang tak diuji'), applied at every axis but one. A module with no tests/e2e/*.json runs only universal_smoke() — 'shop tak rusak dengan module aktif' — and produces a verdict byte-identical to a module with a dozen passing authored use-case scenarios. Verified by running ps-aggregate.py on a smoke-only e2e payload: e2e {state:\"pass\", conclusive:true, errors:0}, e2e_conclusive:true, and no scenario/coverage key anywhere in the output. ps-e2e-run.py already computes scenario_sources, and the aggregate deliberately echoes the broken-spec case to top level with the comment 'jangan biarkan uji authored diam-diam absen' — yet the zero-spec case, the common case for a module that never had E2E written, sails through as a clean conclusive pass. Both named consumers read 'Lapis 4 lolos, konklusif' as module behavior verified.",
+      "recommendation": "Echo the coverage fact into the verdict and name it in the honest rule. In ps-aggregate.py, carry scenario_sources to top level beside the existing e2e_scenario_notes, or derive e2e_smoke_only:true when the only source is builtin:psm-universal-smoke. In SKILL.md:39 extend the honest rule's field list by ~6 tokens so the model must say 'Lapis 4 hanya smoke: shop tak rusak, perilaku module tak teruji'."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Headless return has no blocked-signalling channel, and its one-line summary contradicts Vonis's \"jangan tambah prosa\"",
+      "location": "SKILL.md:43 (Mode headless), against :20 (step 2) and :39 (Vonis dan output)",
+      "evidence": "The principles' headless contract requires status = complete|blocked, and on blocked a one-line reason plus the memlog path. Mode headless returns 'ringkasan satu baris + path JSON + path memlog' — the memlog path is correctly returned (prior closure holds), but there is no status field, and ps-aggregate.py emits none either. Step 2 resolves an ambiguous module-path by 'bila ambigu, tanyakan', but headless is told to skip questions with no counterpart when args/context do not carry one. Lapis 1 is the only mandatory layer and ps-aggregate.py:254 has --static required=True, so a failed Lapis 1 yields no aggregate JSON and therefore no pass — yet the section closes 'Cocok sebagai gerbang CI: exit berdasarkan pass keseluruhan'. A workflow caller cannot distinguish 'module failed validation' from 'skill could not run'. Secondary: Vonis ends 'JSON itu cukup — jangan tambah prosa' while Mode headless directs a 'ringkasan satu baris' — a prose line.",
+      "recommendation": "Make the headless return a small JSON object rather than prose+paths: status (complete|blocked), the report path, and the memlog path; on blocked add a one-line reason. Define the blocked trigger explicitly — unresolvable module-path (psm_modules_dir is available as a resolution channel before blocking) or a Lapis 1 that could not produce static.json. That resolves the Vonis/headless tension in the same edit."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add: honest-degrade absent from the headless/CI return contract",
+      "location": "SKILL.md:43 (Mode headless)",
+      "evidence": "The honesty rule is bound to the human channel only. Vonis mandates 'Untuk Budi ... yang tak konklusif ... wajib disebut eksplisit', but Mode headless reduces the machine channel to 'ringkasan satu baris + path JSON + path memlog ... Cocok sebagai gerbang CI: exit berdasarkan pass keseluruhan'. pass is computed as len(blocking)==0 (ps-aggregate.py:239) and is blind to conclusiveness — verified by running the aggregate with --static only: pass:true, exit 0, layers_run {static:true, flashlight:false, adversarial:false, e2e:false}. A CI gate wired exactly as the skill prescribes goes green on a Docker-less runner where two of four layers never executed: the verdict claiming coverage it never tested, in the only channel CI reads.",
+      "recommendation": "Have the one-line summary name conclusiveness (flashlight_conclusive/e2e_conclusive/layers_run); return status complete|blocked with a reason on blocked; and change the CI clause to gate on pass AND conclusiveness — 'lapis yang tak jalan bukan lolos'. Roughly token-neutral against the sentence it replaces."
+    },
+    {
+      "id": "determinism-4",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "validate_adversarial gates field values but not container shape — malformed model output crashes as exit 1, colliding with the verdict-fail code",
+      "location": "scripts/ps-aggregate.py:198-199 (validate_adversarial) and :326 (main return)",
+      "evidence": "The loop assumes findings is a list of dicts — the one shape it never checks, at the one seam where a model writes structured data. Reproduced on three plausible model outputs, all uncaught: {\"findings\": {\"a\": {...}}} (dict instead of list -> enumerate yields keys), a bare list at top level, and {\"findings\": [\"just a string\"]} all die at ps-aggregate.py:199 with AttributeError: 'str' object has no attribute 'get' and exit 1. main() returns 0 if overall_pass else 1, so exit 1 IS the verdict-fail code, while SKILL.md:37 promises 'Exit 2 = file adversarial melanggar skema ... jangan tafsirkan sebagai vonis' and Mode headless makes it load-bearing. So a malformed adversarial file fails a CI build as though the module were broken — precisely the collision the fix pass called out in _version_matches' own docstring and then guarded only against non-string version tokens.",
+      "recommendation": "Add a shape check at the top of validate_adversarial, returning violations through the existing exit-2 channel: reject a non-dict payload, a non-list findings, and any non-dict entry, before the per-field loop (~5 lines). The existing tests hand-feed only well-shaped payloads, so add the three reproduced shapes as cases."
+    },
+    {
+      "id": "determinism-5",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "--extra-rules merges authored JSON with no schema gate — unknown groups silently dropped, malformed rule crashes as exit 1",
+      "location": "scripts/ps-static-scan.py:167-174 (--extra-rules merge) and :68-69 (scan_pattern_rule)",
+      "evidence": "The merge takes whatever it is handed, unvalidated. Two reproduced failures. (1) Silent drop: an extra-rules file using a group name outside RULE_GROUPS (custom_rules, or a near-miss like removed_hook) contributes 0 findings with no warning on stdout or stderr — the KB augmentation silently does nothing, and SKILL.md:21 forbids the model from compensating ('jangan terapkan aturan dengan tangan'), so a known-bad pattern goes unchecked while the verdict reads clean. (2) Exit-code collision: a rule missing pattern dies at re.compile(rule[\"pattern\"]) with KeyError and exit 1 — which for this script means 'module has errors'. This is a model-to-script seam: SKILL.md:21 has the model read prose KB and emit strict ps-rules.json-schema JSON. The same fix pass built validate_adversarial for exactly this hazard class at the other authored-input seam; --extra-rules got the flag but not the gate.",
+      "recommendation": "Add validate_extra_rules(extra) mirroring validate_adversarial: reject group keys not in RULE_GROUPS (naming them, so a typo surfaces instead of vanishing), require id/severity/kind/message, require pattern for kinds outside structure|compliancy and a recognized expect for those inside, and verify each pattern compiles. Exit 2 before any scanning, keeping exit 2 = fix your input and exit 1 = module has errors clean across both seams. assets/ps-rules.json _meta.schema already spells out the required fields."
+    },
+    {
+      "id": "determinism-6",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Honest-degrade broken in flashlight: the no_console non-conclusive branch reads a sentinel nothing emits, so an infra failure blocks as a module defect",
+      "location": "scripts/ps-flashlight-run.py:142 (parse_install) + :61-94 (INNER_SH) -> scripts/ps-aggregate.py:79-83 (flashlight_layer)",
+      "evidence": "parse_install returns \"no_console\": \"PSM_NO_CONSOLE\" in out, and ps-aggregate.py:79 acts on it (-> not_conclusive, non-blocking). But PSM_NO_CONSOLE is never echoed: the only sentinels either in-container script emits are PSM_COPY_FAIL, PSM_INSTALL_OK, PSM_INSTALL_FAIL, PSM_NO_PSROOT, PSM_PHPSTAN_*. So no_console is structurally always False and flashlight_layer's documented escape hatch is dead code. An image without bin/console instead takes the else branch to PSM_INSTALL_FAIL, and with errors==[] flashlight_layer goes conclusive and emits 'modul gagal install di core asli' at severity error: an infra condition producing a false blocking verdict against a healthy module, which the model is explicitly forbidden to correct. The mirror defect sits beside it: 'cd /var/www/html || echo PSM_NO_PSROOT' emits a sentinel nothing parses. test-ps-aggregate.py:92 hand-feeds \"no_console\": True and passes — a green test guarding a branch the producer cannot reach. Trigger probability is low (stock images ship bin/console), reachable via a custom image through --tag-map.",
+      "recommendation": "Emit the sentinel the consumer already reads — in both INNER_SH and INSTALL_SH, gate the install on console presence: if [ ! -f bin/console ]; then echo PSM_NO_CONSOLE; else <existing install if/else>; fi. Then parse PSM_NO_PSROOT as a second infra flag and append it to flashlight_layer's infra list, so both infra conditions degrade honestly instead of blocking. Add a parse_install test asserting no_console on real INNER_SH output rather than a hand-fed literal."
+    },
+    {
+      "id": "enhancement-3",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Remove: opportunity — the interactive scope menu offers what the verdict apologizes for",
+      "location": "SKILL.md:20 (On Activation, step 2)",
+      "evidence": "Pre-work elicitation gate presenting a menu whose default is already correct on both axes. Every interactive run pays a round-trip to 'tawarkan cakupan uji — versi ... (default semua), browser ... (default semua yang terkonfigurasi)' before any layer runs — while the Overview states the product IS all three versions at once ('sehat di PrestaShop 1.7.x, 8.x, dan 9.x sekaligus') and the honest rule at :39 treats narrowed scope as a degradation to confess. The skill leads with a menu offering the very thing its verdict apologizes for, inverting the 'A default, not a menu' rule. The headless path already does it right: take scope from args/context, run what is available. NOTE FROM THE PARENT: this menu is an explicit user direction recorded in the memlog (direction by user, 2026-07-16) — the lens did not have that context. Do not action without asking the user.",
+      "recommendation": "Replace the offer with a default plus an escape hatch: 'cakupan dari permintaan user bila disebut (versi/browser); selain itu semua psm_target_versions & psm_e2e_browsers — sebut cakupan yang dipakai sebelum lapis mahal jalan.' Lost: discoverability that narrowing exists, and an implicit cost heads-up before a multi-boot run; both small, since a user wanting speed says so and the expensive first-run keeps its own --allow-image-pull gate. PARENT NOTE: user-directed feature — requires the user's decision, not a fix pass."
+    },
+    {
+      "id": "leanness-2",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Fix pass reintroduced two re-teach clauses",
+      "location": "SKILL.md:20 (On Activation step 2) and SKILL.md:31 (Lapis 3)",
+      "evidence": "(a) Step 2: '(satu/subset/semua)' appears twice, re-teaching what offering a choice from a list means, and the closing clause restates flag names already shown in the Lapis 1/2/4 invocations. (b) Lapis 3: 'versi target (token yang sama dengan --versions, termasuk saat cakupan dipersempit)' — 'token yang sama dengan --versions' is vacuous on the input side (you are handing the subagent those very tokens), and the identical phrase reappears ~30 words later on the returned versions field, where it does real work. I cannot name a dimension on which either elaborate version beats its trim. Both trims deliberately keep the load-bearing bits: 'default semua' (a model economizing to one version would silently narrow the gate's coverage), the uniform-across-layers propagation, and 'termasuk saat cakupan dipersempit'.",
+      "recommendation": "Apply the two trims below, or route to variant eval for a cut-or-keep verdict on the record.",
+      "proposed_smallest": "(a) SKILL.md:20 -> \"Interaktif: sebelum lapis jalan, tawarkan cakupan uji — versi dari `psm_target_versions`, browser Lapis 4 dari `psm_e2e_browsers`; default semua yang terkonfigurasi, dan pilihan itu dipakai seragam di semua lapis.\"  (b) SKILL.md:31 -> \"beri path module, versi target (juga saat cakupan dipersempit), checklist ...\" (rest unchanged).",
+      "predicted_delta": "Nothing. ~30 tokens off a SKILL.md sitting 669 over the 2000 desired budget; no branch, flag, default, or output shape changes. Route to variant eval to confirm."
+    },
+    {
+      "id": "architecture-3",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "SKILL.md still in the warn tier at 2669 tokens (desired 2000)",
+      "location": "SKILL.md",
+      "evidence": "2669 tiktoken tokens against the org's desired 2000 / hard 3000 — between desired and budget, so the principles prescribe a warn naming the section most worth lifting, explicitly not a block. The fix pass's trim closed most of the prior run's risk: 2993 -> 2669, headroom to hard budget 7 -> 331. The tier is unchanged, so the finding persists in narrowed form rather than closing. By relative weight, ## Validate is the dominant section at roughly 43% of the body and about 2.6x the next-largest (Vonis), and its longest single paragraph is Lapis 3 — whose inline fallback content (four core lenses plus the findings return schema) is subagent briefing text every invocation pays for, and which is literally the else-branch of an existing route to adversarial-checks.md.",
+      "recommendation": "No action required at this tier; if trimmed opportunistically, lift Lapis 3's fallback lens list and findings schema to references/adversarial-lens.md and have the reviewer subagent read it directly, making both branches of the existing checklist route symmetric. Be honest that this alone lands near ~2450 and does not reach desired 2000 — the remaining weight is the Lapis 1-4 routing that is the workflow itself and should stay inline."
+    },
+    {
+      "id": "customization-2",
+      "lens": "customization",
+      "severity": "low",
+      "title": "psm_modules_dir arrives resolved and unread; ambiguous module names cost a human round-trip the key would settle",
+      "location": "SKILL.md:20 (On Activation step 2)",
+      "evidence": "The resolver emits all _PSM_KEYS unconditionally (resolve-psm-config.py:104-106), so psm-validate receives psm_modules_dir (default {project-root}/modules) on every run and never reads it. Step 2 instead says 'Tentukan module yang divalidasi (path folder) dari permintaan user; bila ambigu, tanyakan.' The sibling that creates the modules does consume it at its point of use — psm-scaffold/SKILL.md:25 runs ps-scaffold.py <nama> --dest <psm_modules_dir> — and psm-validate is the quality gate psm-scaffold hands off to. So a module scaffolded into psm_modules_dir is validated by a skill that has the folder in hand but asks the human where it is. Low, not higher: the ask-when-ambiguous fallback is honest rather than broken, headless takes the path from arguments, and an operator usually passes a path outright — a wasted round-trip, not a wrong verdict.",
+      "recommendation": "One clause in step 2: resolve a bare module name against psm_modules_dir before falling back to asking — 'nama telanjang di-resolve terhadap psm_modules_dir; bila tetap ambigu, tanyakan.' Keep the ask as the fallback. If instead the family's intent is that psm_modules_dir belongs to psm-scaffold alone, record that in the memlog so the next scan does not re-raise it."
+    }
+  ]
+}

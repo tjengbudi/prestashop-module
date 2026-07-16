@@ -40,11 +40,33 @@ def main():
     ok &= check("default tag-map punya 1.7.8/8.1/9.1",
                 all(k in mod.DEFAULT_TAG_MAP for k in ("1.7.8", "8.1", "9.1")))
 
+    # --- extra tag-map MENAMBAH (kanal terpisah dari --tag-map yang MENGGANTI) ---
+    # Dulu satu-satunya kanal mengganti peta: satu tag "tambahan" menjatuhkan tag versi
+    # lain -> tag telanjang -> image tak ada -> SELURUH Lapis 2 void diam-diam.
+    ok &= check("extra tag-map: versi baru masuk, default lain UTUH",
+                mod.parse_tag_map("", "9.2=9.2.0-nginx") == {**mod.DEFAULT_TAG_MAP, "9.2": "9.2.0-nginx"})
+    ok &= check("extra tag-map menimpa base utk versi sama",
+                mod.parse_tag_map("9.1=a", "9.1=b") == {"9.1": "b"})
+    ok &= check("extra tag-map di atas peta pengganti (base tetap yang diganti)",
+                mod.parse_tag_map("9.1=a", "9.2=c") == {"9.1": "a", "9.2": "c"})
+    ok &= check("extra kosong -> peta tak berubah", mod.parse_tag_map("", "") == mod.DEFAULT_TAG_MAP)
+
     # --- parse_install ---
     ok &= check("install OK", mod.parse_install("...PSM_INSTALL_OK...")["ok"] is True)
     ok &= check("install FAIL", mod.parse_install("...PSM_INSTALL_FAIL...")["ok"] is False)
     ci = mod.parse_install("PSM_COPY_FAIL")
     ok &= check("copy fail -> copy_fail True & ok False", ci["copy_fail"] is True and ci["ok"] is False)
+
+    # --- sentinel infra: dibaca aggregate HARUS benar-benar diemit inner-script ---
+    # (dulu no_console dibaca tapi tak pernah ditulis -> jalur degrade mati -> image
+    #  tanpa bin/console jatuh ke PSM_INSTALL_FAIL = vonis memblok palsu)
+    ok &= check("no_console terbaca dari sentinel", mod.parse_install("PSM_NO_CONSOLE")["no_console"] is True)
+    ok &= check("no_psroot terbaca dari sentinel", mod.parse_install("PSM_NO_PSROOT")["no_psroot"] is True)
+    ok &= check("install OK -> bukan infra", mod.parse_install("PSM_INSTALL_OK")["no_console"] is False)
+    ok &= check("INNER_SH benar-benar mengemit PSM_NO_CONSOLE (produsen == konsumen)",
+                "echo PSM_NO_CONSOLE" in mod.INNER_SH)
+    ok &= check("INNER_SH menggerbang install pada bin/console (bukan install-fail palsu)",
+                "[ ! -f bin/console ]" in mod.INNER_SH)
 
     # --- parse_phpstan: neon MILIK MODULE (GEN=0) -> konklusif (errors nyata) ---
     conc = mod.parse_phpstan(f"PSM_PHPSTAN_GEN=0\nPSM_PHPSTAN_JSON_START {PHPSTAN_JSON} PSM_PHPSTAN_JSON_END")

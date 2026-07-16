@@ -91,7 +91,7 @@ Satu file = satu skenario `{ "name", "steps":[...] }`. Aksi yang didukung:
 | `goto` | `area` (`fo`\|`bo`), `path` atau `url` | navigasi; area `bo` konklusif hanya bila login admin sukses |
 | `expect_no_fatal` | — | halaman tanpa PHP fatal / white-screen / HTTP ≥ 500 |
 | `expect_visible` | `selector` | elemen tampak |
-| `expect_text` | `text` | teks ada di halaman (skrip menunggu `load` settle dulu — anti false-fail pasca submit/redirect) |
+| `expect_text` | `text` | teks TERLIHAT di halaman — locator teks ter-render, bukan substring HTML (teks yang cuma ada di `<script>`/atribut tak dihitung); skrip menunggu `load` settle dulu |
 | `click` | `selector` | klik |
 | `click_optional` | `selector` | klik bila elemen ada, lewati tanpa gagal bila tidak (interstitial yang muncul hanya di sebagian versi, mis. "Invalid security token" BO 1.7/8) |
 | `fill` | `selector`, `value` | isi field |

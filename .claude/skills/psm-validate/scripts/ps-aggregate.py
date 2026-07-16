@@ -78,6 +78,8 @@ def flashlight_layer(flash, full_ver):
     install = v.get("install") or {}
     if install.get("no_console"):
         infra.append("PrestaShop console tak ada di image — install tak bisa diuji")
+    if install.get("no_psroot"):
+        infra.append("PS root tak ada di image — install tak bisa diuji")
     if infra:
         return {"state": "not_conclusive", "conclusive": False, "errors": 0,
                 "reason": "; ".join(infra), "findings": []}
@@ -195,12 +197,29 @@ def validate_adversarial(adversarial, target_versions):
     notes = []
     if adversarial is None:
         return notes
-    for i, f in enumerate(adversarial.get("findings", [])):
+    # BENTUK dulu, baru nilai field: payload salah-bentuk (list telanjang, findings
+    # dict, entri string) dulu meledak AttributeError -> exit 1 = kode vonis-gagal,
+    # jadi file rusak terbaca "module gagal". Bentuk salah = pelanggaran skema (exit 2).
+    if not isinstance(adversarial, dict):
+        return ["payload bukan JSON object — bentuk: {\"findings\": [ {...} ]}"]
+    findings = adversarial.get("findings", [])
+    if not isinstance(findings, list):
+        return [f"'findings' bertipe {type(findings).__name__}, harus list"]
+    for i, f in enumerate(findings):
+        if not isinstance(f, dict):
+            notes.append(f"finding[{i}]: bertipe {type(f).__name__}, harus object")
+            continue
         fid = f.get("id", f"finding[{i}]")
         sev = f.get("severity")
         if sev not in ("error", "warning"):
             notes.append(f"{fid}: severity '{sev}' di luar enum error|warning — tak akan pernah memblok")
-        for e in (f.get("versions") or []):
+        vers = f.get("versions")
+        if vers is not None and not isinstance(vers, list):
+            # Skalar truthy (8.1, true) tak bisa di-iterasi -> TypeError -> exit 1 =
+            # kode vonis-gagal. String pun salah: iterasinya per-karakter.
+            notes.append(f"{fid}: 'versions' bertipe {type(vers).__name__}, harus list of string")
+            continue
+        for e in (vers or []):
             if not isinstance(e, str):
                 notes.append(f"{fid}: token versi {e!r} bukan string — tulis sebagai teks (\"8.1\")")
                 continue
@@ -250,7 +269,8 @@ def merge_version(full_ver, static, flash, adversarial, e2e, target_versions):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Satukan empat lapis validasi jadi vonis terstruktur.")
+    ap = argparse.ArgumentParser(description="Satukan empat lapis validasi jadi vonis terstruktur.",
+                                 epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--static", required=True, help="JSON output ps-static-scan.py")
     ap.add_argument("--flashlight", help="JSON output ps-flashlight-run.py (opsional bila dilewati)")
     ap.add_argument("--adversarial", help="JSON temuan adversarial buatan model (opsional)")
@@ -312,6 +332,13 @@ def main():
     e2e_scenario_notes = (e2e or {}).get("scenario_notes") or []
     if e2e_scenario_notes:
         result["e2e_scenario_notes"] = e2e_scenario_notes
+    # Cakupan E2E: tanpa spec authored, Lapis 4 hanya membuktikan "shop tak rusak" —
+    # BUKAN perilaku module. Tanpa penanda ini vonisnya identik dgn module yang punya
+    # skenario use-case lengkap, jadi "E2E konklusif lolos" terbaca lebih dari faktanya.
+    e2e_sources = (e2e or {}).get("scenario_sources") or []
+    if e2e_ran:
+        result["e2e_scenario_sources"] = e2e_sources
+        result["e2e_smoke_only"] = all(s.startswith("builtin:") for s in e2e_sources)
     # Folder screenshot E2E di-echo agar path artefak visual ('cek web asli') sampai ke laporan
     # gabungan — supaya render bisa ditinjau, bukan cuma diproduksi lalu terlupakan.
     e2e_shot_dir = (e2e or {}).get("screenshot_dir")

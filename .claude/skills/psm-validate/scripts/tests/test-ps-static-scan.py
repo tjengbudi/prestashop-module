@@ -7,6 +7,7 @@
 Jalankan: uv run scripts/tests/test_ps_static_scan.py
 Exit 0 = semua lolos, 1 = ada yang gagal.
 """
+import importlib.util
 import json
 import subprocess
 import sys
@@ -14,6 +15,11 @@ import tempfile
 from pathlib import Path
 
 SCAN = Path(__file__).resolve().parent.parent / "ps-static-scan.py"
+_spec = importlib.util.spec_from_file_location("ps_static_scan", SCAN)
+assert _spec and _spec.loader
+_scan_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_scan_mod)
+mod_validate = _scan_mod.validate_extra_rules
 
 GOOD_MAIN = '''<?php
 class GoodMod extends Module {
@@ -147,6 +153,80 @@ def main():
         res, rc = run_scan(xmod, "8.1")
         ok &= check("tanpa --extra-rules: aturan tambahan tak aktif (default utuh)",
                     "xtra-marker" not in [f["id"] for f in res["versions"]["8.1"]["findings"]] and rc == 0)
+
+        # 7c. Gerbang skema --extra-rules: pelanggaran = exit 2 (input rusak), BUKAN
+        # exit 1 (kode "module punya error") dan BUKAN drop senyap.
+        def run_raw(module_dir, versions, extra_args):
+            return subprocess.run(["uv", "run", str(SCAN), str(module_dir), "--versions", versions,
+                                   *extra_args], capture_output=True, text=True)
+
+        badgrp = tmp / "bad-group.json"
+        badgrp.write_text(json.dumps({"custom_rules": [
+            {"id": "x", "severity": "error", "kind": "function", "affects": ["8"],
+             "pattern": "x", "message": "m"}]}))
+        p = run_raw(xmod, "8.1", ["--extra-rules", str(badgrp)])
+        ok &= check("extra-rules grup tak dikenal -> exit 2 & disebut (bukan drop senyap)",
+                    p.returncode == 2 and "custom_rules" in p.stderr)
+        nopat = tmp / "no-pattern.json"
+        nopat.write_text(json.dumps({"forbidden_functions": [
+            {"id": "np", "severity": "error", "kind": "function", "affects": ["8"], "message": "m"}]}))
+        p = run_raw(xmod, "8.1", ["--extra-rules", str(nopat)])
+        ok &= check("extra-rules rule tanpa pattern -> exit 2 (bukan KeyError exit 1)",
+                    p.returncode == 2 and "pattern" in p.stderr)
+        badre = tmp / "bad-regex.json"
+        badre.write_text(json.dumps({"forbidden_functions": [
+            {"id": "br", "severity": "error", "kind": "function", "affects": ["8"],
+             "pattern": "(unclosed", "message": "m"}]}))
+        p = run_raw(xmod, "8.1", ["--extra-rules", str(badre)])
+        ok &= check("extra-rules regex tak valid -> exit 2", p.returncode == 2)
+        badsev = tmp / "bad-sev.json"
+        badsev.write_text(json.dumps({"forbidden_functions": [
+            {"id": "bs", "severity": "critical", "kind": "function", "affects": ["8"],
+             "pattern": "x", "message": "m"}]}))
+        p = run_raw(xmod, "8.1", ["--extra-rules", str(badsev)])
+        ok &= check("extra-rules severity di luar enum -> exit 2", p.returncode == 2)
+        ok &= check("extra-rules sehat -> lolos gerbang (tanpa pelanggaran)",
+                    mod_validate({"forbidden_functions": [
+                        {"id": "good", "severity": "error", "kind": "function", "affects": ["8"],
+                         "pattern": r"\bfoo\(", "message": "m"}]}) == [])
+        ok &= check("extra-rules struktural: expect tak dikenal -> pelanggaran",
+                    len(mod_validate({"structure": [
+                        {"id": "s", "severity": "error", "kind": "structure", "affects": ["8"],
+                         "expect": "ngawur", "message": "m"}]})) == 1)
+
+        # REGRESI: gerbang harus menjaga TIPE tiap field yang disentuh kode pindai,
+        # bukan cuma keberadaannya. Empat bentuk di bawah dulu LOLOS gerbang lalu
+        # meledak (KeyError/TypeError/re.error) -> exit 1 = kode "module punya error".
+        def _one(rule, grp="forbidden_functions"):
+            return mod_validate({grp: [rule]})
+
+        base = {"id": "r", "severity": "error", "kind": "function", "affects": ["8"], "message": "m"}
+        ok &= check("struktural expect=present TANPA pattern -> pelanggaran (dulu KeyError saat scan)",
+                    len(_one({**base, "kind": "compliancy", "expect": "present"}, "structure")) == 1)
+        ok &= check("struktural expect non-present tanpa pattern -> LOLOS (pattern memang tak dipakai)",
+                    _one({**base, "kind": "structure", "expect": "index_php_each_dir"}, "structure") == [])
+        ok &= check("pattern non-string -> pelanggaran (dulu TypeError DI DALAM validator)",
+                    len(_one({**base, "pattern": 123})) == 1)
+        ok &= check("negate_pattern regex rusak -> pelanggaran (dulu tak divalidasi sama sekali)",
+                    len(_one({**base, "pattern": "x", "negate_pattern": "("})) == 1)
+        ok &= check("negate_pattern non-string -> pelanggaran",
+                    len(_one({**base, "pattern": "x", "negate_pattern": 5})) == 1)
+        ok &= check("affects bukan list -> pelanggaran (dulu TypeError di loop scan)",
+                    len(_one({**base, "pattern": "x", "affects": 9})) == 1)
+        ok &= check("files bukan list -> pelanggaran",
+                    len(_one({**base, "pattern": "x", "files": "*.php"})) == 1)
+
+        # ...dan benar-benar tak crash lewat CLI (exit 2, bukan traceback exit 1)
+        for name, rule in (("nopattern-struct", {**base, "kind": "compliancy", "expect": "present"}),
+                           ("pattern-int", {**base, "pattern": 123}),
+                           ("negate-broken", {**base, "pattern": "x", "negate_pattern": "("}),
+                           ("affects-int", {**base, "pattern": "x", "affects": 9})):
+            f = tmp / f"{name}.json"
+            grp = "structure" if "struct" in name else "forbidden_functions"
+            f.write_text(json.dumps({grp: [rule]}))
+            p = run_raw(xmod, "8.1", ["--extra-rules", str(f)])
+            ok &= check(f"CLI {name} -> exit 2 bersih (bukan crash exit 1)",
+                        p.returncode == 2 and "Traceback" not in p.stderr)
 
     # 8. Kontrak authoring ruleset: pattern/expect konsisten dgn kind (rule salah-tulis
     #    ketahuan di test, bukan KeyError saat scan)

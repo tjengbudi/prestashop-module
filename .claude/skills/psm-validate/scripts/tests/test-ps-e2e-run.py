@@ -10,6 +10,7 @@ page-tiruan (duck-typed). Jalankan: uv run scripts/tests/test-ps-e2e-run.py
 """
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -49,6 +50,18 @@ class _Loc:
         return self._n
 
 
+class _TextLoc:
+    """Locator teks TERLIHAT: cocokkan hanya markup di luar <script> — meniru
+    get_by_text Playwright yang membaca teks ter-render, bukan HTML mentah."""
+    def __init__(self, html, txt):
+        visible = re.sub(r"<script\b.*?</script>", "", html or "", flags=re.I | re.S)
+        visible = re.sub(r"<[^>]+>", " ", visible)
+        self._n = 1 if txt and txt in visible else 0
+
+    def count(self):
+        return self._n
+
+
 class FakePage:
     def __init__(self, *, status=200, html="<html><body>halaman ok</body></html>",
                  visible=True, raise_on=None, loc_count=1, url_after_click=None):
@@ -60,6 +73,10 @@ class FakePage:
         self._url_after_click = url_after_click
         self.url = ""
         self.log = []
+
+    def get_by_text(self, txt):
+        self.log.append(("get_by_text", txt))
+        return _TextLoc(self._html, txt)
 
     def set_default_timeout(self, t):
         pass
@@ -152,6 +169,15 @@ def main():
     ok &= check("DEFAULT_NAV_TIMEOUT_S = 60 (anti false-positive 'halaman rusak' saat cold start)",
                 mod.DEFAULT_NAV_TIMEOUT_S == 60)
 
+    # --- tag-map: --extra-tag-map MENAMBAH (mirror --extra-rules), --tag-map MENGGANTI ---
+    ok &= check("extra tag-map menambal 1 versi tanpa menjatuhkan sisanya (fix void Lapis 2)",
+                mod.fl.parse_tag_map("", "9.2=9.2.0-nginx") ==
+                {**mod.fl.DEFAULT_TAG_MAP, "9.2": "9.2.0-nginx"})
+    ok &= check("tag-map penuh MENGGANTI peta default",
+                mod.fl.parse_tag_map("9.1=custom") == {"9.1": "custom"})
+    ok &= check("extra menang atas base utk versi yang sama",
+                mod.fl.parse_tag_map("9.1=a", "9.1=b") == {"9.1": "b"})
+
     # --- host_port_from_domain / publish_spec ---
     ok &= check("port 'localhost:8000' -> 8000", mod.host_port_from_domain("localhost:8000") == 8000)
     ok &= check("port tanpa ':' -> default 8000", mod.host_port_from_domain("localhost") == 8000)
@@ -217,7 +243,7 @@ def main():
     # --- run_steps: expect_visible / expect_text ---
     rvis = mod.run_steps(FakePage(visible=False), [{"action": "expect_visible", "selector": "#x"}], _ctx())
     ok &= check("expect_visible False -> gagal", rvis[0]["ok"] is False)
-    pg_text = FakePage(html="Update successful")
+    pg_text = FakePage(html="<body>Update successful</body>")
     rtext = mod.run_steps(pg_text,
                           [{"action": "expect_text", "text": "successful"},
                            {"action": "expect_text", "text": "tak-ada"}], _ctx())
@@ -225,10 +251,22 @@ def main():
                 rtext[0]["ok"] is True and rtext[1]["ok"] is False)
     ok &= check("expect_text settle 'load' dulu (anti false-fail timing pasca submit/redirect)",
                 ("wait", "load") in pg_text.log)
-    rsettle = mod.run_steps(FakePage(html="x", raise_on={"load"}),
+    rsettle = mod.run_steps(FakePage(html="<body>x</body>", raise_on={"load"}),
                             [{"action": "expect_text", "text": "x"}], _ctx())
     ok &= check("expect_text: settle raise -> best-effort, assertion tetap dievaluasi",
                 rsettle[0]["ok"] is True)
+    # REGRESI determinism-1 (false PASS): banner sukses TAK render, teks 'successful'
+    # cuma hidup di kamus terjemahan <script> -> assertion HARUS gagal. Cek substring
+    # lama ('successful' in page.content()) LOLOS konklusif di sini = simpan gagal
+    # terbaca sukses. Sekarang lewat locator teks terlihat.
+    pg_script = FakePage(html='<head><script>var t={"m":"Update successful"};</script></head>'
+                              '<body><div class="alert-danger">Terjadi kegagalan</div></body>')
+    rscript_txt = mod.run_steps(pg_script, [{"action": "expect_text", "text": "successful"}],
+                                _ctx(bo_authed=True))
+    ok &= check("expect_text: teks HANYA di <script> -> GAGAL (anti false-pass simpan-gagal)",
+                rscript_txt[0]["ok"] is False)
+    ok &= check("expect_text pakai locator teks terlihat, bukan substring HTML",
+                ("get_by_text", "successful") in pg_script.log)
 
     # --- run_steps: click/fill sukses & exception -> gagal ---
     rcf = mod.run_steps(FakePage(), [{"action": "fill", "selector": "#a", "value": "1"},
@@ -383,6 +421,11 @@ def main():
                              startup_timeout=1, op_timeout=1, nav_timeout=1000, allow_pull=False)
     ok &= check("browsers kosong -> skipped_browser, orchestrator None (tak sentuh Docker)",
                 r0.get("skipped_browser") is True and r0["orchestrator"] is None and r0["pass"] is False)
+
+    # Sentinel infra Lapis 4: INSTALL_SH punya gerbang console sendiri (dulu hanya
+    # INNER_SH flashlight yang diperbaiki -> sentinel di sini dibaca tapi tak diemit).
+    ok &= check("INSTALL_SH mengemit PSM_NO_CONSOLE (produsen == konsumen, seperti INNER_SH)",
+                "echo PSM_NO_CONSOLE" in mod.INSTALL_SH and "[ ! -f bin/console ]" in mod.INSTALL_SH)
 
     # --- run_one_version: orchestrator=compose diminta tapi compose absen -> error, tak crash ---
     orig_present, orig_compose = mod.fl.image_present, mod.fl.compose_available
