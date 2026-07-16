@@ -6,23 +6,15 @@ concepts hooks/services/doctrine/composer), validator.prestashop.com.
 
 Prinsip: **deteksi versi saat runtime, pilih jalur aman.** Jangan pakai API yang
 hilang di versi target tanpa cabang. Aturan pelanggaran konkret (kelas/hook/dep
-yang dihapus) ada di ruleset skill psm-validate (`{project-root}/skills/psm-validate/assets/ps-rules.json`)
+yang dihapus) ada di ruleset skill psm-validate (`<skills-dir>/psm-validate/assets/ps-rules.json`)
 — pakai itu untuk deteksi, file ini untuk *perbaikannya*.
 
 ## Deteksi versi (fondasi semua pola)
 
-```php
-// _PS_VERSION_ tersedia sejak module di-load. Bandingkan dengan version_compare.
-if (version_compare(_PS_VERSION_, '8.0.0', '>=')) {
-    // jalur PS8/9 (modern)
-} else {
-    // jalur 1.7.x (legacy)
-}
-// Untuk PS9 spesifik: version_compare(_PS_VERSION_, '9.0.0', '>=')
-```
-
-Simpan hasil sebagai helper privat (`private function isPs8Plus()`) agar cabang
-konsisten dan terbaca. Hindari pengecekan versi tersebar tak beraturan.
+Cabangkan runtime dengan `version_compare(_PS_VERSION_, '8.0.0', '>=')` —
+`_PS_VERSION_` tersedia sejak module di-load; pakai `'9.0.0'` untuk jalur PS9
+spesifik. Bungkus dalam helper privat (mis. `isPs8Plus()`) agar cabang konsisten
+dan terbaca, bukan pengecekan versi tersebar tak beraturan.
 
 ## composer.json & autoload
 
@@ -32,6 +24,8 @@ konsisten dan terbaca. Hindari pengecekan versi tersebar tak beraturan.
   bila masih dukung 1.7.x lawas; PS9 butuh PHP 8.1 — pisahkan lewat compliancy).
 - PSR-4 map ke `src/`. Build rilis: `composer dump-autoload -o --no-dev`,
   sertakan `vendor/`, jangan sertakan dev-deps.
+- Sertakan `index.php` stub di tiap folder module (persyaratan keamanan,
+  diperiksa Validator & ps-static-scan).
 - `ps_versions_compliancy` di constructor main file (WAJIB, divalidasi Validator):
   ```php
   $this->ps_versions_compliancy = ['min' => '1.7.0.0', 'max' => _PS_VERSION_];
@@ -88,7 +82,7 @@ konsisten dan terbaca. Hindari pengecekan versi tersebar tak beraturan.
 
 - Akses service core berbeda antar versi & konteks. Untuk portabilitas, pakai
   `prestashop/module-lib-service-container` (library resmi) — akses service seragam lintas versi.
-- Definisi service module: `config/services.yml` (Symfony), `config/admin/services.yml` & `config/front/services.yml` (legacy container per konteks + Doctrine). Wildcard resource WAJIB exclude `index.php`.
+- Definisi service module: `config/services.yml` (Symfony), `config/admin/services.yml` & `config/front/services.yml` (legacy container per konteks + Doctrine). Wildcard resource WAJIB exclude `index.php` — stub keamanan itu bukan kelas service; Symfony error saat import resource ("Expected to find class … in file … index.php").
 - Override service core berisiko lintas versi (nama service berubah). Prefer **decorate** daripada override; pakai sehemat mungkin.
 - `Context` singleton dipecah jadi service di PS9 (`EmployeeContext`, `ShopContext`, dll). Untuk baca masih aman via `Context::getContext()` lintas versi; untuk tulis auth gunakan jalur modern di PS9 (cabang versi).
 
@@ -100,14 +94,3 @@ konsisten dan terbaca. Hindari pengecekan versi tersebar tak beraturan.
 - `PrestaShopAutoload` (PS9) → composer autoload + `prestashop/autoload`.
 - `PS_LEGACY_IMAGES`, `PS_HIGHT_DPI` (PS9) → hapus.
 - Untuk API yang berbeda total antar versi, sediakan shim privat di module yang mencabangkan implementasi.
-
-## Checklist keluaran cross-version
-
-Sebuah module dianggap cross-version-safe bila:
-- [ ] `ps_versions_compliancy` terisi range yang benar
-- [ ] Tak ada dependency terlarang PS9 (atau dibundel)
-- [ ] Tak ada kelas/method/konstanta/hook yang dihapus tanpa cabang versi
-- [ ] Semua cabang versi pakai `_PS_VERSION_`/`version_compare`, bukan tebak
-- [ ] composer `prepend-autoloader: false`, autoload benar
-- [ ] index.php di tiap folder, variabel Smarty di-escape
-- [ ] Lolos psm-validate di 1.7.x, 8.x, dan 9.x

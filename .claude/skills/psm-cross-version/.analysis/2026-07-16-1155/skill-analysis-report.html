@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill Analysis Report</title>
+<style>
+  :root {
+    --bg: #0f1b2d;
+    --panel: #16263d;
+    --panel-2: #1d3250;
+    --ink: #e9eef6;
+    --ink-dim: #9fb0c7;
+    --line: #294366;
+    --accent: #b66d46;
+    --accent-ink: #f4d9c8;
+    --critical: #e05656;
+    --high: #e0904a;
+    --medium: #d8c24a;
+    --low: #5aa0d0;
+    --ok: #4caf72;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 20px 80px; }
+  header h1 { font-size: 22px; margin: 0 0 4px; }
+  header .meta { color: var(--ink-dim); font-size: 13px; }
+  header .meta b { color: var(--ink); font-weight: 600; }
+
+  .banner {
+    display: none;
+    background: #3a1414;
+    border: 1px solid var(--critical);
+    color: #ffd9d9;
+    padding: 14px 16px;
+    border-radius: 8px;
+    margin: 16px 0;
+    white-space: pre-wrap;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+  .banner.show { display: block; }
+
+  .overview {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .grade {
+    font-size: 34px;
+    font-weight: 800;
+    margin: 0 0 8px;
+    text-transform: capitalize;
+  }
+  .grade.g-excellent { color: var(--ok); }
+  .grade.g-good { color: var(--low); }
+  .grade.g-fair { color: var(--medium); }
+  .grade.g-poor { color: var(--critical); }
+  .verdict { font-size: 16px; font-weight: 600; margin: 0 0 14px; }
+  .summary { color: var(--ink-dim); margin: 0 0 14px; }
+  .counts { display: flex; flex-wrap: wrap; gap: 10px; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .pill .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .pill .n { font-weight: 700; }
+  .dot.critical { background: var(--critical); }
+  .dot.high { background: var(--high); }
+  .dot.medium { background: var(--medium); }
+  .dot.low { background: var(--low); }
+
+  /* Generic synthesis/agent-block panel */
+  .block {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin: 18px 0;
+  }
+  .block > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 12px;
+  }
+  .block .mono, .block code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .kv { margin: 0; display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; }
+  .kv dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .kv dd { margin: 0; }
+
+  /* Themes */
+  .theme { padding: 12px 0; border-top: 1px solid var(--line); }
+  .theme:first-of-type { border-top: none; padding-top: 0; }
+  .theme .t-head { display: flex; align-items: center; gap: 10px; }
+  .theme .t-title { font-weight: 600; flex: 1 1 auto; min-width: 0; }
+  .theme .t-cause { color: var(--ink-dim); margin-top: 4px; }
+  .theme .t-action { margin-top: 4px; }
+  .theme .t-findings { margin-top: 8px; padding-left: 12px; border-left: 2px solid var(--line); }
+  .theme .t-finding { font-size: 13px; color: var(--ink-dim); padding: 2px 0; }
+
+  /* Strengths */
+  .strength-list { margin: 0; padding-left: 20px; }
+  .strength-list li { padding: 2px 0; }
+
+  /* Recommendations */
+  .rec { padding: 8px 0; border-top: 1px solid var(--line); }
+  .rec:first-of-type { border-top: none; padding-top: 0; }
+  .rec .rank { font-weight: 700; color: var(--accent-ink); margin-right: 8px; }
+  .rec .resolves { color: var(--ink-dim); font-size: 12px; margin-left: 8px; }
+
+  /* Experience journeys */
+  .block .journey { padding: 8px 0; border-top: 1px solid var(--line); }
+  .block .journey:first-of-type { border-top: none; padding-top: 0; }
+  .block .journey .j-name { font-weight: 600; }
+  .block .journey .j-steps { color: var(--ink-dim); margin-top: 2px; }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 18px 0 10px;
+    flex-wrap: wrap;
+  }
+  .toolbar .sel-count { color: var(--ink-dim); font-size: 13px; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--ink);
+    padding: 8px 14px;
+  }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #1a0e07;
+    font-weight: 600;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.link {
+    background: none;
+    border: none;
+    color: var(--accent-ink);
+    padding: 4px 6px;
+    font-size: 13px;
+  }
+  button.small { padding: 5px 10px; font-size: 13px; flex: 0 0 auto; }
+
+  .no-findings {
+    background: var(--panel);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    padding: 28px;
+    text-align: center;
+    color: var(--ink-dim);
+  }
+  .no-findings .big { font-size: 18px; color: var(--ok); margin-bottom: 6px; }
+
+  .group { margin: 18px 0; }
+  .group > h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-dim);
+    margin: 0 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .finding {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--line);
+    border-radius: 8px;
+    margin: 8px 0;
+    overflow: hidden;
+  }
+  .finding.sev-critical { border-left-color: var(--critical); }
+  .finding.sev-high { border-left-color: var(--high); }
+  .finding.sev-medium { border-left-color: var(--medium); }
+  .finding.sev-low { border-left-color: var(--low); }
+
+  .finding .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .finding .row .chk { width: 16px; height: 16px; flex: 0 0 auto; cursor: pointer; }
+  .finding .row .head { flex: 1 1 auto; cursor: pointer; min-width: 0; }
+  .finding .row .title { font-weight: 600; }
+  .finding .row .sub { color: var(--ink-dim); font-size: 12px; margin-top: 2px; }
+  .finding .tag {
+    flex: 0 0 auto;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--ink-dim);
+  }
+  .finding .caret { flex: 0 0 auto; color: var(--ink-dim); transition: transform 0.15s; cursor: pointer; }
+  .finding.open .caret { transform: rotate(90deg); }
+
+  .finding .body {
+    display: none;
+    padding: 0 14px 14px 42px;
+    border-top: 1px solid var(--line);
+  }
+  .finding.open .body { display: block; }
+  .finding .body dl { margin: 12px 0 0; display: grid; grid-template-columns: 130px 1fr; gap: 6px 14px; }
+  .finding .body dt { color: var(--ink-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .finding .body dd { margin: 0; }
+  .finding .body code, .finding .body .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    background: var(--panel-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%);
+    background: var(--ok);
+    color: #06160c;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  .fallback-area { margin-top: 12px; display: none; }
+  .fallback-area.show { display: block; }
+  .fallback-area textarea {
+    width: 100%;
+    min-height: 160px;
+    background: var(--panel-2);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Skill Analysis Report</h1>
+    <div class="meta">
+      <span>Subject: <b id="m-subject">—</b></span> &nbsp;·&nbsp;
+      <span>Generated: <b id="m-generated">—</b></span> &nbsp;·&nbsp;
+      <span>Schema: <b id="m-schema">—</b></span>
+    </div>
+  </header>
+
+  <div id="parse-banner" class="banner"></div>
+
+  <section id="overview" class="overview" hidden>
+    <div id="grade" class="grade" hidden></div>
+    <p id="verdict" class="verdict"></p>
+    <p id="summary-text" class="summary" hidden></p>
+    <div id="counts" class="counts"></div>
+  </section>
+
+  <!-- Synthesis layer (themes, strengths, recommendations). Hidden when absent. -->
+  <section id="themes" class="block" hidden></section>
+  <section id="strengths" class="block" hidden></section>
+  <section id="recommendations" class="block" hidden></section>
+
+  <!-- Experience: journeys plus headless (experience). Hidden when absent. -->
+  <section id="experience" class="block" hidden></section>
+
+  <div id="toolbar" class="toolbar" hidden>
+    <button id="btn-copy" class="primary" disabled>Copy selected as paste-back prompt</button>
+    <span id="sel-count" class="sel-count">0 selected</span>
+    <button id="btn-select-all" class="link">Select all</button>
+    <button id="btn-clear" class="link">Clear</button>
+    <button id="btn-expand-all" class="link">Expand all</button>
+    <button id="btn-collapse-all" class="link">Collapse all</button>
+  </div>
+
+  <div id="fallback" class="fallback-area">
+    <p class="sel-count">Clipboard was unavailable. Copy the text below manually:</p>
+    <textarea id="fallback-text" readonly></textarea>
+  </div>
+
+  <div id="findings-root"></div>
+</div>
+
+<div id="toast" class="toast">Copied</div>
+
+<!-- scripts/render_report.py replaces the contents of this island per run.
+     The placeholder below is intentionally unusable: the shell refuses to
+     render it, so a failed injection can never look like real findings. -->
+<script type="application/json" id="report-data">
+{
+  "schema_version": 2,
+  "subject": "/home/budi/dev/prestashop-module/.claude/skills/psm-cross-version",
+  "generated": "2026-07-16",
+  "verdict": "One root cause dominates: the skill's analysis engine, validation-gate pointer, and rule-data path all resolve into the stale skills/ tree while the live tree (.claude/skills/) has moved on — a three-line repoint clears the critical and half the high findings; the remaining substance is headless failure semantics and an unverified undo net.",
+  "grade": "poor",
+  "summary": "The skill's plan→confirm→apply→verify spine is sound, lean (1574 tokens, zero waste patterns), and delegates all deterministic work to existing engines without duplicating a single rule. But those delegation pointers target {project-root}/skills/psm-validate — the stale scaffold tree — and the live copies have verifiably diverged, so the workflow's declared factual foundation is wired to an outdated engine. Fixing the three pointers plus adopting the sibling psm-develop headless conventions (typed stop statuses, memlog init, undo-net guard) would return this skill to excellent.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "Stale-tree pointers: the deterministic foundation resolves to outdated copies",
+      "root_cause": "The live psm skill tree moved to {project-root}/.claude/skills/ but psm-cross-version still points its analysis engine (ps-static-scan.py), its validation-gate reference (psm-validate SKILL.md), and its rule-data path (ps-rules.json) at {project-root}/skills/psm-validate — a stale scaffold. The scanner and gate copies have verifiably diverged (diff confirmed: different default versions 9.0 vs 9.1, different vendor-exclusion walk; live psm-validate gained the E2E browser layer), so the plan is derived from one engine's facts and gated against another's, while the prompt forbids reconciling by hand.",
+      "finding_ids": [
+        "architecture-1",
+        "architecture-2",
+        "architecture-3",
+        "determinism-1"
+      ],
+      "action": "Repoint the three references to the live tree: SKILL.md:27 and references/version-safe-patterns.md:9 → {project-root}/.claude/skills/psm-validate/..., and SKILL.md:41 → invoke psm-validate by skill name (or point at {project-root}/.claude/skills/psm-validate/SKILL.md). Leave SKILL.md:20's skills/psm-setup/scripts/resolve-psm-config.py untouched — that is the live runtime resolver, the sole live exception in skills/."
+    },
+    {
+      "title": "Headless mode defines only the success shape",
+      "root_cause": "Mode headless removes every interactive gate but names no failure semantics: no typed stop statuses, no verify-loop cap (a module that cannot go green loops plan→apply→validate forever), no memlog location or init rule (memlog.py append crashes on a nonexistent file), and no distinct status for a module that is already safe. Sibling psm skills carry all of these as named conventions (psm-develop: 'gagal'/'butuh intervensi' + cap; psm-optimize: 'sudah-ramping' no-op status).",
+      "finding_ids": [
+        "enhancement-1",
+        "enhancement-3",
+        "enhancement-5"
+      ],
+      "action": "Mirror the sibling conventions in Mode headless: adopt psm-develop's two stop statuses plus a replan cap (e.g. two cycles), state that the memlog lives at <module-path>/.memlog.md beside .psm-cross-plan.md with init-if-absent, and short-circuit a clean scan straight to the validate gate returning a distinct 'sudah-aman' status."
+    },
+    {
+      "title": "Irreversible apply rests on an assumed, not verified, undo net",
+      "root_cause": "Terapkan rewrites module source in place. Interactively the skill merely assumes Budi uses git ('asumsikan Budi memakai git untuk pembatalan'); in headless there is no operator, no approval gate, and no check at all — a module outside git or with a dirty tree gets rewritten with no undo path, contradicting the Overview's unqualified 'never apply without an approved plan' invariant.",
+      "finding_ids": [
+        "enhancement-2",
+        "architecture-4"
+      ],
+      "action": "Before the first file edit, check git status on <module-path>: dirty or non-git interactively → warn and offer a folder backup; headless → auto-backup and memlog the path, or stop with 'butuh intervensi' (copy psm-develop's clause nearly verbatim). Qualify the Overview invariant with one clause naming the headless delegation of approval."
+    },
+    {
+      "title": "The closing checklist duplicates the engine and leaks two hand-checks",
+      "root_cause": "The 'Checklist keluaran cross-version' section restates rules the model just read ~100 lines earlier and that the mandatory psm-validate gate checks mechanically — except two items (ps_versions_compliancy range correctness, composer prepend-autoloader) that no engine rule covers, silently demoting deterministic checks to per-run hand-verification. Only one fact in the checklist (index.php stub per folder) exists nowhere else.",
+      "finding_ids": [
+        "leanness-1",
+        "determinism-2"
+      ],
+      "action": "Delete the checklist section, relocate the index.php stub fact into the composer.json & autoload section, and extend psm-validate's ps-rules.json with the two missing rules (prepend-autoloader === false; compliancy-range expect variant) so coverage moves engine-side; keep SKILL.md's psm-validate pass as the single definition of done."
+    }
+  ],
+  "strengths": [
+    "The plan→confirm→apply→verify spine with psm-validate as the single mandatory gate is stated once at point of use and never softened — the definition of done is unambiguous across interactive and headless paths.",
+    "Zero duplication of deterministic assets: rule data, scan logic, and config resolution are all borrowed from their owning skills (ps-rules.json, ps-static-scan.py, resolve-psm-config.py), and the customization lens confirms config.yaml-via-resolver is a sound single mechanism with no parallel config surface.",
+    "Intelligence placement is right-way-round: scan facts are declared non-negotiable ('jangan menilai ulang dengan tangan') while genuinely contextual choices (Mail::send vs custom, ObjectModel vs Doctrine) stay model judgment guided by the pattern catalog.",
+    "The .psm-cross-plan.md working artifact carries resume and failure-writeback ('tulis temuan kembali... jangan analisis ulang dari nol'), so validate failures iterate the plan instead of restarting analysis.",
+    "Prose is lean and in budget: 1574 SKILL.md tokens, 0 waste patterns, 0 back-references, and the pattern catalog carries non-inferable institutional knowledge with its why attached."
+  ],
+  "recommendations": [
+    {
+      "rank": 1,
+      "action": "Repoint the three psm-validate references from {project-root}/skills/ to the live {project-root}/.claude/skills/ tree (SKILL.md:27, SKILL.md:41, references/version-safe-patterns.md:9), leaving the live resolve-psm-config.py reference untouched — three one-line edits that clear the critical, two highs, and a medium.",
+      "resolves": [
+        "architecture-1",
+        "architecture-2",
+        "architecture-3",
+        "determinism-1"
+      ]
+    },
+    {
+      "rank": 2,
+      "action": "Adopt the sibling psm-develop/psm-optimize headless conventions in Mode headless: typed stop statuses ('gagal', 'butuh intervensi') with a replan cap, memlog location + init-if-absent clause, and a 'sudah-aman' no-op status for clean scans.",
+      "resolves": [
+        "enhancement-1",
+        "enhancement-3",
+        "enhancement-5"
+      ]
+    },
+    {
+      "rank": 3,
+      "action": "Add the undo-net guard before Terapkan (git-status check → warn/backup interactively, auto-backup + memlog or stop in headless) and qualify the Overview's absolute approval invariant for headless delegation.",
+      "resolves": [
+        "enhancement-2",
+        "architecture-4"
+      ]
+    },
+    {
+      "rank": 4,
+      "action": "Delete the closing checklist in references/version-safe-patterns.md, move its one unique fact (index.php stub per folder) into the composer section, and extend ps-rules.json engine-side with the two rules the checklist currently hand-checks.",
+      "resolves": [
+        "leanness-1",
+        "determinism-2"
+      ]
+    },
+    {
+      "rank": 5,
+      "action": "Add a wrong-intent routing line (no existing module → psm-scaffold, stop) and sharpen the description's first clause toward conversion ('Ubah module PrestaShop existing...') to reduce trigger collision with psm-scaffold.",
+      "resolves": [
+        "enhancement-4"
+      ]
+    },
+    {
+      "rank": 6,
+      "action": "Minor polish pass: collapse the version_compare code block to two prose clauses, cut the Overview's restated gates sentence, convert On Activation numbering to bullets, add the missing why to the wildcard-exclude WAJIB, restore the {skill-name} placeholder form.",
+      "resolves": [
+        "leanness-2",
+        "leanness-3",
+        "leanness-4",
+        "leanness-5",
+        "architecture-5"
+      ]
+    }
+  ],
+  "experience": {
+    "journeys": [
+      {
+        "name": "Interactive conversion (primary)",
+        "steps": "Budi invokes with a module path → config resolved via psm-setup resolver → ps-static-scan builds the per-version risk map → per-version change plan written to .psm-cross-plan.md → Budi approves → version-safe patterns applied → psm-validate gates all three versions → summary of changes per area and pass status per version."
+      },
+      {
+        "name": "Resume after interruption or validate failure",
+        "steps": "Re-invocation finds .psm-cross-plan.md beside the module and continues from the artifact; validate failures are written back into the plan as new/updated changes and redesigned from there — never re-analyzed from scratch."
+      },
+      {
+        "name": "Headless (called by workflow or psm-agent-expert)",
+        "steps": "Module path and versions come from arguments; no interactive gates; assumptions logged to memlog; returns a one-line summary + .psm-cross-plan.md path + memlog path + per-version pass status."
+      }
+    ],
+    "headless": "Headless runs end-to-end without gates and logs assumptions to a memlog, but defines only the success shape — no typed failure statuses, no verify-loop cap, no memlog init rule, and no no-op status for an already-safe module."
+  },
+  "findings": [
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "critical",
+      "title": "Analysis engine resolves to stale copy of ps-static-scan.py",
+      "location": "SKILL.md:27 (## Analisis: peta risiko per versi)",
+      "evidence": "The section runs `uv run {project-root}/skills/psm-validate/scripts/ps-static-scan.py` and declares the output 'fakta deterministik; jangan menilai ulang dengan tangan'. The live psm tree is {project-root}/.claude/skills/; skills/psm-validate/scripts/ps-static-scan.py is verified by diff to DIFFER from the live scanner (stale copy dated Jul 8, live updated Jul 13). Every downstream stage — plan, Budi's approval, irreversible source edits — consumes this risk map, and the skill forbids second-guessing it, so a stale engine silently corrupts the factual basis of the whole workflow with no name-resolution safety net (it is a direct script invocation, not a Skill-tool call).",
+      "recommendation": "Repoint line 27 to the live tree: `{project-root}/.claude/skills/psm-validate/scripts/ps-static-scan.py`. Do NOT change line 20's `{project-root}/skills/psm-setup/scripts/resolve-psm-config.py` in the same sweep — that one correctly targets the live runtime resolver, the sole live exception in skills/."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "Mandatory verification gate routes to stale psm-validate SKILL.md",
+      "location": "SKILL.md:41 (## Verifikasi (gerbang wajib))",
+      "evidence": "The gate says 'lihat `{project-root}/skills/psm-validate/SKILL.md`' — verified to differ from the live .claude/skills/psm-validate/SKILL.md (stale: 5.5KB, Jun 25; live: 9.7KB, Jul 14, which includes the later-built E2E browser layer). The Overview promises 'tidak pernah menyatakan selesai sebelum lolos psm-validate di 1.7.x + 8.x + 9.x'; an agent that follows this pointer and executes the outdated validation procedure certifies less than the live gate requires, yielding a false 'selesai'. Partially mitigated because invoking psm-validate by skill name resolves to the live skill — the defect fires when the agent reads the referenced file, which the line explicitly invites.",
+      "recommendation": "Repoint to `{project-root}/.claude/skills/psm-validate/SKILL.md`, or drop the file pointer entirely and instruct invocation of the psm-validate skill by name so name resolution always lands on the live definition."
+    },
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "high",
+      "title": "Analysis and verification phases bind to two divergent copies of the deterministic engine",
+      "location": "SKILL.md:27 (Analisis) + references/version-safe-patterns.md:9 (ps-rules.json path); contrast SKILL.md:41 (Verifikasi)",
+      "evidence": "Analisis invokes `uv run {project-root}/skills/psm-validate/scripts/ps-static-scan.py` and declares its output 'Ini fakta deterministik; jangan menilai ulang dengan tangan', but that path is the stale scaffold copy — verified diff vs the live .claude/skills/psm-validate engine: default `--versions` 1.7.8,8.1,9.0 vs 9.1, different vendor-exclusion file walk (`part == \"vendor\"` vs substring `\"vendor/\"`), different module_path emission. Verifikasi then calls psm-validate as a skill, whose bare paths resolve to the LIVE engine. So the plan is derived from one engine's facts and gated against another's, while the prompt forbids reconciling by hand ('jangan menilai ulang', 'jangan analisis ulang dari nol'). ps-rules.json copies are identical today, which caps current blast radius, but nothing guards the drift.",
+      "recommendation": "Determinism defect at the delegation boundary: a deterministic fact source must be single-sourced or the 'trust the scan' contract is void — same input must yield the same facts at analysis and at the validate gate. Point both phases at one canonical engine+ruleset location (the concrete path/tree correction is the paths/architecture lane's to specify; this lane's requirement is one engine, not which tree). The explicit `--versions <target>` argument mitigates the default-version divergence but not the file-walk or future rule drift."
+    },
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Add typed stop statuses and a verify-loop cap to headless mode",
+      "location": "SKILL.md:39-45 (## Verifikasi + ## Mode headless)",
+      "evidence": "Pattern: headless return contract (skill-quality-principles 'Headless mode': status complete|blocked with reason; sibling precedent psm-develop SKILL.md:71 defines 'gagal' and 'butuh intervensi' including 'cap verify tercapai'). psm-cross-version's headless return names only 'ringkasan satu baris + path plan + path memlog + status lolos per versi'. The Verifikasi section loops failures back into .psm-cross-plan.md with no iteration cap, and headless removes all confirmation gates — a module that cannot go green loops plan→apply→validate indefinitely with no defined exit. Unrecoverable failures have no named shape either: if ps-static-scan.py or psm-validate errors, the skill forbids both hand-analysis ('jangan menilai ulang dengan tangan') and declaring done without green, boxing the model with no legal move.",
+      "recommendation": "Adopt psm-develop's two stop statuses in Mode headless: 'gagal' (unrecoverable — scan/validate engine errors, target not a module) returns status + one-line reason + memlog path; 'butuh intervensi' (verify-loop cap reached, e.g. two replan cycles without going green) returns status + plan path + memlog so the caller decides. One or two sentences, mirroring the sibling wording."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Add an undo-net guard before Terapkan",
+      "location": "SKILL.md:35-37 (## Terapkan)",
+      "evidence": "Pattern: undo-net guard, already a named convention in sibling psm-develop SKILL.md:53 (verify clean git working tree before touching files; headless: auto-backup + memlog the path, or stop with 'butuh intervensi'). psm-cross-version performs the same shape of irreversible in-place source rewriting but only assumes the net exists: 'asumsikan Budi memakai git untuk pembatalan (sebutkan ini bila belum jelas)' — an assumption, not a check. In headless there is no operator and no gate, so a module outside git (or with a dirty tree) gets rewritten with no undo path.",
+      "recommendation": "Before the first file edit, check `git status` on <module-path>: dirty or non-git interactively → warn and offer a folder backup; headless → create the backup automatically and memlog its path, or stop with 'butuh intervensi'. Copy the psm-develop clause nearly verbatim to keep the module convention uniform."
+    },
+    {
+      "id": "architecture-3",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Reference file points ps-rules.json at the stale tree (drift-prone)",
+      "location": "references/version-safe-patterns.md:9",
+      "evidence": "The carved catalog directs detection to `{project-root}/skills/psm-validate/assets/ps-rules.json`. That file is verified identical in both trees today, so nothing breaks yet — but rule updates land in the live .claude/skills/ tree, and this pointer will silently drift the next time ps-rules.json changes. Same wrong-tree convention as architecture-1/2.",
+      "recommendation": "Repoint to `{project-root}/.claude/skills/psm-validate/assets/ps-rules.json` in the same fix pass as architecture-1 and architecture-2."
+    },
+    {
+      "id": "determinism-2",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Cross-version checklist leaves two unit-testable checks to the model that the delegated engine does not perform",
+      "location": "references/version-safe-patterns.md:104-113 (Checklist keluaran cross-version)",
+      "evidence": "Checklist items '`ps_versions_compliancy` terisi range yang benar' and 'composer `prepend-autoloader: false`, autoload benar' gate the module being 'dianggap cross-version-safe', but ps-rules.json has no composer.json rule at all, and its struct-compliancy rule checks presence only (`expect: present`), not range correctness against the target versions. Every other checklist item (forbidden deps, removed APIs/hooks/constants, index.php per folder, Smarty escape) is engine-covered; these two fall back to the model hand-verifying a JSON key equality and a version-range comparison on every run — both pass the determinism test (identical input → identical output, trivially unit-testable).",
+      "recommendation": "Determinism leak in the prompt layer; the fix is a script-side rule, not a new script: extend psm-validate's ps-rules.json with a composer structure rule (prepend-autoloader === false) and a compliancy-range expect variant — scan_structure_rule already provides the machinery — then let the checklist cite scan coverage instead of implying hand-checks. Signal verbs present: 'terisi range yang benar' (validate against expected), 'autoload benar' (check structure). Note the transformation-planning side is correctly placed as judgment: the deterministic finding→fix join already lives in ps-rules.json `fix` fields, and the remaining pattern choices ('prefer Mail::send bila cukup', 'ObjectModel bila module sederhana') genuinely turn on context."
+    },
+    {
+      "id": "enhancement-3",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Add memlog workspace and init to headless mode",
+      "location": "SKILL.md:45 (## Mode headless)",
+      "evidence": "Pattern: memlog workspace rule (working-state-patterns.md: the log sits beside the primary artifact; init creates it). The headless section says append assumptions 'via memlog.py append' and promises 'path memlog' in the return, but never names where the memlog lives or that it must exist first. Verified in {project-root}/_bmad/scripts/memlog.py: append requires --workspace|--path and does path.read_text() — the first append against a nonexistent file raises an unhandled FileNotFoundError, so a headless run crashes or improvises a location the caller cannot predict.",
+      "recommendation": "One clause: memlog lives at <module-path>/.memlog.md beside .psm-cross-plan.md — 'init bila belum ada, append selanjutnya' — and that is the path returned to the caller."
+    },
+    {
+      "id": "enhancement-4",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Opportunity: redirect the no-existing-module arrival to psm-scaffold",
+      "location": "SKILL.md:3 (description) and SKILL.md:18-23 (## On Activation)",
+      "evidence": "Pattern: wrong-intent routing (the accident-arrival user walk). The description leads with 'Buat module PrestaShop kompatibel 1.7/8/9 sekaligus' and trigger 'buat module compatible 1.7 8 9' — 'buat' reads as create-new, but the skill only converts an existing module ('Ubah satu module PrestaShop existing'). A user who triggers it wanting a new module dead-ends at 'tentukan module yang dikerjakan (path folder)' with no route to psm-scaffold, whose triggers ('bikin module PrestaShop baru cross-version') overlap this phrasing.",
+      "recommendation": "One line in On Activation step 2: bila tidak ada module existing (Budi ingin module baru), arahkan ke psm-scaffold dan berhenti. Optionally sharpen the description's first clause toward conversion ('Ubah module PrestaShop existing jadi kompatibel 1.7/8/9 sekaligus') to reduce trigger collision."
+    },
+    {
+      "id": "enhancement-5",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Opportunity: clean-scan short-circuit with a distinct no-op status",
+      "location": "SKILL.md:25-33 (## Analisis + ## Rencana perubahan)",
+      "evidence": "Pattern: distinct no-op return, precedented in sibling psm-optimize SKILL.md:47 ('sudah-ramping' status so the caller can distinguish successful no-op from a broken run). If ps-static-scan.py reports no per-version risks (module already safe — a technically valid, unexpected input), the flow still marches through writing an empty .psm-cross-plan.md and asking Budi to approve nothing, and the headless return cannot distinguish 'nothing needed changing' from a normal transform run.",
+      "recommendation": "On a clean scan, skip plan/apply and go straight to the psm-validate gate; report 'module sudah cross-version-safe' with per-version status, and in headless return a distinct status (e.g. 'sudah-aman') without plan-change fields."
+    },
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "medium",
+      "title": "Closing checklist restates the file it ends and the psm-validate gate",
+      "location": "references/version-safe-patterns.md:## Checklist keluaran cross-version (lines 104-113)",
+      "evidence": "Six of the seven checklist items restate rules already stated above in the same file (ps_versions_compliancy, forbidden PS9 deps, version branches via version_compare, prepend-autoloader:false, Smarty escaping); item 7 restates SKILL.md's binding definition of done ('hanya bila lolos psm-validate di 1.7.x, 8.x, dan 9.x'). The model has just read all of these rules ~100 lines earlier, and psm-validate — the skill's declared gate — checks every item anyway. Only 'index.php di tiap folder' is a fact stated nowhere else in the skill. Canon core test: facts restated across sections; the section also creates a second, softer 'dianggap cross-version-safe bila' definition alongside the authoritative one in SKILL.md Verifikasi.",
+      "recommendation": "Delete the checklist section and relocate its one unique fact into the composer.json & autoload section; keep SKILL.md's psm-validate pass as the single definition of done. Route to variant eval to confirm.",
+      "proposed_smallest": "Remove '## Checklist keluaran cross-version' entirely. Add one bullet under '## composer.json & autoload': '- Sertakan `index.php` stub di tiap folder module (persyaratan keamanan, diperiksa Validator).'",
+      "predicted_delta": "Likely nothing — psm-validate remains the mandatory gate and mechanically checks every listed item, so the worst case is one extra validate iteration on a module the model would otherwise have self-caught. Route to variant eval to confirm."
+    },
+    {
+      "id": "leanness-2",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Version-detection code block re-teaches standard PHP the model writes unprompted",
+      "location": "references/version-safe-patterns.md:## Deteksi versi (lines 13-25)",
+      "evidence": "An 8-line PHP block demonstrates `if (version_compare(_PS_VERSION_, '8.0.0', '>=')) {...} else {...}` — a branching idiom any capable model produces without instruction once told to branch by version (which SKILL.md Terapkan already mandates with the exact function named). Canon core-test shape: mechanics for a tool the model already drives fluently. The only non-inferable content in the section is two clauses: `_PS_VERSION_` is available from module load, and the keep-branches-in-a-private-helper convention.",
+      "recommendation": "Collapse the code block into two prose lines that keep the two non-inferable clauses. Route to variant eval to confirm.",
+      "proposed_smallest": "Replace the section body with: 'Cabangkan runtime dengan `version_compare(_PS_VERSION_, ''8.0.0'', ''>='')` — `_PS_VERSION_` tersedia sejak module di-load; pakai `''9.0.0''` untuk jalur PS9 spesifik. Bungkus dalam helper privat (mis. `isPs8Plus()`) agar cabang konsisten, bukan pengecekan tersebar.'",
+      "predicted_delta": "Nothing expected — the idiom is standard PHP and every later section's example code re-demonstrates it in context anyway; the retained clauses preserve the availability fact and the helper convention. Route to variant eval to confirm."
+    },
+    {
+      "id": "leanness-3",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Overview's final sentence restates gates stated one sentence earlier and enforced in their own sections",
+      "location": "SKILL.md:## Overview (final sentence, line 10)",
+      "evidence": "'Tidak pernah menerapkan perubahan tanpa rencana yang disetujui, dan tidak pernah menyatakan selesai sebelum lolos psm-validate di 1.7.x + 8.x + 9.x' is the negative restatement of the 'rencana → konfirmasi → terapkan → verifikasi' process sentence immediately preceding it. Both gates are then enforced at point of use — Rencana perubahan ('gerbang yang tak boleh dilewati'), Verifikasi ('hanya bila lolos psm-validate'), and Mode headless ('Tetap berlaku: jangan menyatakan lolos...'). That makes three statements of the validate gate and three of the approval gate in a 1574-token file. Canon core test: restated facts / defensive padding. (The headless restatement is not duplication — it disambiguates which gate survives '--headless' — and stays.)",
+      "recommendation": "Cut the Overview's final sentence; the process sentence plus the section-level gates carry both invariants at their points of use. Saves ~35 tokens with no behavior change."
+    },
+    {
+      "id": "leanness-4",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "On Activation numbering is decorative — steps are mostly independent obligations",
+      "location": "SKILL.md:## On Activation (lines 20-23)",
+      "evidence": "Steps 1 (load config), 2 (determine module/versions), and 4 (augment patterns) are independent obligations with no feed-forward between them; only 3 (resume check) depends on 2, and that dependency is self-evident (the resume file lives under the module path determined in 2). Canon test 5: numbering tells the reader order matters and it will march the steps in order; where they are independent obligations, use bullets.",
+      "recommendation": "Convert the four numbered steps to bullets. No goal-sentence collapse needed — each bullet is a real, distinct obligation; only the sequence signal is false."
+    },
+    {
+      "id": "leanness-5",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Bare WAJIB without its why on wildcard resource exclusion (under-writing)",
+      "location": "references/version-safe-patterns.md:## Services / Dependency Injection (line 91)",
+      "evidence": "'Wildcard resource WAJIB exclude `index.php`' is the only shouted rule in the file that carries no failure clause — every other WAJIB/caps directive has its consequence inline ('kalau true, dependency module override core dan merusak PrestaShop'; 'divalidasi Validator'; 'PS8+ dev mode lempar exception'). Per the canon, a reader handed a rule without its reason cannot apply it to the unforeseen case and may optimize it away; this is under-writing to fix by adding the why, not a line to cut.",
+      "recommendation": "Reframe the shout as the failure it guards against, one clause: e.g. 'exclude `index.php` dari wildcard resource — stub keamanan itu bukan kelas service, dan container gagal saat mencoba me-registrasi-nya.' (Verify the exact failure mode against the PrestaShop docs the file cites before wording it.)"
+    },
+    {
+      "id": "architecture-4",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Overview's absolute 'never apply without approved plan' contradicted by headless mode",
+      "location": "SKILL.md:10 (Overview) vs SKILL.md:45 (Mode headless)",
+      "evidence": "The Overview states an unqualified invariant: 'Tidak pernah menerapkan perubahan tanpa rencana yang disetujui.' Headless mode runs the flow 'tanpa gerbang konfirmasi interaktif', applying irreversible source edits against a plan no one saw — the caller 'bertanggung jawab atas persetujuan' but never sees the plan before apply. The contradiction is explicit and self-acknowledged (memlog absorbs assumptions, psm-validate still gates 'selesai'), so it will not mislead an executing model — but the stated principle and the mode disagree as written.",
+      "recommendation": "Qualify the Overview invariant with one clause ('kecuali mode headless, di mana persetujuan didelegasikan ke pemanggil dan tercatat di memlog'), or have headless pause after writing .psm-cross-plan.md unless the caller passes an explicit pre-approval flag."
+    },
+    {
+      "id": "architecture-5",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Resolution-rules block literalizes the {skill-name} placeholder into a tautology",
+      "location": "SKILL.md:16 (## Resolution rules)",
+      "evidence": "The canonical block's third line is '`{skill-name}` → the skill directory's basename'; here it reads '`psm-cross-version` → basename direktori skill', defining the literal name as resolving to itself. Inert (nothing in the skill uses {skill-name}), but it deviates from the stamped canonical block and carries no information.",
+      "recommendation": "Restore the placeholder form (`{skill-name}` → basename direktori skill) or drop the bullet since the token is unused."
+    },
+    {
+      "id": "customization-1",
+      "lens": "customization",
+      "severity": "low",
+      "title": "Terminal stage produces artifacts and stops — on_complete is the one credible opt-in point",
+      "location": "SKILL.md: Verifikasi (gerbang wajib) / Mode headless",
+      "evidence": "The workflow ends after psm-validate passes with a summary to Budi (or a one-line return in headless mode), leaving onward actions (git commit, release packaging, sprint logging) to the operator. The skill has zero hardcoded templates and no org-redirectable output path (.psm-cross-plan.md is a resume artifact colocated with the module by design), so this is the only customization point that could ever earn a surface; the guide's high-opportunity opt-in threshold (two or more hardcoded templates) is not met, and the interactive session plus psm-agent-expert orchestration already own onward routing, so the forced-fork risk is minimal.",
+      "recommendation": "Keep the ships-fixed decision as logged. Revisit opting in — a minimal customize.toml carrying only the universal four defaults, with on_complete as the point that earns it — only if a recurring post-verification action emerges across runs; do not add the surface preemptively. If the skill ever opts in, fold the hardwired optional read of {project-root}/_bmad/psm/memory/tech/cross-version-patterns.md into persistent_facts rather than keeping a parallel hand-rolled load."
+    }
+  ]
+}
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  var SEVERITIES = ["critical", "high", "medium", "low"];
+  var SEV_LABEL = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
+  var GRADES = ["excellent", "good", "fair", "poor"];
+  var PLACEHOLDER_SUBJECT = "__PLACEHOLDER__";
+
+  var els = {
+    banner: document.getElementById("parse-banner"),
+    overview: document.getElementById("overview"),
+    grade: document.getElementById("grade"),
+    verdict: document.getElementById("verdict"),
+    summaryText: document.getElementById("summary-text"),
+    counts: document.getElementById("counts"),
+    themes: document.getElementById("themes"),
+    strengths: document.getElementById("strengths"),
+    recommendations: document.getElementById("recommendations"),
+    experience: document.getElementById("experience"),
+    toolbar: document.getElementById("toolbar"),
+    root: document.getElementById("findings-root"),
+    subject: document.getElementById("m-subject"),
+    generated: document.getElementById("m-generated"),
+    schema: document.getElementById("m-schema"),
+    selCount: document.getElementById("sel-count"),
+    btnCopy: document.getElementById("btn-copy"),
+    btnSelectAll: document.getElementById("btn-select-all"),
+    btnClear: document.getElementById("btn-clear"),
+    btnExpandAll: document.getElementById("btn-expand-all"),
+    btnCollapseAll: document.getElementById("btn-collapse-all"),
+    fallback: document.getElementById("fallback"),
+    fallbackText: document.getElementById("fallback-text"),
+    toast: document.getElementById("toast")
+  };
+
+  var selected = Object.create(null);
+  var findings = [];
+  var findingsById = Object.create(null);
+  var subjectPath = "";
+  var standards = null;
+
+  function showBanner(message) {
+    els.banner.textContent = message;
+    els.banner.classList.add("show");
+  }
+
+  function esc(value) {
+    var s = value == null ? "" : String(value);
+    return s.replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // Normalize an arbitrary parsed object against schema_version 2, supplying
+  // defaults so a partial or future island still renders. Unknown fields are
+  // ignored, not fatal. Severity counts are always derived from the findings
+  // array, never read from the island, so they cannot disagree with it. The
+  // synthesis blocks (grade, summary, themes, strengths, recommendations) and
+  // the experience block are OPTIONAL: each normalizes to an empty value that
+  // renders nothing rather than an empty panel or an error.
+  function normalize(raw) {
+    var obj = raw && typeof raw === "object" ? raw : {};
+    var rawFindings = Array.isArray(obj.findings) ? obj.findings : [];
+
+    var norm = {
+      schema_version: typeof obj.schema_version === "number" ? obj.schema_version : 2,
+      subject: obj.subject != null ? String(obj.subject) : "(unspecified)",
+      generated: obj.generated != null ? String(obj.generated) : "(unspecified)",
+      verdict: obj.verdict != null ? String(obj.verdict) : "(no verdict supplied)",
+      grade: GRADES.indexOf(String(obj.grade || "").toLowerCase()) >= 0
+        ? String(obj.grade).toLowerCase() : "",
+      summary: typeof obj.summary === "string" ? obj.summary : "",
+      standards: (obj.standards && typeof obj.standards === "object") ? {
+        canon: obj.standards.canon != null ? String(obj.standards.canon) : "",
+        principles: obj.standards.principles != null ? String(obj.standards.principles) : "",
+        scripts: obj.standards.scripts != null ? String(obj.standards.scripts) : ""
+      } : null,
+      themes: normalizeThemes(obj.themes),
+      strengths: normalizeStrengths(obj.strengths),
+      recommendations: normalizeRecommendations(obj.recommendations),
+      experience: normalizeExperience(obj.experience),
+      counts: { critical: 0, high: 0, medium: 0, low: 0 },
+      findings: []
+    };
+
+    rawFindings.forEach(function (f, i) {
+      if (!f || typeof f !== "object") { return; }
+      var sev = SEVERITIES.indexOf(f.severity) >= 0 ? f.severity : "low";
+      norm.findings.push({
+        id: f.id != null ? String(f.id) : "finding-" + (i + 1),
+        lens: f.lens != null ? String(f.lens) : "(unknown)",
+        severity: sev,
+        title: f.title != null ? String(f.title) : "(untitled finding)",
+        location: f.location != null ? String(f.location) : "",
+        evidence: f.evidence != null ? String(f.evidence) : "",
+        recommendation: f.recommendation != null ? String(f.recommendation) : "",
+        proposed_smallest: f.proposed_smallest != null ? String(f.proposed_smallest) : "",
+        predicted_delta: f.predicted_delta != null ? String(f.predicted_delta) : ""
+      });
+      norm.counts[sev] += 1;
+    });
+
+    return norm;
+  }
+
+  function normalizeThemes(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (t) {
+      if (!t || typeof t !== "object") { return; }
+      var ids = [];
+      if (Array.isArray(t.finding_ids)) {
+        t.finding_ids.forEach(function (id) { if (id != null) { ids.push(String(id)); } });
+      }
+      var title = t.title != null ? String(t.title) : "";
+      if (!title && !ids.length) { return; }
+      list.push({
+        title: title || "(untitled theme)",
+        root_cause: t.root_cause != null ? String(t.root_cause) : "",
+        action: t.action != null ? String(t.action) : "",
+        finding_ids: ids
+      });
+    });
+    return list;
+  }
+
+  function normalizeStrengths(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (s) {
+      if (typeof s === "string" && s) { list.push(s); }
+      else if (s && typeof s === "object" && s.title) {
+        list.push(String(s.title) + (s.detail ? " — " + String(s.detail) : ""));
+      }
+    });
+    return list;
+  }
+
+  function normalizeRecommendations(raw) {
+    if (!Array.isArray(raw)) { return []; }
+    var list = [];
+    raw.forEach(function (r, i) {
+      if (!r || typeof r !== "object") { return; }
+      var action = r.action != null ? String(r.action) : "";
+      if (!action) { return; }
+      var resolves = "";
+      if (Array.isArray(r.resolves)) { resolves = r.resolves.map(String).join(", "); }
+      else if (typeof r.resolves === "number") { resolves = r.resolves + " findings"; }
+      else if (r.resolves != null) { resolves = String(r.resolves); }
+      list.push({
+        rank: typeof r.rank === "number" ? r.rank : i + 1,
+        action: action,
+        resolves: resolves
+      });
+    });
+    list.sort(function (a, b) { return a.rank - b.rank; });
+    return list;
+  }
+
+  // Optional experience block: journeys plus a headless note. Returns null when
+  // neither is usable.
+  function normalizeExperience(raw) {
+    if (!raw || typeof raw !== "object") { return null; }
+    var journeys = [];
+    if (Array.isArray(raw.journeys)) {
+      raw.journeys.forEach(function (j) {
+        if (!j || typeof j !== "object") { return; }
+        var name = j.name != null ? String(j.name) : "";
+        var steps = j.steps != null ? String(j.steps) : "";
+        if (!name && !steps) { return; }
+        journeys.push({ name: name, steps: steps });
+      });
+    }
+    var headless = raw.headless != null ? String(raw.headless) : "";
+    if (!journeys.length && !headless) { return null; }
+    return { journeys: journeys, headless: headless };
+  }
+
+  function renderOverview(data) {
+    els.subject.textContent = data.subject;
+    els.generated.textContent = data.generated;
+    els.schema.textContent = String(data.schema_version);
+    els.verdict.textContent = data.verdict;
+
+    if (data.grade) {
+      els.grade.textContent = data.grade;
+      els.grade.className = "grade g-" + data.grade;
+      els.grade.hidden = false;
+    }
+    if (data.summary) {
+      els.summaryText.textContent = data.summary;
+      els.summaryText.hidden = false;
+    }
+
+    els.counts.innerHTML = "";
+    SEVERITIES.forEach(function (s) {
+      var pill = document.createElement("span");
+      pill.className = "pill";
+      pill.innerHTML =
+        '<span class="dot ' + s + '"></span>' +
+        '<span class="lbl">' + SEV_LABEL[s] + '</span>' +
+        '<span class="n">' + data.counts[s] + "</span>";
+      els.counts.appendChild(pill);
+    });
+    els.overview.hidden = false;
+  }
+
+  // Every copied fix prompt opens by anchoring the fixing session to the same
+  // standards that produced the findings, so the fix is held to the bar too.
+  function standardsPreamble() {
+    if (!standards || !standards.canon) { return []; }
+    var bar = standards.canon + (standards.principles ? " and " + standards.principles : "");
+    var lines = [
+      "Hold " + bar + " as the bar for every line you change — a fix that adds ceremony is a new finding, not a fix."
+    ];
+    if (standards.scripts) {
+      lines.push("If the fix adds or changes scripts, follow " + standards.scripts + ".");
+    }
+    lines.push("");
+    return lines;
+  }
+
+  function composeThemePrompt(theme, resolved) {
+    var lines = standardsPreamble();
+    lines.push("Fix the following theme in " + subjectPath + ": " + theme.title);
+    lines.push("");
+    if (theme.root_cause) { lines.push("Root cause: " + theme.root_cause); }
+    if (theme.action) { lines.push("Fix: " + theme.action); }
+    if (resolved.length) {
+      lines.push("");
+      lines.push("Findings to address:");
+      resolved.forEach(function (f, i) {
+        lines.push((i + 1) + ". " + f.title);
+        if (f.location) { lines.push("   Location: " + f.location); }
+        if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+        if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      });
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  function renderThemes(themes) {
+    if (!themes.length) { els.themes.hidden = true; return; }
+    els.themes.innerHTML = "<h2>Themes</h2>";
+    themes.forEach(function (t) {
+      var resolved = t.finding_ids
+        .map(function (id) { return findingsById[id]; })
+        .filter(function (f) { return !!f; });
+      var items = resolved.map(function (f) {
+        return '<div class="t-finding"><span class="mono">' + esc(f.id) + "</span> " +
+          esc(f.title) +
+          (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "") +
+          "</div>";
+      }).join("");
+
+      var node = document.createElement("div");
+      node.className = "theme";
+      node.innerHTML =
+        '<div class="t-head"><span class="t-title">' + esc(t.title) + "</span>" +
+        '<button class="small t-fix">Fix This Theme</button></div>' +
+        (t.root_cause ? '<div class="t-cause">Root cause: ' + esc(t.root_cause) + "</div>" : "") +
+        (t.action ? '<div class="t-action"><b>Fix:</b> ' + esc(t.action) + "</div>" : "") +
+        (items ? '<div class="t-findings">' + items + "</div>" : "");
+      node.querySelector(".t-fix").addEventListener("click", function () {
+        copyText(composeThemePrompt(t, resolved));
+      });
+      els.themes.appendChild(node);
+    });
+    els.themes.hidden = false;
+  }
+
+  function renderStrengths(list) {
+    if (!list.length) { els.strengths.hidden = true; return; }
+    els.strengths.innerHTML =
+      "<h2>Strengths</h2><ul class=\"strength-list\">" +
+      list.map(function (s) { return "<li>" + esc(s) + "</li>"; }).join("") +
+      "</ul>";
+    els.strengths.hidden = false;
+  }
+
+  function renderRecommendations(recs) {
+    if (!recs.length) { els.recommendations.hidden = true; return; }
+    var html = "<h2>Recommendations</h2>";
+    recs.forEach(function (r) {
+      html += '<div class="rec"><span class="rank">#' + esc(String(r.rank)) + "</span>" +
+        esc(r.action) +
+        (r.resolves ? '<span class="resolves">resolves: ' + esc(r.resolves) + "</span>" : "") +
+        "</div>";
+    });
+    els.recommendations.innerHTML = html;
+    els.recommendations.hidden = false;
+  }
+
+  function renderExperience(exp) {
+    if (!exp) { els.experience.hidden = true; return; }
+    var html = "<h2>Experience</h2>";
+    if (exp.journeys.length) {
+      html += exp.journeys.map(function (j) {
+        return '<div class="journey">' +
+          '<div class="j-name">' + esc(j.name || "(unnamed journey)") + "</div>" +
+          (j.steps ? '<div class="j-steps">' + esc(j.steps) + "</div>" : "") +
+          "</div>";
+      }).join("");
+    }
+    if (exp.headless) {
+      html += '<dl class="kv" style="margin-top:12px"><dt>Headless</dt><dd>' +
+        esc(exp.headless) + "</dd></dl>";
+    }
+    els.experience.innerHTML = html;
+    els.experience.hidden = false;
+  }
+
+  function renderNoFindings() {
+    els.root.innerHTML =
+      '<div class="no-findings">' +
+      '<div class="big">No findings</div>' +
+      "<div>The scanners returned a clean pass for this subject.</div>" +
+      "</div>";
+  }
+
+  function findingNode(f) {
+    var node = document.createElement("div");
+    node.className = "finding sev-" + f.severity;
+    node.setAttribute("data-id", f.id);
+
+    var sub =
+      esc(f.lens) +
+      (f.location ? ' · <span class="mono">' + esc(f.location) + "</span>" : "");
+
+    var rows =
+      "<dt>Lens</dt><dd>" + esc(f.lens) + "</dd>" +
+      (f.location ? "<dt>Location</dt><dd><code>" + esc(f.location) + "</code></dd>" : "") +
+      (f.evidence ? "<dt>Evidence</dt><dd>" + esc(f.evidence) + "</dd>" : "") +
+      (f.recommendation ? "<dt>Recommendation</dt><dd>" + esc(f.recommendation) + "</dd>" : "") +
+      (f.proposed_smallest ? "<dt>Proposed smallest</dt><dd>" + esc(f.proposed_smallest) + "</dd>" : "") +
+      (f.predicted_delta ? "<dt>Predicted delta</dt><dd>" + esc(f.predicted_delta) + "</dd>" : "");
+
+    node.innerHTML =
+      '<div class="row">' +
+      '<input type="checkbox" class="chk" aria-label="Select finding">' +
+      '<div class="head">' +
+      '<div class="title">' + esc(f.title) + "</div>" +
+      '<div class="sub">' + sub + "</div>" +
+      "</div>" +
+      '<span class="tag">' + SEV_LABEL[f.severity] + "</span>" +
+      '<span class="caret">▸</span>' +
+      "</div>" +
+      '<div class="body"><dl>' + rows + "</dl></div>";
+
+    var chk = node.querySelector(".chk");
+    chk.checked = !!selected[f.id];
+    chk.addEventListener("change", function () {
+      if (chk.checked) { selected[f.id] = true; } else { delete selected[f.id]; }
+      updateSelection();
+    });
+
+    var head = node.querySelector(".head");
+    var caret = node.querySelector(".caret");
+    function toggle() { node.classList.toggle("open"); }
+    head.addEventListener("click", toggle);
+    caret.addEventListener("click", toggle);
+
+    return node;
+  }
+
+  function renderFindings(list) {
+    els.root.innerHTML = "";
+    if (list.length === 0) {
+      renderNoFindings();
+      els.toolbar.hidden = true;
+      return;
+    }
+    els.toolbar.hidden = false;
+
+    SEVERITIES.forEach(function (sev) {
+      var group = list.filter(function (f) { return f.severity === sev; });
+      if (group.length === 0) { return; }
+      var wrap = document.createElement("div");
+      wrap.className = "group";
+      var h = document.createElement("h2");
+      h.innerHTML = '<span class="dot ' + sev + '"></span>' + SEV_LABEL[sev] + " (" + group.length + ")";
+      wrap.appendChild(h);
+      group.forEach(function (f) { wrap.appendChild(findingNode(f)); });
+      els.root.appendChild(wrap);
+    });
+  }
+
+  function updateSelection() {
+    var n = Object.keys(selected).length;
+    els.selCount.textContent = n + " selected";
+    els.btnCopy.disabled = n === 0;
+  }
+
+  function composePrompt() {
+    var picked = findings.filter(function (f) { return selected[f.id]; });
+    if (picked.length === 0) { return ""; }
+    var lines = standardsPreamble();
+    lines.push("Fix the following issues in " + subjectPath + ":");
+    lines.push("");
+    picked.forEach(function (f, i) {
+      lines.push((i + 1) + ". " + f.title);
+      if (f.location) { lines.push("   Location: " + f.location); }
+      if (f.evidence) { lines.push("   Evidence: " + f.evidence); }
+      if (f.recommendation) { lines.push("   Recommendation: " + f.recommendation); }
+      if (f.proposed_smallest) { lines.push("   Proposed smallest: " + f.proposed_smallest); }
+      lines.push("");
+    });
+    return lines.join("\n").replace(/\n+$/, "\n");
+  }
+
+  function showToast(text) {
+    els.toast.textContent = text;
+    els.toast.classList.add("show");
+    setTimeout(function () { els.toast.classList.remove("show"); }, 1600);
+  }
+
+  function fallbackCopy(text) {
+    els.fallbackText.value = text;
+    els.fallback.classList.add("show");
+    els.fallbackText.focus();
+    els.fallbackText.select();
+    try {
+      var ok = document.execCommand && document.execCommand("copy");
+      if (ok) {
+        showToast("Copied");
+        return;
+      }
+    } catch (e) { /* fall through to manual */ }
+    showToast("Copy the text shown below");
+  }
+
+  function copyText(text) {
+    if (!text) { return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { showToast("Copied"); },
+        function () { fallbackCopy(text); }
+      );
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function doCopy() {
+    copyText(composePrompt());
+  }
+
+  function wireToolbar() {
+    els.btnCopy.addEventListener("click", doCopy);
+    els.btnSelectAll.addEventListener("click", function () {
+      findings.forEach(function (f) { selected[f.id] = true; });
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = true; });
+      updateSelection();
+    });
+    els.btnClear.addEventListener("click", function () {
+      selected = Object.create(null);
+      document.querySelectorAll(".finding .chk").forEach(function (c) { c.checked = false; });
+      els.fallback.classList.remove("show");
+      updateSelection();
+    });
+    els.btnExpandAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.add("open"); });
+    });
+    els.btnCollapseAll.addEventListener("click", function () {
+      document.querySelectorAll(".finding").forEach(function (n) { n.classList.remove("open"); });
+    });
+  }
+
+  function init() {
+    var island = document.getElementById("report-data");
+    var parsed;
+    try {
+      if (!island) { throw new Error("report-data island element not found"); }
+      parsed = JSON.parse(island.textContent);
+    } catch (err) {
+      showBanner(
+        "Could not parse the report data island.\n\n" +
+        "Error: " + (err && err.message ? err.message : String(err)) + "\n\n" +
+        "The findings could not be rendered. The JSON inside the " +
+        'report-data island (the application/json script tag) is malformed.'
+      );
+      return;
+    }
+
+    var data = normalize(parsed);
+
+    if (data.subject === PLACEHOLDER_SUBJECT) {
+      els.subject.textContent = data.subject;
+      showBanner(
+        "This is the unfilled report shell.\n\n" +
+        "The report-data island still carries the placeholder subject, so " +
+        "there are no findings here. Generate a real report with " +
+        "scripts/render_report.py."
+      );
+      return;
+    }
+
+    findings = data.findings;
+    subjectPath = data.subject;
+    standards = data.standards;
+    findingsById = Object.create(null);
+    findings.forEach(function (f) { findingsById[f.id] = f; });
+
+    renderOverview(data);
+    renderThemes(data.themes);
+    renderStrengths(data.strengths);
+    renderRecommendations(data.recommendations);
+    renderExperience(data.experience);
+    renderFindings(findings);
+    wireToolbar();
+    updateSelection();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,171 @@
+{
+  "scanner": "path-standards",
+  "script": "scan-path-standards.py",
+  "version": "3.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-cross-version",
+  "timestamp": "2026-07-16T04:55:21.025647+00:00",
+  "files_scanned": [
+    ".analysis/2026-06-25-1852/findings.json",
+    ".analysis/2026-06-25-1852/lint-paths.json",
+    ".analysis/2026-06-25-1852/lint-scripts.json",
+    ".analysis/2026-06-25-1852/prepass-integrity.json",
+    ".analysis/2026-06-25-1852/prepass-metrics.json",
+    ".analysis/2026-06-25-1852/skill-analysis-report.md",
+    ".analysis/2026-07-16-1155/lint-paths.json",
+    ".analysis/2026-07-16-1155/lint-scripts.json",
+    ".analysis/2026-07-16-1155/prepass-integrity.json",
+    ".analysis/2026-07-16-1155/prepass-metrics.json",
+    ".memlog.md",
+    "SKILL.md",
+    "references/version-safe-patterns.md"
+  ],
+  "status": "fail",
+  "findings": [
+    {
+      "file": ".memlog.md",
+      "line": 0,
+      "severity": "high",
+      "category": "structure",
+      "title": "Prompt file at skill root: .memlog.md",
+      "detail": "All progressive disclosure content must be in ./references/ \u2014 only SKILL.md belongs at root",
+      "action": "Move .memlog.md to references/.memlog.md"
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/findings.json",
+      "line": 3,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"subject\": \"/home/budi/dev/prestashop-module/skills/psm-cross-version\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/findings.json",
+      "line": 9,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"canon\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/findings.json",
+      "line": 10,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"principles\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/findings.json",
+      "line": 11,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"scripts\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md\"",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/lint-paths.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/skills/psm-cross-version\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/lint-paths.json",
+      "line": 32,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"detail\": \"\\\"skill_path\\\": \\\"/home/budi/dev/prestashop-module/skills/psm-cross-version\\\",\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/lint-paths.json",
+      "line": 41,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"detail\": \"\\\"skill_path\\\": \\\"/home/budi/dev/prestashop-module/skills/psm-cross-version\\\",\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/lint-paths.json",
+      "line": 49,
+      "severity": "high",
+      "category": "relative-prefix",
+      "title": "Parent directory reference (../) found \u2014 fragile, breaks with reorganization",
+      "detail": "\"title\": \"Parent directory reference (../) found \\u2014 fragile, breaks with reorganization\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/lint-scripts.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/skills/psm-cross-version\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/prepass-integrity.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/skills/psm-cross-version\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/prepass-metrics.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/skills/psm-cross-version\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-1852/skill-analysis-report.md",
+      "line": 1,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "# Analysis Report: /home/budi/dev/prestashop-module/skills/psm-cross-version",
+      "action": ""
+    },
+    {
+      "file": ".memlog.md",
+      "line": 11,
+      "severity": "high",
+      "category": "relative-prefix",
+      "title": "Parent directory reference (../) found \u2014 fragile, breaks with reorganization",
+      "detail": "- (event) Bangun: SKILL.md (1459 token) + assets/version-safe-patterns.md (katalog pola per area dari riset devdocs). Ta",
+      "action": ""
+    }
+  ],
+  "assessments": {},
+  "summary": {
+    "total_findings": 14,
+    "by_severity": {
+      "critical": 0,
+      "high": 14,
+      "medium": 0,
+      "low": 0
+    },
+    "by_category": {
+      "double_prefix": 0,
+      "bare_bmad": 0,
+      "absolute_path": 11,
+      "relative_prefix": 2,
+      "cross_dir_dot_slash": 0,
+      "frontmatter": 0,
+      "structure": 1
+    },
+    "assessment": "Path standards scan complete"
+  }
+}
