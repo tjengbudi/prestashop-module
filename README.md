@@ -2,8 +2,8 @@
 
 Module BMad untuk membuat, mengembangkan, meng-cross-version-kan, memvalidasi, dan mengoptimasi module PrestaShop — satu codebase yang jalan di PrestaShop 1.7.x, 8.x, dan 9.x sekaligus.
 
-📖 **Dokumentasi lengkap (sumber tunggal):** [`skills/psm-setup/README.md`](skills/psm-setup/README.md)
-— instalasi, konfigurasi, [cara pakai + contoh end-to-end](skills/psm-setup/README.md#cara-pakai), [knowledge base](skills/psm-setup/README.md#knowledge-base), dan troubleshooting.
+📖 **Dokumentasi lengkap (sumber tunggal):** [`docs/psm/README.md`](docs/psm/README.md)
+— konfigurasi, [cara pakai + alur kerja](docs/psm/README.md#cara-pakai), [knowledge base](docs/psm/install.md#knowledge-base), dan troubleshooting. Panduan pasang dari nol: [`docs/psm/install.md`](docs/psm/install.md).
 
 Mulai cepat:
 1. `/psm-setup` — pasang & konfigurasi module
