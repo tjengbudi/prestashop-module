@@ -1,0 +1,128 @@
+{
+  "scanner": "prompt-metrics-prepass",
+  "script": "prepass-prompt-metrics.py",
+  "version": "2.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-optimize",
+  "timestamp": "2026-07-16T05:21:49.030335+00:00",
+  "budgets": {
+    "skill_md_tokens": [
+      1500,
+      2500
+    ],
+    "multi_branch_reference_tokens": 4500,
+    "single_purpose_reference_tokens": 9000
+  },
+  "skill_md": {
+    "tokens": 2781,
+    "token_method": "tiktoken",
+    "section_count": 8,
+    "frontmatter": {
+      "name": "psm-optimize",
+      "description": "Optimasi performa module PrestaShop via cache/service, cross-version. Use when the user says \"psm-optimize\", \"optimasi module PrestaShop\", \"percepat module\", or \"tuning performa module\".",
+      "description_chars": 186,
+      "description_has_angle_brackets": false,
+      "keys": [
+        "description",
+        "name"
+      ]
+    }
+  },
+  "aggregate": {
+    "total_files_scanned": 2,
+    "total_tokens": 3654,
+    "total_waste_patterns": 0,
+    "total_back_references": 0,
+    "files_with_numbered_prefix": 0
+  },
+  "reference_sizes": {
+    "optimization-catalog.md": {
+      "tokens": 1009,
+      "token_method": "tiktoken",
+      "numbered_prefix_filename": false
+    }
+  },
+  "files": [
+    {
+      "file": "SKILL.md",
+      "tokens": 2781,
+      "token_method": "tiktoken",
+      "sections": [
+        {
+          "level": 2,
+          "title": "Overview"
+        },
+        {
+          "level": 2,
+          "title": "Resolution rules"
+        },
+        {
+          "level": 2,
+          "title": "On Activation"
+        },
+        {
+          "level": 2,
+          "title": "Profil: ukur titik lambat"
+        },
+        {
+          "level": 2,
+          "title": "Identifikasi & rencana"
+        },
+        {
+          "level": 2,
+          "title": "Terapkan"
+        },
+        {
+          "level": 2,
+          "title": "Verifikasi (gerbang wajib)"
+        },
+        {
+          "level": 2,
+          "title": "Mode headless"
+        }
+      ],
+      "table_count": 0,
+      "table_rows": 0,
+      "fenced_block_count": 0,
+      "allcaps_directive_count": 0,
+      "numbered_prefix_filename": false,
+      "waste_patterns": [],
+      "back_references": [],
+      "frontmatter": {
+        "name": "psm-optimize",
+        "description": "Optimasi performa module PrestaShop via cache/service, cross-version. Use when the user says \"psm-optimize\", \"optimasi module PrestaShop\", \"percepat module\", or \"tuning performa module\".",
+        "description_chars": 186,
+        "description_has_angle_brackets": false,
+        "keys": [
+          "description",
+          "name"
+        ]
+      },
+      "is_skill_md": true
+    },
+    {
+      "file": ".memlog.md",
+      "tokens": 873,
+      "token_method": "tiktoken",
+      "sections": [],
+      "table_count": 0,
+      "table_rows": 0,
+      "fenced_block_count": 0,
+      "allcaps_directive_count": 0,
+      "numbered_prefix_filename": false,
+      "waste_patterns": [],
+      "back_references": [],
+      "frontmatter": {
+        "name": "",
+        "description": "",
+        "description_chars": 0,
+        "description_has_angle_brackets": false,
+        "keys": [
+          "intent",
+          "skill",
+          "updated"
+        ]
+      },
+      "is_skill_md": false
+    }
+  ]
+}

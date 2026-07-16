@@ -4,7 +4,9 @@ Peluang optimasi konkret yang memanfaatkan mekanisme PrestaShop, dengan titik
 deteksi dan pertimbangan lintas versi. Dipakai untuk **mengidentifikasi** apa yang
 bisa dipercepat dan **merancang** perbaikannya. Tiap optimasi harus tetap
 version-safe — lihat bagian Services/Cache di
-`{project-root}/skills/psm-cross-version/references/version-safe-patterns.md`.
+`<skills-dir>/psm-cross-version/references/version-safe-patterns.md`
+(`<skills-dir>` = direktori yang memuat skill psm-*, bukan mirror `skills/` di
+root project).
 
 Prinsip: ukur dulu (profil), baru optimasi titik yang terbukti lambat. Jangan
 optimasi spekulatif yang menambah kompleksitas tanpa bukti.
@@ -22,15 +24,20 @@ optimasi spekulatif yang menambah kompleksitas tanpa bukti.
 - **Query dalam loop** (N+1) — paling sering bikin lambat. Deteksi: `Db::getInstance()->...` atau `new ObjectModel(...)` di dalam `foreach` (di-surface oleh `scripts/ps-hotspot-scan.py`). Perbaikan: satu query dengan `IN(...)` / join, atau `PrestaShopCollection` dengan filter.
 - **Index** — pastikan kolom yang difilter ada index (cek SQL install module).
 - **DbQuery builder** untuk query yang dapat dibaca & aman lintas versi.
-- Plus higiene SQL umum (ambil kolom yang dipakai, bukan `SELECT *`).
 
 ## Service container & arsitektur
 
 - **Decorate > override** — untuk menyisipkan caching/logika ke service core, decorate (simpan `.inner`) lebih aman lintas versi daripada override. Lihat version-safe-patterns bagian Services.
-- **Lazy service** — service mahal sebaiknya tak dibangun bila tak dipakai; manfaatkan lazy loading container.
 - **Hook berat** — hook yang dipanggil di setiap halaman (mis. `displayHeader`) harus ringan; pindahkan kerja berat ke event yang lebih jarang atau cache hasilnya.
 
 ## Aset front (JS/CSS)
 
 - Daftarkan aset via `registerJavascript`/`registerStylesheet` (1.7+) dengan prioritas tepat; hindari inline besar.
-- Defer/async JS non-kritis. Hindari memuat aset di halaman yang tak butuh.
+
+## Bukti performa per kelas (dipakai gerbang Verifikasi)
+
+Bukti harus semetode dengan baseline — angka runtime dari `scripts/ps-profile-summary.py`, patokan statis dari `scripts/ps-hotspot-scan.py` — dan dibandingkan dengan blok baseline di `<module-path>/.psm-optimize-plan.md`, bukan dari ingatan.
+
+- **Baseline punya angka profiler** — ukur ulang dengan profiler yang sama, ringkas via `ps-profile-summary.py` yang sama, bandingkan JSON-nya dengan baseline. Syarat lolos: metrik membaik.
+- **Statis, kelas N+1 / hook berat** — jalankan ulang `ps-hotspot-scan.py`. Syarat lolos: jumlah kandidat (query-in-loop / hook berat) turun terhadap baseline.
+- **Statis, kelas cache/service/aset** — tak tampak di scan (scan hanya melihat query-in-loop & hook berat). Buktinya: mekanisme terpasang & jalur-pakainya terkonfirmasi dari diff (cache benar di-hit, service ter-decorate, aset ter-defer). Laporkan jujur: "kompatibilitas terverifikasi, mekanisme optimasi terpasang, performa runtime tak terukur (bukan kelas N+1) — perlu profiler untuk angka".

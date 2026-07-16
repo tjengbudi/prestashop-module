@@ -1,0 +1,75 @@
+{
+  "scanner": "workflow-integrity-prepass",
+  "script": "prepass-workflow-integrity.py",
+  "version": "1.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-optimize",
+  "timestamp": "2026-07-16T05:32:26.677189+00:00",
+  "status": "pass",
+  "metadata": {
+    "frontmatter": {
+      "name": "psm-optimize",
+      "description": "Optimasi performa module PrestaShop via cache/service, cross-version. Use when the user says \"psm-optimize\", \"optimasi module PrestaShop\", \"percepat module\", or \"tuning performa module\"."
+    },
+    "sections": [
+      {
+        "level": 2,
+        "title": "Overview",
+        "line": 8
+      },
+      {
+        "level": 2,
+        "title": "Resolution rules",
+        "line": 12
+      },
+      {
+        "level": 2,
+        "title": "On Activation",
+        "line": 19
+      },
+      {
+        "level": 2,
+        "title": "Profil: ukur titik lambat",
+        "line": 25
+      },
+      {
+        "level": 2,
+        "title": "Identifikasi & rencana",
+        "line": 35
+      },
+      {
+        "level": 2,
+        "title": "Terapkan",
+        "line": 41
+      },
+      {
+        "level": 2,
+        "title": "Verifikasi (gerbang wajib)",
+        "line": 47
+      },
+      {
+        "level": 2,
+        "title": "Mode headless",
+        "line": 57
+      }
+    ],
+    "workflow_type": "simple-workflow"
+  },
+  "stage_summary": {
+    "total_stages": 0,
+    "referenced": [],
+    "actual": [],
+    "missing_stages": [],
+    "orphaned_stages": []
+  },
+  "prompt_details": [],
+  "issues": [],
+  "summary": {
+    "total_issues": 0,
+    "by_severity": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    }
+  }
+}
