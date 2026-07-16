@@ -30,6 +30,19 @@ class Banner extends ObjectModel {
 }
 """
 FRONT = "<?php\nclass InvmodDisplayModuleFrontController extends ModuleFrontController {}\n"
+ADMIN_SF = """<?php
+namespace Inv\\Controller;
+class InvmodConfigController extends FrameworkBundleAdminController {}
+class InvmodStatsController extends PrestaShopAdminController {}
+"""
+MULTI_ENTITY = """<?php
+class Coupon extends ObjectModel {
+    public static $definition = ['table' => 'invmod_coupon', 'primary' => 'id_coupon'];
+}
+class Points extends ObjectModel {
+    public static $definition = ['table' => 'invmod_points', 'primary' => 'id_points'];
+}
+"""
 
 
 def check(name, cond):
@@ -47,7 +60,10 @@ def main():
         (mod / "vendor").mkdir()
         (mod / "invmod.php").write_text(MAIN)
         (mod / "src" / "Entity" / "Banner.php").write_text(ENTITY)
+        (mod / "src" / "Entity" / "Rewards.php").write_text(MULTI_ENTITY)
         (mod / "controllers" / "front" / "display.php").write_text(FRONT)
+        (mod / "src" / "Controller" / "Admin.php").parent.mkdir(parents=True, exist_ok=True)
+        (mod / "src" / "Controller" / "Admin.php").write_text(ADMIN_SF)
         # file di vendor harus diabaikan
         (mod / "vendor" / "junk.php").write_text("<?php class X extends ObjectModel {}\n")
 
@@ -57,10 +73,27 @@ def main():
         ok &= check("versi module terbaca", d["module_version"] == "1.2.0")
         ok &= check("registered hooks lengkap", set(d["registered_hooks"]) == {"displayHeader", "actionValidateOrder"})
         ok &= check("implemented hooks lengkap", set(d["implemented_hooks"]) == {"hookDisplayHeader", "hookActionValidateOrder"})
-        ok &= check("ObjectModel + tabel terdeteksi", d["object_models"] == [{"class": "Banner", "table": "invmod_banner", "file": "src/Entity/Banner.php"}])
+        ok &= check("ObjectModel + tabel terdeteksi", {(o["class"], o["table"]) for o in d["object_models"]}
+                    == {("Banner", "invmod_banner"), ("Coupon", "invmod_coupon"), ("Points", "invmod_points")})
+        ok &= check("tabel di-scope per body class (file multi-class tak menular)",
+                    next(o["table"] for o in d["object_models"] if o["class"] == "Points") == "invmod_points")
         ok &= check("front controller terdeteksi", any(c["type"] == "front" and c["class"] == "InvmodDisplayModuleFrontController" for c in d["controllers"]))
+        ok &= check("admin controller Symfony terdeteksi (FrameworkBundle + PrestaShopAdmin)",
+                    {c["class"] for c in d["controllers"] if c["type"] == "admin"}
+                    >= {"InvmodConfigController", "InvmodStatsController"})
         ok &= check("upgrade dir terdeteksi", d["has_upgrade_dir"] is True)
         ok &= check("vendor/ diabaikan (tak ada class X)", all("vendor" not in o["file"] for o in d["object_models"]))
+        ok &= check("looks_like_module true untuk module berisi", d["looks_like_module"] is True)
+        ok &= check("detection flag direct-parent-only", d["detection"] == "direct-parent-only")
+
+        # --- gerbang target: folder ber-.php tanpa sinyal struktur -> looks_like_module False ---
+        with tempfile.TemporaryDirectory() as td0:
+            empty = Path(td0) / "kosong"
+            empty.mkdir()
+            (empty / "readme.php").write_text("<?php // bukan module\n")
+            pe = subprocess.run(["uv", "run", str(INV), str(empty)], capture_output=True, text=True)
+            de = json.loads(pe.stdout)
+            ok &= check("looks_like_module false tanpa sinyal struktur", de["looks_like_module"] is False)
 
         # --- validate-plan: rencana bersih -> ok, rc=0 ---
         clean_plan = {"items": [{"function": "wishlist", "add_hooks": ["displayProductActions"],

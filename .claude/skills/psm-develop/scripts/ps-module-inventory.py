@@ -7,10 +7,15 @@
 Deterministik: emit fakta struktur yang dibutuhkan untuk merancang penambahan
 fungsi dengan aman, sehingga model tak perlu mem-parse PHP mentah tiap run:
 - hook yang sudah terdaftar (registerHook + method hookXxx)
-- ObjectModel + nama tabel ($definition['table'])
-- controller (front/admin)
+- ObjectModel + nama tabel ($definition['table'], dicari di body class masing-masing)
+- controller (front/admin — legacy ModuleAdmin/FrontController + Symfony
+  FrameworkBundleAdminController/PrestaShopAdminController)
 - daftar file
 - versi module & keberadaan folder upgrade/
+- looks_like_module: ada .php DAN minimal satu sinyal struktur (versi/hook/
+  ObjectModel/controller) — dipakai Gerbang target di SKILL.md
+- detection: "direct-parent-only" — class dikenali hanya dari parent langsung;
+  inheritance tak langsung (extends subclass konkret) tak terdeteksi
 
 Tiga mode:
 - default: emit JSON inventaris (peta titik sisip aman).
@@ -44,6 +49,10 @@ def build_inventory(module_dir):
     object_models = []              # {class, table, file}
     controllers = []                # {type, class, file}
     module_version = None
+    php_count = 0
+
+    ADMIN_PARENTS = ("ModuleAdminController", "FrameworkBundleAdminController",
+                     "PrestaShopAdminController")
 
     reg_re = re.compile(r"registerHook\(\s*['\"]([A-Za-z0-9_]+)['\"]", re.IGNORECASE)
     hookm_re = re.compile(r"function\s+hook([A-Za-z0-9_]+)\s*\(")
@@ -56,6 +65,7 @@ def build_inventory(module_dir):
             text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        php_count += 1
         rel = str(f.relative_to(module_dir))
         for m in reg_re.finditer(text):
             registered_hooks.add(m.group(1))
@@ -65,14 +75,18 @@ def build_inventory(module_dir):
             vm = ver_re.search(text)
             if vm:
                 module_version = vm.group(1)
-        for cm in class_re.finditer(text):
+        class_matches = list(class_re.finditer(text))
+        for i, cm in enumerate(class_matches):
             cls, parent = cm.group(1), cm.group(2).lstrip("\\")
             if "ObjectModel" in parent:
-                tm = table_re.search(text)
+                # cari 'table' hanya di body class ini (sampai class berikutnya),
+                # bukan file-wide — file multi-class tak boleh saling menular tabel
+                region = text[cm.end():class_matches[i + 1].start()] if i + 1 < len(class_matches) else text[cm.end():]
+                tm = table_re.search(region)
                 object_models.append({"class": cls, "table": tm.group(1) if tm else None, "file": rel})
             elif "ModuleFrontController" in parent:
                 controllers.append({"type": "front", "class": cls, "file": rel})
-            elif "ModuleAdminController" in parent:
+            elif any(a in parent for a in ADMIN_PARENTS):
                 controllers.append({"type": "admin", "class": cls, "file": rel})
 
     file_list = sorted(str(p.relative_to(module_dir)) for p in module_dir.rglob("*")
@@ -89,6 +103,10 @@ def build_inventory(module_dir):
         "has_upgrade_dir": (module_dir / "upgrade").is_dir(),
         "file_count": len(file_list),
         "files": file_list,
+        # aturan pasti Gerbang target: ada .php DAN minimal satu sinyal struktur
+        "looks_like_module": php_count > 0 and bool(
+            module_version or registered_hooks or implemented_hooks or object_models or controllers),
+        "detection": "direct-parent-only",
     }
 
 

@@ -1,0 +1,75 @@
+{
+  "scanner": "workflow-integrity-prepass",
+  "script": "prepass-workflow-integrity.py",
+  "version": "1.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-develop",
+  "timestamp": "2026-07-16T04:55:54.148820+00:00",
+  "status": "pass",
+  "metadata": {
+    "frontmatter": {
+      "name": "psm-develop",
+      "description": "Tambah fungsi e-commerce ke module PrestaShop existing, cross-version. Use when the user says \"psm-develop\", \"tambah fungsi ke module\", \"kembangkan module PrestaShop\", or \"tambah fitur module\"."
+    },
+    "sections": [
+      {
+        "level": 2,
+        "title": "Overview",
+        "line": 8
+      },
+      {
+        "level": 2,
+        "title": "Resolution rules",
+        "line": 12
+      },
+      {
+        "level": 2,
+        "title": "On Activation",
+        "line": 20
+      },
+      {
+        "level": 2,
+        "title": "Pahami module existing",
+        "line": 27
+      },
+      {
+        "level": 2,
+        "title": "Rancang fungsi & rencana",
+        "line": 37
+      },
+      {
+        "level": 2,
+        "title": "Terapkan",
+        "line": 51
+      },
+      {
+        "level": 2,
+        "title": "Verifikasi (gerbang wajib)",
+        "line": 57
+      },
+      {
+        "level": 2,
+        "title": "Mode headless",
+        "line": 67
+      }
+    ],
+    "workflow_type": "simple-workflow"
+  },
+  "stage_summary": {
+    "total_stages": 0,
+    "referenced": [],
+    "actual": [],
+    "missing_stages": [],
+    "orphaned_stages": []
+  },
+  "prompt_details": [],
+  "issues": [],
+  "summary": {
+    "total_issues": 0,
+    "by_severity": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    }
+  }
+}

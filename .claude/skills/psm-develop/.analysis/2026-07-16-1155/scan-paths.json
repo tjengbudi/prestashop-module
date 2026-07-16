@@ -1,0 +1,248 @@
+{
+  "scanner": "path-standards",
+  "script": "scan-path-standards.py",
+  "version": "3.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-develop",
+  "timestamp": "2026-07-16T04:55:55.530757+00:00",
+  "files_scanned": [
+    ".analysis/2026-06-25-2003/findings.json",
+    ".analysis/2026-06-25-2003/prepass-integrity.json",
+    ".analysis/2026-06-25-2003/prepass-metrics.json",
+    ".analysis/2026-06-25-2003/skill-analysis-report.md",
+    ".analysis/2026-07-08-2032/agent-analysis-report.md",
+    ".analysis/2026-07-08-2032/findings.json",
+    ".analysis/2026-07-08-2046/agent-analysis-report.md",
+    ".analysis/2026-07-08-2046/findings.json",
+    ".analysis/2026-07-08-2056/agent-analysis-report.md",
+    ".analysis/2026-07-08-2056/findings.json",
+    ".analysis/2026-07-08-2103/agent-analysis-report.md",
+    ".analysis/2026-07-08-2103/findings.json",
+    ".analysis/2026-07-16-1155/prepass-integrity.json",
+    ".analysis/2026-07-16-1155/prepass-metrics.json",
+    ".analysis/2026-07-16-1155/scan-paths.json",
+    ".memlog.md",
+    "SKILL.md",
+    "references/ecommerce-function-catalog.md"
+  ],
+  "status": "fail",
+  "findings": [
+    {
+      "file": ".memlog.md",
+      "line": 0,
+      "severity": "high",
+      "category": "structure",
+      "title": "Prompt file at skill root: .memlog.md",
+      "detail": "All progressive disclosure content must be in ./references/ \u2014 only SKILL.md belongs at root",
+      "action": "Move .memlog.md to references/.memlog.md"
+    },
+    {
+      "file": ".analysis/2026-06-25-2003/findings.json",
+      "line": 3,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"subject\": \"/home/budi/dev/prestashop-module/skills/psm-develop\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2003/findings.json",
+      "line": 9,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"canon\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2003/findings.json",
+      "line": 10,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"principles\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2003/findings.json",
+      "line": 11,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"scripts\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md\"",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2003/prepass-integrity.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/skills/psm-develop\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2003/prepass-metrics.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/skills/psm-develop\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-06-25-2003/skill-analysis-report.md",
+      "line": 1,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "# Analysis Report: /home/budi/dev/prestashop-module/skills/psm-develop",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2032/findings.json",
+      "line": 200,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"canon\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/prompt-quality-canon.md\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2032/findings.json",
+      "line": 201,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"principles\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/agent-quality-principles.md",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2032/findings.json",
+      "line": 202,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"scripts\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/script-standards.md\"",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2046/findings.json",
+      "line": 131,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"canon\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/prompt-quality-canon.md\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2046/findings.json",
+      "line": 132,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"principles\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/agent-quality-principles.md",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2046/findings.json",
+      "line": 133,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"scripts\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/script-standards.md\"",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2056/findings.json",
+      "line": 126,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"canon\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/prompt-quality-canon.md\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2056/findings.json",
+      "line": 127,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"principles\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/agent-quality-principles.md",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2056/findings.json",
+      "line": 128,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"scripts\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/script-standards.md\"",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2103/findings.json",
+      "line": 70,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"canon\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/prompt-quality-canon.md\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2103/findings.json",
+      "line": 71,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"principles\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/agent-quality-principles.md",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-08-2103/findings.json",
+      "line": 72,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"scripts\": \"/home/budi/dev/prestashop-module/.claude/skills/bmad-agent-builder/references/script-standards.md\"",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-16-1155/prepass-integrity.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/.claude/skills/psm-develop\",",
+      "action": ""
+    },
+    {
+      "file": ".analysis/2026-07-16-1155/prepass-metrics.json",
+      "line": 5,
+      "severity": "high",
+      "category": "absolute-path",
+      "title": "Absolute path found \u2014 not portable across machines",
+      "detail": "\"skill_path\": \"/home/budi/dev/prestashop-module/.claude/skills/psm-develop\",",
+      "action": ""
+    }
+  ],
+  "assessments": {},
+  "summary": {
+    "total_findings": 22,
+    "by_severity": {
+      "critical": 0,
+      "high": 22,
+      "medium": 0,
+      "low": 0
+    },
+    "by_category": {
+      "double_prefix": 0,
+      "bare_bmad": 0,
+      "absolute_path": 21,
+      "relative_prefix": 0,
+      "cross_dir_dot_slash": 0,
+      "frontmatter": 0,
+      "structure": 1
+    },
+    "assessment": "Path standards scan complete"
+  }
+}
