@@ -8,7 +8,7 @@ Module BMad untuk membuat, mengembangkan, meng-cross-version-kan, memvalidasi, d
 
 ## Apa isinya
 
-Satu agent konsultan + lima workflow + satu setup skill, berbagi knowledge base PrestaShop yang hidup.
+Satu agent konsultan + enam workflow + satu setup skill, berbagi knowledge base PrestaShop yang hidup.
 
 | Skill | Peran | Panggil saat |
 |---|---|---|
@@ -16,6 +16,7 @@ Satu agent konsultan + lima workflow + satu setup skill, berbagi knowledge base 
 | **psm-validate** | Validasi module di 1.7/8/9 (flashlight) + review adversarial e-commerce | "validasi module", "audit module", sebelum rilis |
 | **psm-cross-version** | Buat module existing kompatibel 1.7/8/9 sekaligus | "buat module compatible 1.7 8 9", module lama mau jalan di versi baru |
 | **psm-scaffold** | Bikin module PrestaShop baru cross-version dari nol | "bikin module baru" |
+| **psm-plan** | Rencanakan fungsi e-commerce module existing tanpa menerapkan; hasilnya dilanjutkan psm-develop | "rencanakan fungsi module", "buat rencana pengembangan module" |
 | **psm-develop** | Tambah fungsi e-commerce ke module existing tanpa regresi | "tambah fitur ke module", "kembangkan module" |
 | **psm-optimize** | Percepat module via cache/service tanpa memecah kompatibilitas | "optimasi module", "percepat module" |
 | **psm-setup** | Pasang & konfigurasi module ke project | "setup psm", sekali di awal |

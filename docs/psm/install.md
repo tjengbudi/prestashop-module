@@ -145,12 +145,13 @@ Tanya apa saja soal PrestaShop cross-version, brainstorm fungsi e-commerce, atau
 
 ---
 
-## Tujuh skill
+## Delapan skill
 
 | Skill | Perintah | Fungsi |
 |---|---|---|
 | psm-agent-expert | `/psm-agent-expert` | Konsultasi + kurator KB + routing workflow |
 | psm-scaffold | `/psm-scaffold` | Buat module baru dari nol |
+| psm-plan | `/psm-plan` | Rencanakan fitur tanpa menerapkan (dilanjutkan psm-develop) |
 | psm-develop | `/psm-develop` | Tambah fitur ke module existing |
 | psm-cross-version | `/psm-cross-version` | Jadikan satu codebase kompatibel 1.7/8/9 |
 | psm-validate | `/psm-validate` | Validasi & audit kompatibilitas (4 lapis) |
