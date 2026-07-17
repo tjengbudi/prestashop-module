@@ -246,14 +246,54 @@ def universal_smoke():
     }
 
 
+def deleted_specs(module_dir):
+    """Spec E2E yang git tahu ada, tapi tak ada di working tree. Return daftar nama file.
+
+    Spec yang merah membuat vonis jujur: `ready` jatuh karena ada coverage yang diniatkan
+    tapi tak jalan. Hapus filenya dan catatannya ikut mati bersamanya — jadi `ready` NAIK
+    justru karena uji berkurang. Satu-satunya yang masih mengingat spec itu pernah ada
+    adalah git, jadi ke sanalah kita bertanya.
+
+    Lingkupnya sengaja penghapusan yang BELUM di-commit (staged maupun tidak): itulah
+    jendela tempat "hapus uji yang merah lalu jalankan ulang validasi" terjadi. Penghapusan
+    yang sudah di-commit adalah keputusan yang terekam dan bisa ditinjau lewat diff-nya —
+    itu urusan review, bukan skrip ini, dan menandainya selamanya cuma bikin bising.
+
+    Bukan repo git / git tak terpasang / tests/e2e tak pernah dilacak -> [] (tak bisa tahu;
+    jangan menebak).
+    """
+    module_dir = Path(module_dir)
+    try:
+        r = subprocess.run(["git", "-C", str(module_dir), "status", "--porcelain",
+                            "--untracked-files=no", "--", "tests/e2e"],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode != 0:
+        return []
+    gone = set()
+    for line in r.stdout.splitlines():
+        # porcelain v1: "XY <path>" — X=index, Y=working tree. 'D' di salah satunya =
+        # file yang dilacak git hilang dari disk.
+        if len(line) > 3 and "D" in line[:2]:
+            name = Path(line[3:].strip().strip('"')).name
+            if name.endswith(".json"):
+                gone.add(name)
+    return sorted(gone)
+
+
 def discover_scenarios(module_dir):
     """Muat spec authored dari <module>/tests/e2e/*.json. Return (scenarios, notes).
 
     Spec tak valid (JSON rusak / tanpa 'steps' list / aksi tak dikenal) DILEWATI
     dengan catatan — tak crash, tak diam-diam hilang. Validasi aksi di sini supaya
-    typo (mis. 'expect_visable') tak pernah terbaca hijau.
+    typo (mis. 'expect_visable') tak pernah terbaca hijau. Spec yang DIHAPUS tapi masih
+    tercatat git juga dicatat: kalau tidak, menghapus uji yang merah menaikkan `ready`.
     """
     found, notes = [], []
+    for name in deleted_specs(module_dir):
+        notes.append(f"{name}: spec dihapus dari working tree tapi masih tercatat git — "
+                     "pulihkan (git checkout) atau commit penghapusannya sbg keputusan sadar")
     e2e_dir = Path(module_dir) / "tests" / "e2e"
     if not e2e_dir.is_dir():
         return found, notes

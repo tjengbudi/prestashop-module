@@ -11,6 +11,7 @@ page-tiruan (duck-typed). Jalankan: uv run scripts/tests/test-ps-e2e-run.py
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import tempfile
 from datetime import datetime
@@ -621,6 +622,78 @@ def main():
             setattr(mod, n, v)
         for n, v in saved_fl.items():
             setattr(mod.fl, n, v)
+
+    # --- det-4 residual (keputusan user 2026-07-17): menghapus spec yang MERAH dulu
+    # menaikkan `ready` — catatan "spec dilewati" mati bersama filenya, jadi vonis membaik
+    # justru karena coverage berkurang. Yang masih mengingat spec itu ada: git.
+    def _git(cwd, *args):
+        return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
+
+    with tempfile.TemporaryDirectory() as td:
+        repo = Path(td)
+        if _git(repo, "init", "-q").returncode != 0:
+            ok &= check("git tersedia untuk menguji deteksi spec terhapus", False)
+        else:
+            _git(repo, "config", "user.email", "t@t")
+            _git(repo, "config", "user.name", "t")
+            mdir = repo / "mymod"
+            (mdir / "tests" / "e2e").mkdir(parents=True)
+            (mdir / "mymod.php").write_text("<?php class MyMod extends Module {}")
+            spec_ok = mdir / "tests" / "e2e" / "checkout.json"
+            spec_bad = mdir / "tests" / "e2e" / "broken.json"
+            spec_ok.write_text(json.dumps(
+                {"name": "checkout", "steps": [{"action": "goto", "area": "fo", "path": "/"}]}))
+            spec_bad.write_text("{bukan json")
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-qm", "init")
+
+            ok &= check("spec lengkap -> tak ada catatan penghapusan", mod.deleted_specs(mdir) == [])
+            _, notes_present = mod.discover_scenarios(mdir)
+            ok &= check("spec rusak yang ADA -> dicatat sbg dilewati (ready jatuh)",
+                        any("gagal parse" in n for n in notes_present))
+
+            spec_bad.unlink()  # hapus spec yang merah, belum di-commit
+            ok &= check("spec dihapus (belum commit) -> git masih mengingatnya",
+                        mod.deleted_specs(mdir) == ["broken.json"])
+            _, notes_gone = mod.discover_scenarios(mdir)
+            ok &= check("penghapusan sampai ke scenario_notes -> `ready` tetap jatuh, "
+                        "bukan membaik karena uji dibuang",
+                        any("dihapus" in n and "broken.json" in n for n in notes_gone))
+
+            _git(repo, "rm", "-q", "--cached", "mymod/tests/e2e/broken.json")
+            ok &= check("penghapusan yang di-stage tetap terdeteksi (belum jadi keputusan terekam)",
+                        mod.deleted_specs(mdir) == ["broken.json"])
+
+            _git(repo, "commit", "-qam", "hapus spec broken (sadar)")
+            ok &= check("penghapusan yang DI-COMMIT -> berhenti dicatat (keputusan terekam, "
+                        "ditinjau lewat diff)", mod.deleted_specs(mdir) == [])
+
+            # JSON lain yang dihapus di luar tests/e2e BUKAN spec — pathspec-nya harus
+            # menyaring, kalau tidak setiap composer.json terhapus jadi "spec dihapus" palsu.
+            other = mdir / "composer.json"
+            other.write_text("{}")
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "-qm", "tambah composer")
+            other.unlink()
+            ok &= check("JSON terhapus di luar tests/e2e -> BUKAN spec (pathspec menyaring)",
+                        mod.deleted_specs(mdir) == [])
+
+            # Spec sehat yang dihapus juga terdeteksi — bukan cuma yang rusak.
+            spec_ok.unlink()
+            ok &= check("spec sehat yang dihapus juga terdeteksi", mod.deleted_specs(mdir) == ["checkout.json"])
+            # SELURUH folder tests/e2e lenyap: cek git harus mendahului early-return
+            # `not e2e_dir.is_dir()`, kalau tidak menghapus seluruh folder uji = senyap total.
+            (mdir / "tests" / "e2e").rmdir()
+            ok &= check("folder tests/e2e lenyap seluruhnya -> git ditanya sebelum early-return",
+                        not (mdir / "tests" / "e2e").is_dir()
+                        and any("checkout.json" in n and "dihapus" in n
+                                for n in mod.discover_scenarios(mdir)[1]))
+
+    with tempfile.TemporaryDirectory() as td:
+        plain = Path(td) / "mymod"
+        (plain / "tests" / "e2e").mkdir(parents=True)
+        ok &= check("bukan repo git -> [] (tak bisa tahu; jangan menebak)",
+                    mod.deleted_specs(plain) == [])
 
     # --- architecture-1 (analyze 2026-07-17-1024): nama screenshot deterministik + tanpa
     # cleanup = folder datar yang menumpuk PNG run-run lama, termasuk versi yang tak lagi
