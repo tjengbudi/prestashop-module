@@ -73,8 +73,13 @@ def test_full_config_all_keys():
     data = json.loads(res.stdout)
     check("full: target versions", data["psm_target_versions"] == "1.7.8,8.1,9.1", res.stdout)
     check("full: tag map", data["psm_flashlight_tag_map"] == "1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx", res.stdout)
-    check("full: modules_dir", data["psm_modules_dir"] == "{project-root}/modules", res.stdout)
-    check("full: reports_dir", data["psm_reports_dir"] == "{project-root}/_bmad-output/psm-validate", res.stdout)
+    # Path di-EKSPANSI sebelum meninggalkan resolver: yang keluar dari sini dipakai
+    # langsung sbg argumen CLI, dan token yang lolos ke titik pakai tak ditolak siapa pun
+    # (ps-plan-layers exit 0 sambil melihat folder harfiah '{project-root}/...').
+    check("full: modules_dir diekspansi ke path nyata",
+          data["psm_modules_dir"] == f"{proj}/modules", res.stdout)
+    check("full: reports_dir diekspansi ke path nyata",
+          data["psm_reports_dir"] == f"{proj}/_bmad-output/psm-validate", res.stdout)
 
 
 def test_missing_psm_keys_get_defaults():
@@ -91,8 +96,14 @@ def test_missing_psm_keys_get_defaults():
     check("default: e2e_enabled kanonik", data["psm_e2e_enabled"] == "true", res.stdout)
     check("default: e2e_browsers kanonik (selaras DEFAULT_BROWSERS skrip)",
           data["psm_e2e_browsers"] == "chromium,firefox", res.stdout)
-    check("default: reports_dir kanonik", data["psm_reports_dir"] == "{project-root}/_bmad-output/psm-validate", res.stdout)
+    check("default: reports_dir kanonik (diekspansi)",
+          data["psm_reports_dir"] == f"{proj}/_bmad-output/psm-validate", res.stdout)
     check("default: communication_language kanonik", data["communication_language"] == "Indonesia", res.stdout)
+    # Invarian yang menutup KELASNYA: tak satu pun nilai boleh membawa token keluar dari
+    # sini, apa pun key-nya — termasuk key path yang ditambahkan nanti.
+    leaked = [k for k, v in data.items() if isinstance(v, str) and "{project-root}" in v]
+    check("tak ada key yang membocorkan token {project-root} ke titik pakai",
+          leaked == [], f"bocor: {leaked}")
 
 
 def test_user_overlay_wins():
