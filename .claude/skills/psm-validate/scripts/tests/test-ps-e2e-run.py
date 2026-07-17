@@ -10,9 +10,12 @@ page-tiruan (duck-typed). Jalankan: uv run scripts/tests/test-ps-e2e-run.py
 """
 import importlib.util
 import json
+import re
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 MOD_PATH = Path(__file__).resolve().parent.parent / "ps-e2e-run.py"
 spec = importlib.util.spec_from_file_location("ps_e2e_run", MOD_PATH)
@@ -618,6 +621,24 @@ def main():
             setattr(mod, n, v)
         for n, v in saved_fl.items():
             setattr(mod.fl, n, v)
+
+    # --- architecture-1 (analyze 2026-07-17-1024): nama screenshot deterministik + tanpa
+    # cleanup = folder datar yang menumpuk PNG run-run lama, termasuk versi yang tak lagi
+    # dalam cakupan. Verifikasi visual Lapis 4 memvonis DARI gambar itu, jadi PNG basi bisa
+    # jadi `error` yang memblok atas bukti dari run yang sudah tak ada.
+    ok &= check("screenshot_dir None -> tetap None (fitur tetap opt-in)",
+                mod.run_shot_dir(None) is None)
+    d1 = mod.run_shot_dir("/tmp/shots")
+    ok &= check("screenshot ditulis ke subfolder per-run di bawah folder yang diminta",
+                d1.startswith("/tmp/shots/run-") and re.fullmatch(r"run-\d{8}-\d{6}", Path(d1).name) is not None)
+    # Dua run yang cakupannya beda tak boleh saling menimpa/menumpuk artefak.
+    with mock.patch.object(mod, "datetime") as fake_dt:
+        fake_dt.now.return_value = datetime(2026, 7, 17, 10, 0, 0)
+        a = mod.run_shot_dir("/tmp/shots")
+        fake_dt.now.return_value = datetime(2026, 7, 24, 11, 30, 0)
+        b = mod.run_shot_dir("/tmp/shots")
+    ok &= check("run berbeda -> folder berbeda (PNG minggu lalu tak bisa dibaca sbg bukti run ini)",
+                a != b and a.endswith("run-20260717-100000") and b.endswith("run-20260724-113000"))
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

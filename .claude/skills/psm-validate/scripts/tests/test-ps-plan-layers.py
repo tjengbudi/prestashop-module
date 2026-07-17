@@ -11,6 +11,7 @@ pernah memvonis atas bukti basi). Jalankan: uv run scripts/tests/test-ps-plan-la
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -116,6 +117,100 @@ def main():
         pa = mod.plan_layer(adv_fresh, TV, newest, None)
         ok &= check("lapis adversarial segar + cakupan dinyatakan -> reuse (lapis termahal tak diulang)",
                     pa["reuse"] is True)
+
+    # --- determinism-3 (analyze 2026-07-17-1024): vonis Lapis 1 punya DUA input (module
+    # DAN ruleset) tapi kesegaran cuma men-stat yang pertama. Aturan KB yang baru
+    # ditambahkan lalu tak pernah menyala: file lapis basi dipakai ulang & melapor pass,
+    # sementara SKILL.md melarang model membackstop-nya.
+    with tempfile.TemporaryDirectory() as td:
+        t = Path(td)
+        mod_dir = t / "mymod"
+        mod_dir.mkdir()
+        (mod_dir / "mymod.php").write_text("<?php class MyMod extends Module {}")
+        rules = t / "ps-rules.json"
+        rules.write_text('{"removed_hooks": []}')
+        extra = t / "extra.json"
+        extra.write_text('{"removed_hooks": []}')
+        layer = t / "mymod-static.json"
+
+        def _write_layer(ruleset_files, ruleset_mtime):
+            layer.write_text(json.dumps({
+                "module": "mymod", "versions": {v: {"pass": True} for v in TV},
+                "ruleset": {"files": [str(p.resolve()) for p in ruleset_files],
+                            "mtime": ruleset_mtime}}))
+            os.utime(layer, (9e9, 9e9))  # jauh lebih baru dari source: isolasi cek ruleset
+
+        base_state = mod.ss.ruleset_provenance([str(rules)])
+        _write_layer([rules], base_state["mtime"])
+        r = mod.plan_layer(layer, TV, 0.0, None, ruleset=base_state)
+        ok &= check("ruleset sama & tak berubah -> reuse", r["reuse"] is True)
+
+        with_extra = mod.ss.ruleset_provenance([str(rules), str(extra)])
+        r = mod.plan_layer(layer, TV, 0.0, None, ruleset=with_extra)
+        ok &= check("aturan KB BARU ditambahkan -> rerun (dulu: reuse, aturan tak pernah menyala)",
+                    r["reuse"] is False and "ruleset berbeda" in r["reason"])
+
+        os.utime(rules, (9e9 + 100, 9e9 + 100))  # ruleset inti disunting sesudah file lapis
+        r = mod.plan_layer(layer, TV, 0.0, None, ruleset=mod.ss.ruleset_provenance([str(rules)]))
+        ok &= check("ruleset inti lebih baru dari file lapis -> rerun",
+                    r["reuse"] is False and "lebih baru" in r["reason"])
+
+        _write_layer([rules], base_state["mtime"])
+        stale = json.loads(layer.read_text())
+        del stale["ruleset"]
+        layer.write_text(json.dumps(stale))
+        os.utime(layer, (9e9, 9e9))
+        r = mod.plan_layer(layer, TV, 0.0, None, ruleset=base_state)
+        ok &= check("file lapis tanpa jejak ruleset -> rerun (tak bisa dipastikan, jangan tebak)",
+                    r["reuse"] is False and "tak mencatat ruleset" in r["reason"])
+        r = mod.plan_layer(layer, TV, 0.0, None, ruleset=None)
+        ok &= check("lapis non-static tak dinilai atas ruleset (ruleset tak memproduksinya)",
+                    r["reuse"] is True)
+
+        # --- enhancement-1: spec E2E authored — satu-satunya input tulisan tangan —
+        # divalidasi di pra-pass, sebelum satu container pun boot.
+        e2e_dir = mod_dir / "tests" / "e2e"
+        e2e_dir.mkdir(parents=True)
+        (e2e_dir / "ok.json").write_text(json.dumps(
+            {"name": "ok", "steps": [{"action": "goto", "area": "fo", "path": "/"}]}))
+        (e2e_dir / "typo.json").write_text(json.dumps(
+            {"name": "bad", "steps": [{"action": "expect_visable", "selector": "#x"}]}))
+        # Jalur CLI: unit test memanggil plan_layer LANGSUNG, jadi wiring main() ->
+        # plan_layer(ruleset=...) tak tersentuh — persis mode "jalur CLI tanpa coverage"
+        # yang bikin test hijau di atas kode salah. Diuji lewat proses nyata.
+        reports = t / "reports"
+        reports.mkdir()
+        real_static = Path(mod.ss.DEFAULT_RULES)
+        subprocess.run(["uv", "run", str(Path(MOD_PATH).parent / "ps-static-scan.py"),
+                        str(mod_dir), "--versions", "9.1",
+                        "-o", str(reports / "mymod-static.json")],
+                       capture_output=True, text=True)
+
+        def _plan_cli(*extra):
+            r = subprocess.run(["uv", "run", str(MOD_PATH), str(mod_dir),
+                                "--reports-dir", str(reports), "--versions", "9.1", *extra],
+                               capture_output=True, text=True)
+            return json.loads(r.stdout)
+
+        ok &= check("CLI: ruleset sama -> static boleh reuse",
+                    _plan_cli()["layers"]["static"]["reuse"] is True and real_static.is_file())
+        ok &= check("CLI: --extra-rules diteruskan -> static rerun (wiring main() teruji)",
+                    _plan_cli("--extra-rules", str(extra))["layers"]["static"]["reuse"] is False)
+
+        sources, notes = mod._e2e_scenarios(mod_dir)
+        ok &= check("pra-pass menemukan spec authored yang sah", sources == ["ok.json"])
+        ok &= check("pra-pass menandai spec rusak SEBELUM container boot",
+                    len(notes) == 1 and "typo.json" in notes[0])
+        ok &= check("catatan menyebut kosakata yang SAH, bukan cuma yang salah",
+                    "expect_visible" in notes[0] and "goto" in notes[0])
+        # Emisi main() (verifier adversarial): fungsinya teruji, tapi penulisan kedua field
+        # ke JSON dulu NOL coverage — seluruh output pra-pass bisa dihapus tanpa satu test
+        # pun merah. Diuji lewat proses nyata, seperti wiring ruleset di main() yang sama.
+        plan = _plan_cli()
+        ok &= check("CLI: e2e_scenarios sampai ke JSON pra-pass", plan.get("e2e_scenarios") == ["ok.json"])
+        ok &= check("CLI: e2e_scenario_notes sampai ke JSON pra-pass",
+                    len(plan.get("e2e_scenario_notes") or []) == 1
+                    and "typo.json" in plan["e2e_scenario_notes"][0])
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

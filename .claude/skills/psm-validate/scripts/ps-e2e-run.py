@@ -58,7 +58,9 @@ Placeholder yang disubstitusi di `path`/`url`/`text`/`value`: {mod} {fo} {bo} {b
 Area default `fo`. {browser} = engine aktif — pakai untuk nama data unik per-browser
 (browser berbagi satu DB per versi; duplikat data = temuan memblok palsu).
 
-Prasyarat browser (sekali, host): `playwright install chromium firefox`.
+Prasyarat browser (sekali, host): `uv run --with playwright playwright install chromium firefox`
+— lewat playwright yang sama dgn yang diprovisi header PEP723 skrip ini, supaya build browser
+yang di-install cocok dgn yang di-drive.
 """
 import argparse
 import importlib.util
@@ -69,6 +71,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 # Pakai-ulang orkestrasi Docker dari sibling ps-flashlight-run.py (impor by-path
@@ -262,13 +265,18 @@ def discover_scenarios(module_dir):
             continue
         steps = data.get("steps") if isinstance(data, dict) else None
         if not isinstance(steps, list) or not steps:
-            notes.append(f"{f.name}: tak ada 'steps' list — dilewati")
+            notes.append(f"{f.name}: tak ada 'steps' list — dilewati "
+                         '(bentuk: {"name": "...", "steps": [{"action": "goto", ...}]})')
             continue
+        # Catatan menyebut kosakata yang SAH, bukan cuma yang salah: spec adalah satu-satunya
+        # input yang ditulis tangan manusia, dan tanpa daftar ini penulisnya harus menebak
+        # atau membuka --help — padahal SUPPORTED_ACTIONS ada tepat di sini.
         unknown = sorted({str((s.get("action") if isinstance(s, dict) else None) or "?")
                           for s in steps
                           if not isinstance(s, dict) or s.get("action") not in SUPPORTED_ACTIONS})
         if unknown:
-            notes.append(f"{f.name}: aksi tak dikenal ({', '.join(unknown)}) — dilewati")
+            notes.append(f"{f.name}: aksi tak dikenal ({', '.join(unknown)}) — dilewati; "
+                         f"sah: {', '.join(SUPPORTED_ACTIONS)}")
             continue
         found.append({"name": data.get("name") or f.stem, "source": f.name, "steps": steps})
     return found, notes
@@ -300,6 +308,20 @@ def _resolve_url(step, ctx, area):
         return substitute(step["url"], ctx)
     base = ctx["fo"] if area == "fo" else ctx["bo"]
     return base + substitute(step.get("path", ""), ctx)
+
+
+def run_shot_dir(base):
+    """Subfolder screenshot khusus run ini — `<base>/run-<YYYYMMDD-HHMMSS>`.
+
+    Nama file screenshot deterministik (`<ver>/<engine>-<skenario>-<label>.png`) dan tak
+    pernah dibersihkan, jadi satu folder datar menumpuk PNG dari run-run sebelumnya —
+    termasuk versi yang tak lagi dalam cakupan run sekarang. Verifikasi visual Lapis 4
+    menyuruh model MEMVONIS dari gambar itu, jadi folder datar membuka jalan: layout rusak
+    dari run minggu lalu ditulis jadi `error` yang MEMBLOK module, atas bukti dari run yang
+    sudah tak ada. Memisahkan per-run menghapus kelasnya di sumber — lebih baik daripada
+    menaruh gotcha yang harus diingat model.
+    """
+    return str(Path(base) / f"run-{datetime.now():%Y%m%d-%H%M%S}") if base else None
 
 
 def _snap(page, ctx, label):
@@ -852,9 +874,10 @@ def main():
     scenarios = [universal_smoke()] + authored
 
     tag_map = fl.parse_tag_map(args.tag_map, args.extra_tag_map)
+    shot_dir = run_shot_dir(args.screenshot_dir)
     result = {"module": mod_name, "e2e_available": True, "status": "ran",
               "orchestrator": args.orchestrator, "browsers": requested, "browsers_available": usable,
-              "headed": args.headed, "screenshot_dir": args.screenshot_dir,
+              "headed": args.headed, "screenshot_dir": shot_dir,
               "scenario_sources": ["builtin:psm-universal-smoke"] + [s["source"] for s in authored],
               "scenario_notes": notes, "versions": {}}
     overall_pass = True
@@ -870,7 +893,7 @@ def main():
                             admin_email=args.admin_email, admin_password=args.admin_password,
                             startup_timeout=args.startup_timeout, op_timeout=args.timeout,
                             nav_timeout=args.nav_timeout * 1000, allow_pull=args.allow_image_pull,
-                            headed=args.headed, screenshot_dir=args.screenshot_dir)
+                            headed=args.headed, screenshot_dir=shot_dir)
         result["versions"][full_ver] = r
         overall_pass = overall_pass and r["pass"]
     result["pass"] = overall_pass

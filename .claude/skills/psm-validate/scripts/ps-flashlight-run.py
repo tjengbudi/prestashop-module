@@ -274,9 +274,20 @@ def _compose_file_text(db_image, image_ref, ps_domain, module_dir, publish=None)
     )
 
 
+CONTAINER_PREFIX = "psm-fl"  # SATU prefix untuk KEDUA orkestrator — lihat _project_name
+
+
 def _project_name(full_ver):
+    """Nama project compose — ber-prefix sama dgn jalur manual (CONTAINER_PREFIX).
+
+    Dulu compose memakai `psmfl<ver><uid>` sementara jalur manual memakai `psm-fl-ps-<uid>`:
+    dua konvensi untuk satu pertanyaan ("container mana milik skrip ini"). Akibatnya perintah
+    pembersihan port-bocor `--filter name=psmfl` TIDAK cocok dgn container jalur manual —
+    justru jalur yang dipakai saat `docker compose` absen, dan yang memegang port host. Satu
+    prefix = satu filter (`--filter name=psm-fl`) menangkap keduanya.
+    """
     v = re.sub(r"[^a-z0-9]", "", full_ver.lower())
-    return f"psmfl{v}{uuid.uuid4().hex[:8]}"
+    return f"{CONTAINER_PREFIX}-{v}-{uuid.uuid4().hex[:8]}"
 
 
 def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout, publish=None):
@@ -302,8 +313,8 @@ def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_t
 
 def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout, publish=None):
     uid = uuid.uuid4().hex[:8]
-    session = {"mode": "manual", "network": f"psm-fl-net-{uid}",
-               "db": f"psm-fl-db-{uid}", "ps_container": f"psm-fl-ps-{uid}"}
+    session = {"mode": "manual", "network": f"{CONTAINER_PREFIX}-net-{uid}",
+               "db": f"{CONTAINER_PREFIX}-db-{uid}", "ps_container": f"{CONTAINER_PREFIX}-ps-{uid}"}
     n = subprocess.run(["docker", "network", "create", session["network"]], capture_output=True, text=True)
     if n.returncode != 0:
         return session, f"gagal buat network: {n.stderr.strip()[-200:]}"

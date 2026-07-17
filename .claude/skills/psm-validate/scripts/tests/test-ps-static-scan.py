@@ -299,6 +299,92 @@ def main():
                     for g, items in rules_doc.items() if g != "_meta"
                     for r in items for a in r["affects"]))
 
+    # --- determinism-2 (analyze 2026-07-17-1024): "folder mana yang BUKAN source module"
+    # punya satu pemilik (is_skipped) tapi dulu cuma satu call site. Dua seam lain
+    # hand-roll: cabang glob tak menyaring sama sekali, index_php_each_dir mencocokkan
+    # "vendor" di path ABSOLUT (buta node_modules/.git, dan membuang module yang kebetulan
+    # berada di bawah ancestor bernama vendor/).
+    with tempfile.TemporaryDirectory() as td3:
+        t3 = Path(td3)
+        m = make_module(t3, "skipmod", GOOD_MAIN)
+        for third in ("vendor/acme", "node_modules/pkg", ".git"):
+            d = m / third
+            d.mkdir(parents=True)
+            (d / "bad.php").write_text("<?php eval($x);")
+            (d / "bad.tpl").write_text("{$x nofilter}")
+        res, rc = run_scan(m, "9.1")
+        locs = [o["file"] for f in res["versions"]["9.1"]["findings"] for o in f.get("occurrences", [])]
+        ok &= check("seam struktural: index.php tak dituntut di vendor/node_modules/.git",
+                    not any(k in l for l in locs for k in ("vendor", "node_modules", ".git")))
+        extra = t3 / "extra.json"
+        extra.write_text(json.dumps({"forbidden_functions": [
+            {"id": "kb-no-eval", "severity": "error", "kind": "function", "message": "eval terlarang",
+             "fix": "buang eval", "files": ["*.php"], "pattern": r"eval\(", "affects": ["9"]}]}))
+        res, rc = run_scan(m, "9.1", ["--extra-rules", str(extra)])
+        ok &= check("seam glob (jalur aturan KB): eval di vendor pihak-ketiga TAK memblok module bersih",
+                    res["pass"] and rc == 0)
+        nest = t3 / "vendor" / "proj"
+        nest.mkdir(parents=True)
+        m2 = make_module(nest, "nestmod", BAD_MAIN)
+        (m2 / "sub").mkdir()
+        (m2 / "sub" / "x.php").write_text("<?php")
+        res, _ = run_scan(m2, "9.1")
+        ids = [f["id"] for f in res["versions"]["9.1"]["findings"]]
+        ok &= check("module DI BAWAH ancestor vendor/ tetap dipindai (bukan diam-diam kosong)",
+                    "cls-attribute" in ids and "struct-index-php" in ids)
+
+    # --- determinism-3 (sisi produsen): output WAJIB membawa jejak ruleset yang
+    # memproduksinya. Ini kontrak lintas-skrip — ps-plan-layers memutuskan reuse dari
+    # jejak ini; tanpa jejak, ia tak punya dasar dan (benar) menolak reuse selamanya.
+    with tempfile.TemporaryDirectory() as td5:
+        t5 = Path(td5)
+        m5 = make_module(t5, "provmod", GOOD_MAIN)
+        res, _ = run_scan(m5, "9.1")
+        prov = res.get("ruleset")
+        ok &= check("output static mencatat jejak ruleset (files + mtime)",
+                    isinstance(prov, dict) and len(prov.get("files") or []) == 1
+                    and isinstance(prov.get("mtime"), float) and prov["mtime"] > 0)
+        x5 = t5 / "extra.json"
+        x5.write_text(json.dumps({"removed_hooks": []}))
+        res, _ = run_scan(m5, "9.1", ["--extra-rules", str(x5)])
+        ok &= check("jejak ruleset ikut memuat --extra-rules (aturan KB bagian dari vonis)",
+                    len(res["ruleset"]["files"]) == 2
+                    and any("extra.json" in f for f in res["ruleset"]["files"]))
+
+    # --- determinism-5: "bukan module PrestaShop" vs "aku tak bisa memilih" adalah dua
+    # jawaban berbeda; meleburnya jadi main_file_found:false membuat stop terminal
+    # memvonis module nyata yang nama folder-nya tak cocok.
+    with tempfile.TemporaryDirectory() as td4:
+        t4 = Path(td4)
+        conv = make_module(t4, "convmod", GOOD_MAIN)
+        f, reason = _scan_mod.find_main_file(conv)
+        ok &= check("konvensi <folder>.php -> ketemu, tanpa alasan", f is not None and reason is None)
+        mm = t4 / "clonemod-master"
+        mm.mkdir()
+        (mm / "clonemod.php").write_text(GOOD_MAIN)
+        (mm / "autoload.php").write_text("<?php // helper")
+        (mm / "index.php").write_text("<?php")
+        f, reason = _scan_mod.find_main_file(mm)
+        ok &= check("nama folder tak cocok -> dipilih via 'extends Module' (dulu: 'bukan module')",
+                    f is not None and f.name == "clonemod.php" and reason is None)
+        empty = t4 / "nomod"
+        empty.mkdir()
+        (empty / "readme.txt").write_text("hi")
+        f, reason = _scan_mod.find_main_file(empty)
+        ok &= check("tanpa PHP di root -> no_php_at_root (satu-satunya alasan berhenti)",
+                    f is None and reason == "no_php_at_root")
+        amb = t4 / "ambmod"
+        amb.mkdir()
+        (amb / "a.php").write_text("<?php class A extends Module {}")
+        (amb / "b.php").write_text("<?php class B extends Module {}")
+        f, reason = _scan_mod.find_main_file(amb)
+        ok &= check("dua kandidat extends Module -> ambiguous_main_file, bukan 'bukan module'",
+                    f is None and reason == "ambiguous_main_file")
+        res, _ = run_scan(amb, "9.1")
+        ok &= check("CLI: main_file_reason + kandidat disurface supaya model bisa memilih",
+                    res.get("main_file_reason") == "ambiguous_main_file"
+                    and res.get("main_file_candidates") == ["a.php", "b.php"])
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

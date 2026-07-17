@@ -8,9 +8,21 @@ Menguji parsing (tag-map, install, phpstan), pembuatan compose, gerbang kesiapan
 dan degrade jujur — semua tanpa menjalankan container nyata (image besar). Docker
 di-monkeypatch. Jalankan: uv run scripts/tests/test-ps-flashlight-run.py
 """
+import ast
 import importlib.util
+import re
 import sys
 from pathlib import Path
+
+
+def _literal_const(path, name):
+    """Baca konstanta literal top-level dari file Python TANPA mengimpornya."""
+    for node in ast.parse(Path(path).read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == name for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"konstanta {name} tak ditemukan di {path}")
+
 
 MOD_PATH = Path(__file__).resolve().parent.parent / "ps-flashlight-run.py"
 spec = importlib.util.spec_from_file_location("ps_flashlight_run", MOD_PATH)
@@ -132,6 +144,66 @@ def main():
                     r["orchestrator"] == "compose" and r["pass"] is False and r["install"] is None)
     finally:
         mod.image_present, mod.compose_available = orig_present, orig_compose
+
+    # --- Port-leak (verifier adversarial, ronde 2026-07-17-1024): "container mana milik
+    # skrip ini" sempat punya DUA konvensi — compose `psmfl<ver><uid>` vs manual
+    # `psm-fl-ps-<uid>` — jadi perintah pembersihan `--filter name=psmfl` TAK cocok dgn
+    # jalur manual, justru jalur yang dipakai saat compose absen & yang memegang port host.
+    proj = mod._project_name("9.1")
+    ok &= check("nama project compose ber-prefix CONTAINER_PREFIX (satu konvensi)",
+                proj.startswith(mod.CONTAINER_PREFIX + "-") and "9" in proj)
+    ok &= check("nama project compose tetap sah utk docker compose (lowercase/angka/hyphen)",
+                re.fullmatch(r"[a-z0-9][a-z0-9_-]*", proj) is not None)
+    # Jalur manual menamai container di dalam _bring_up_manual (butuh Docker), jadi yang
+    # dijaga di sini: namanya DITURUNKAN dari konstanta yang sama, bukan hardcode terpisah.
+    fl_src = MOD_PATH.read_text(encoding="utf-8")
+    ok &= check("nama container jalur manual diturunkan dari CONTAINER_PREFIX yang sama",
+                all(f'f"{{CONTAINER_PREFIX}}-{part}-{{uid}}"' in fl_src
+                    for part in ("net", "db", "ps")))
+    # Perintah cleanup hidup di PROSA (SKILL.md gotcha Lapis 2 + quickstart) sementara nama
+    # container hidup di KODE. Verifier menemukan keduanya sudah berpisah sekali; kunci
+    # keduanya ke konstanta yang sama supaya prosa tak bisa mendrift dari kode diam-diam.
+    skill_root = MOD_PATH.parent.parent
+    cleanup = f"--filter name={mod.CONTAINER_PREFIX}"
+    for doc in ("SKILL.md", "references/e2e-quickstart.md"):
+        ok &= check(f"perintah cleanup di {doc} memakai prefix yang benar-benar dipakai skrip",
+                    cleanup in (skill_root / doc).read_text(encoding="utf-8"))
+
+    # --- customization-2 (analyze 2026-07-17-1024): default kanonik punya DUA salinan —
+    # PSM_DEFAULTS di resolver dan konstanta di skrip lapis — dan SKILL.md merestui salinan
+    # skrip sbg jalur sah ("resolver absen? lanjut dengan default kanonik skrip"). Jadi
+    # keduanya WAJIB identik, tapi tak ada test yang membandingkannya: drift ini pernah
+    # ter-ship (tag 9.0=nightly & 8.1=8.1 usang) dan ditemukan user, bukan CI.
+    resolver_path = (Path(__file__).resolve().parents[3]
+                     / "psm-setup" / "scripts" / "resolve-psm-config.py")
+    if not resolver_path.is_file():
+        ok &= check(f"resolver ditemukan utk cek drift ({resolver_path})", False)
+    else:
+        # Konstanta dibaca lewat ast, bukan impor: resolver memikul dep pyyaml dan
+        # sys.exit(2) bila absen (mematikan proses test), sedangkan ps-e2e-run memikul
+        # playwright. Yang diperiksa cuma literal, jadi jangan seret runtime-nya.
+        D = _literal_const(resolver_path, "PSM_DEFAULTS")
+        e2e_browsers = _literal_const(
+            Path(__file__).resolve().parent.parent / "ps-e2e-run.py", "DEFAULT_BROWSERS")
+
+        ok &= check("drift: DEFAULT_TAG_MAP skrip == psm_flashlight_tag_map resolver",
+                    mod.parse_tag_map("") == mod.parse_tag_map(D["psm_flashlight_tag_map"]))
+        ok &= check("drift: DEFAULT_DB_IMAGE == psm_flashlight_db_image",
+                    mod.DEFAULT_DB_IMAGE == D["psm_flashlight_db_image"])
+        ok &= check("drift: DEFAULT_PS_DOMAIN == psm_flashlight_ps_domain",
+                    mod.DEFAULT_PS_DOMAIN == D["psm_flashlight_ps_domain"])
+        ok &= check("drift: DEFAULT_STARTUP_TIMEOUT == psm_flashlight_startup_timeout",
+                    str(mod.DEFAULT_STARTUP_TIMEOUT) == D["psm_flashlight_startup_timeout"])
+        ok &= check("drift: DEFAULT_BROWSERS ps-e2e-run == psm_e2e_browsers",
+                    e2e_browsers == D["psm_e2e_browsers"])
+        # --versions default: satu sumber kebenaran, empat salinan literal di argparse.
+        scripts_dir = Path(__file__).resolve().parent.parent
+        drifted = [name for name in ("ps-flashlight-run.py", "ps-e2e-run.py",
+                                     "ps-static-scan.py", "ps-plan-layers.py")
+                   if f'"--versions", default="{D["psm_target_versions"]}"'
+                   not in (scripts_dir / name).read_text(encoding="utf-8")]
+        ok &= check(f"drift: --versions default tiap skrip == psm_target_versions ({drifted or 'selaras'})",
+                    drifted == [])
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

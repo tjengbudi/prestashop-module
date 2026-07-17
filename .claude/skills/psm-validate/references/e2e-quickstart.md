@@ -130,7 +130,10 @@ Assertion lolos ≠ tampilan benar ≠ tak ada error di browser. Tiga alat, semu
 # 1) Screenshot per halaman + pada kegagalan (artefak visual untuk dilihat mata)
 uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium \
   --screenshot-dir ./e2e-shots -o e2e.json
-#   -> ./e2e-shots/9.1/chromium-<scenario>-*.png ; path juga di JSON (per-versi "screenshots")
+#   -> ./e2e-shots/run-<YYYYMMDD-HHMMSS>/9.1/chromium-<scenario>-*.png ; path juga di JSON
+#      (per-versi "screenshots"; top-level "screenshot_dir" = folder run ini). Subfolder
+#      per-run: nama file deterministik, jadi tanpa pemisahan ini PNG run lama menumpuk di
+#      folder yang sama & bisa terbaca sebagai bukti run sekarang.
 
 # 2) Error JS/console: selalu ditangkap (advisory, non-blok) -> field "console_errors" +
 #    browser_notes. Untuk menegakkan, taruh {"action":"expect_no_console_error"} di skenario.
@@ -140,11 +143,25 @@ uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium --heade
 #   opt-in eksplisit; jangan di headless/CI. Tanpa display -> skipped_browser (degrade jujur).
 ```
 
+### Kanal cacat visual → vonis
+
+Screenshot yang kamu tinjau **tak punya jalan ke vonis** kecuali lewat file lapis
+adversarial (`<psm_reports_dir>/<module>-adversarial.json`) — `ps-aggregate.py` tak pernah
+melihat gambar. Cacat visual yang kamu yakini, tulis ke situ SEBELUM agregat jalan:
+
+- **Tambahkan** ke `findings` yang sudah ada — jangan timpa: di file itu ada temuan
+  reviewer Lapis 3, dan menimpanya membuang temuan mereka diam-diam.
+- `severity: "error"` supaya memblok (`warning` tak pernah memblok).
+- Pastikan `versions` top-level **memuat versi yang kamu lihat sendiri**. Agregat menandai
+  versi di luar cakupan itu tak konklusif dan membuang temuannya — termasuk temuanmu.
+- Bentuk lengkap + aturan yang ditegakkan (pelanggaran = exit 2): `adversarial-lens.md`.
+
 ## 4. Gotchas
 
 - **Port bocor.** Run yang di-kill paksa bisa meninggalkan container yang memegang port
-  `psm_flashlight_ps_domain` (default `localhost:8000`) → run berikut gagal bind. Bersihkan:
-  `docker ps -aq --filter name=psmfl | xargs -r docker rm -f && docker network ls --filter name=psm-fl-net -q | xargs -r docker network rm`.
+  `psm_flashlight_ps_domain` (default `localhost:8000`) → run berikut gagal bind. Bersihkan
+  (satu prefix `psm-fl` menangkap kedua orkestrator — compose & manual):
+  `docker ps -aq --filter name=psm-fl | xargs -r docker rm -f && docker network ls --filter name=psm-fl -q | xargs -r docker network rm`.
 - **Headless / CI.** Jalankan **tanpa** `--allow-image-pull` (tak akan auto-tarik image) →
   pra-tarik dulu; browser juga wajib sudah di-`install` (tak auto-download di headless).
 - **Login BO.** Default flashlight `admin@prestashop.com` / `prestashop`, folder `admin-dev`
@@ -157,9 +174,10 @@ uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium --heade
   skenario yang membuat data menghasilkan duplikat saat browser kedua jalan. Beri nama
   data ber-placeholder `{browser}` supaya unik per-engine, atau assertion yang toleran duplikat.
 - **Jangan percaya `overall pass` saja.** Cek: (1) `scenario_sources` memuat semua skenario
-  yang diharapkan; (2) `scenario_notes` kosong (isi = spec dilewati: aksi tak dikenal/JSON
-  rusak); (3) screenshot bertanggal run ini (folder shots menumpuk file lama); (4) pisahkan
-  `findings` konklusif vs `inconclusive` (login BO gagal → langkah BO inconclusive, bukan lolos).
+  yang diharapkan — tanpa spec authored, `e2e_smoke_only` true & `ready` jatuh (hanya terbukti
+  "shop tak rusak"); (2) `scenario_notes` kosong (isi = spec dilewati: aksi tak dikenal/JSON
+  rusak — `ps-plan-layers.py` menandainya sebelum container boot); (3) pisahkan `findings`
+  konklusif vs `inconclusive` (login BO gagal → langkah BO inconclusive, bukan lolos).
 - **Config keys.** `psm_e2e_enabled` (false → lewati Lapis 4) & `psm_e2e_browsers` di section
   `psm` `{project-root}/_bmad/config.yaml`; default kanonik dari resolver. Base URL memakai ulang
   `psm_flashlight_ps_domain`.

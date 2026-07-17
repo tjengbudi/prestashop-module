@@ -20,12 +20,44 @@ Pembagian kerja: skrip menghitung/menggabung/membandingkan (satu jawaban benar);
 model tinggal menghasilkan temuan adversarial (Lapis 3) & prosa untuk manusia.
 """
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
 
 ERROR = "error"
 LAYERS = ("static", "flashlight", "adversarial", "e2e")
+
+# "Cakupan apa yang DITINJAU file lapis ini" hanya boleh punya SATU definisi. Dulu
+# ps-plan-layers menegakkannya (menolak reuse file yang cakupannya kurang) sementara
+# skrip ini mengabaikannya -> `ready` true atas versi yang reviewer bilang tak ditinjau.
+# Pakai-ulang lewat impor by-path (nama file ber-tanda-hubung), pola yang sama dgn
+# ps-plan-layers -> ps-static-scan dan ps-e2e-run -> ps-flashlight-run.
+def load_sibling(path, name):
+    """Muat skrip sibling by-path. Gagal = exit 2, BUKAN exit 1.
+
+    exit 1 adalah kode "vonis gagal" skrip ini. Sibling yang absen (folder scripts/ disalin
+    sebagian) yang meledak jadi traceback exit 1 tak bisa dibedakan pemanggil/CI dari
+    "module ini punya error yang memblok" — kelas yang sudah dihilangkan _version_matches
+    dan validate_extra_rules di file ini, jadi seam impor tak boleh memasukkannya kembali.
+    `assert spec and spec.loader` saja tak menjaga apa pun: spec_from_file_location tetap
+    mengembalikan spec sah untuk path yang tak ada, dan kegagalannya baru muncul di
+    exec_module.
+    """
+    try:
+        spec = importlib.util.spec_from_file_location(name, path)
+        if not (spec and spec.loader):
+            raise ImportError(f"spec tak terbentuk untuk {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except (OSError, ImportError, SyntaxError) as e:
+        print(f"error: skrip sibling tak bisa dimuat: {path.name} ({e})", file=sys.stderr)
+        print("skrip psm-validate saling bergantung — salin folder scripts/ utuh", file=sys.stderr)
+        sys.exit(2)
+
+
+pl = load_sibling(Path(__file__).resolve().parent / "ps-plan-layers.py", "ps_plan_layers")
 
 
 def compute_ready(versions, required):
@@ -144,6 +176,17 @@ def flashlight_layer(flash, full_ver):
     return layer
 
 
+def is_smoke_only(e2e):
+    """True bila Lapis 4 cuma menjalankan smoke universal — tak ada spec authored module.
+
+    Satu definisi dipakai e2e_layer (yang menjatuhkan `ready`) dan main (yang meng-echo
+    field-nya): dua perhitungan terpisah atas pertanyaan yang sama pernah bikin field
+    dan gerbang berbeda pendapat. Sumber `builtin:` = smoke bawaan skrip.
+    """
+    sources = (e2e or {}).get("scenario_sources") or []
+    return all(s.startswith("builtin:") for s in sources)
+
+
 def e2e_layer(e2e, full_ver):
     """Lapis 4 — konklusif hanya bila browser+container naik bersih & module ter-install.
 
@@ -184,6 +227,14 @@ def e2e_layer(e2e, full_ver):
     errs = sum(1 for f in findings if f["severity"] == ERROR)
     layer = {"state": "fail" if errs else "pass", "conclusive": True, "errors": errs, "findings": findings}
     notes = []
+    # Tanpa spec authored, Lapis 4 cuma membuktikan "shop tak rusak" — BUKAN perilaku
+    # module. Itu setengah lapis yang tak pernah dievaluasi, kembar persis dgn phpstan-absen
+    # di flashlight_layer, jadi ia lewat kanal yang sama: `ready` jatuh, `pass` tak diblok.
+    # Dulu dihitung di main() sbg `e2e_smoke_only` yang tak dibaca gerbang mana pun, jadi
+    # module tanpa satu pun uji perilaku dapat hijau empat-lapis penuh.
+    if is_smoke_only(e2e):
+        notes.append("hanya smoke universal — perilaku module tak teruji; "
+                     "tulis skenario di tests/e2e/")
     inc = v.get("inconclusive") or []
     if inc:
         notes.append(f"{len(inc)} assertion tak konklusif (mis. login BO gagal)")
@@ -231,10 +282,39 @@ def validate_adversarial(adversarial, target_versions):
     # dict, entri string) dulu meledak AttributeError -> exit 1 = kode vonis-gagal,
     # jadi file rusak terbaca "module gagal". Bentuk salah = pelanggaran skema (exit 2).
     if not isinstance(adversarial, dict):
-        return ["payload bukan JSON object — bentuk: {\"findings\": [ {...} ]}"]
+        return ["payload bukan JSON object — bentuk: {\"versions\": [...], \"findings\": [ {...} ]}"]
+    # Cakupan yang DITINJAU wajib dinyatakan: tanpanya reviewer yang meninjau satu versi
+    # tak bisa dibedakan dari yang meninjau semuanya, dan adversarial_layer tak punya dasar
+    # untuk menolak klaim. Absen = pelanggaran skema (keras), bukan diam-diam dianggap penuh.
+    scope = adversarial.get("versions")
+    if scope is None:
+        notes.append("'versions' top-level tak ada — nyatakan versi yang KAMU TINJAU "
+                     "(bentuk: \"versions\": [\"1.7.8\", \"8.1\", \"9.1\"])")
+    elif not isinstance(scope, list):
+        notes.append(f"'versions' top-level bertipe {type(scope).__name__}, harus list of string")
+    elif not scope:
+        notes.append("'versions' top-level kosong — lapis yang tak meninjau versi apa pun bukan review")
+    else:
+        # Token cakupan TIDAK diwajibkan resolve ke target run ini: review penuh
+        # (1.7.8+8.1+9.1) yang dipakai-ulang di run yang dipersempit ke 9.1 itu sah —
+        # justru superset itulah yang membuat ps-plan-layers membolehkan reuse. Yang
+        # menilai cukup/tidaknya cakupan adalah adversarial_layer, per versi.
+        for e in scope:
+            if not isinstance(e, str) or not e.strip():
+                notes.append(f"'versions' top-level: token {e!r} bukan string tak-kosong "
+                             "— tulis sebagai teks (\"8.1\")")
+    # Token per-temuan diukur terhadap CAKUPAN YANG DITINJAU, bukan target run ini. Review
+    # penuh (1.7.8+8.1+9.1) yang dipakai-ulang di run yang dipersempit ke 9.1 sah membawa
+    # temuan bertanda 8.1 — adversarial_layer yang memfilternya per versi. Mengukurnya ke
+    # target run membuat gerbang ini menolak persis alur reuse yang dibolehkan cek cakupan
+    # di atas: dua cek dalam satu fungsi berbeda pendapat soal pertanyaan yang sama. Yang
+    # tetap ditangkap: token ngawur ('PS8') yang tak resolve ke mana pun -> temuan ter-drop diam-diam.
+    known = (scope if isinstance(scope, list) and scope
+             and all(isinstance(e, str) and e.strip() for e in scope) else target_versions)
     findings = adversarial.get("findings", [])
     if not isinstance(findings, list):
-        return [f"'findings' bertipe {type(findings).__name__}, harus list"]
+        notes.append(f"'findings' bertipe {type(findings).__name__}, harus list")
+        return notes
     for i, f in enumerate(findings):
         if not isinstance(f, dict):
             notes.append(f"finding[{i}]: bertipe {type(f).__name__}, harus object")
@@ -253,17 +333,29 @@ def validate_adversarial(adversarial, target_versions):
             if not isinstance(e, str):
                 notes.append(f"{fid}: token versi {e!r} bukan string — tulis sebagai teks (\"8.1\")")
                 continue
-            if not any(_version_matches(e, tv) for tv in target_versions):
-                notes.append(f"{fid}: token versi '{e}' tak resolve ke target {','.join(target_versions)}"
-                             " — temuan diam-diam ter-drop")
+            if not any(_version_matches(e, k) for k in known):
+                notes.append(f"{fid}: token versi '{e}' tak resolve ke cakupan yang ditinjau "
+                             f"({','.join(known)}) — temuan diam-diam ter-drop")
     return notes
 
 
-def adversarial_layer(adversarial, full_ver, target_versions):
-    """Lapis 3 — temuan judgment model. Selalu 'jalan' (model selalu menilai)."""
+def adversarial_layer(adversarial, full_ver):
+    """Lapis 3 — temuan judgment model. Konklusif hanya untuk versi yang BENAR-BENAR ditinjau.
+
+    Reviewer menyatakan cakupannya di `versions` top-level (references/adversarial-lens.md).
+    Versi di luar cakupan itu TAK punya bukti adversarial: menandainya konklusif membuat
+    `ready` mengklaim persis review yang tak pernah terjadi — reviewer yang jujur bilang
+    "aku cuma meninjau 8.1" lalu dibaca sbg "ketiga versi bersih". Cakupan dibaca lewat
+    pl.layer_versions supaya definisinya sama dgn yang menolak reuse di pra-pass.
+    """
     if adversarial is None:
         return {"ran": False, "conclusive": False, "errors": 0,
                 "reason": "tak ada file temuan adversarial", "findings": []}
+    reviewed = pl.layer_versions(adversarial)
+    if reviewed is not None and not any(_version_matches(e, full_ver) for e in reviewed):
+        return {"ran": True, "conclusive": False, "errors": 0,
+                "reason": f"versi tak ditinjau reviewer (cakupan: {', '.join(sorted(reviewed)) or 'kosong'})",
+                "findings": []}
     findings = []
     for f in adversarial.get("findings", []):
         vers = f.get("versions")  # kosong/None = semua versi target
@@ -277,10 +369,10 @@ def adversarial_layer(adversarial, full_ver, target_versions):
     return {"ran": True, "conclusive": True, "errors": errs, "findings": findings}
 
 
-def merge_version(full_ver, static, flash, adversarial, e2e, target_versions):
+def merge_version(full_ver, static, flash, adversarial, e2e):
     s = static_layer(static, full_ver)
     fl = flashlight_layer(flash, full_ver)
-    adv = adversarial_layer(adversarial, full_ver, target_versions)
+    adv = adversarial_layer(adversarial, full_ver)
     e = e2e_layer(e2e, full_ver)
 
     blocking = [f for layer in (s, fl, adv, e) for f in layer["findings"] if f["severity"] == ERROR]
@@ -336,12 +428,26 @@ def main():
               "(severity: error|warning; versions: token yang sama dengan --versions)", file=sys.stderr)
         return 2
 
+    # Gerbang input: Lapis 1 selalu jalan & selalu konklusif, jadi versi target yang TAK ADA
+    # di hasilnya berarti pemanggil meminta vonis atas versi yang tak pernah dipindai. Dulu
+    # versi itu cuma "tak menyumbang temuan" -> tak ada yang memblok -> pass=true & exit 0:
+    # ketiadaan bukti terbaca sebagai lolos. Itu kekeliruan pemanggil, bukan vonis.
+    scanned = set(static.get("versions", {}).keys())
+    unscanned = [v for v in target_versions if v not in scanned]
+    if unscanned:
+        print(f"error: versi target tak ada di hasil static-scan: {', '.join(unscanned)}",
+              file=sys.stderr)
+        print(f"  hasil static memuat: {', '.join(sorted(scanned)) or '(kosong)'}", file=sys.stderr)
+        print("jalankan ps-static-scan.py dengan --versions yang sama lalu ulangi "
+              "(vonis atas versi yang tak dipindai bukan vonis)", file=sys.stderr)
+        return 2
+
     versions = {}
     overall_pass = True
     all_conclusive = True
     all_e2e_conclusive = True
     for full_ver in target_versions:
-        m = merge_version(full_ver, static, flash, adversarial, e2e, target_versions)
+        m = merge_version(full_ver, static, flash, adversarial, e2e)
         versions[full_ver] = m
         overall_pass = overall_pass and m["pass"]
         all_conclusive = all_conclusive and m["flashlight_conclusive"]
@@ -356,6 +462,17 @@ def main():
     # Penyempitan harus jadi pernyataan sadar yang terekam, bukan efek samping kelalaian.
     if args.require:
         required = [l.strip() for l in args.require.split(",") if l.strip()]
+        # Container KOSONG = seam yang sama dgn token salah, satu tingkat lebih dalam:
+        # `--require ','` itu truthy (jadi tak jatuh ke default ketat) tapi memfilter jadi []
+        # -> `for layer in []` tak pernah jalan -> ready=true atas NOL lapis terbukti, di
+        # runner tanpa Docker sekalipun. Persis pola 'affects: []' yang digerbang
+        # ps-static-scan.validate_extra_rules. Penyempitan harus menyebut lapis, atau bukan
+        # penyempitan — ia pembatalan gerbang.
+        if not required:
+            print(f"error: --require tak menyebut satu lapis pun — sah: {', '.join(LAYERS)}",
+                  file=sys.stderr)
+            print("hapus flagnya untuk default ketat (keempat lapis)", file=sys.stderr)
+            return 2
         bad = [l for l in required if l not in LAYERS]
         if bad:
             print(f"error: --require memuat lapis tak dikenal: {', '.join(bad)} — sah: {', '.join(LAYERS)}",
@@ -391,7 +508,7 @@ def main():
     e2e_sources = (e2e or {}).get("scenario_sources") or []
     if e2e_ran:
         result["e2e_scenario_sources"] = e2e_sources
-        result["e2e_smoke_only"] = all(s.startswith("builtin:") for s in e2e_sources)
+        result["e2e_smoke_only"] = is_smoke_only(e2e)
     # Folder screenshot E2E di-echo agar path artefak visual ('cek web asli') sampai ke laporan
     # gabungan — supaya render bisa ditinjau, bukan cuma diproduksi lalu terlupakan.
     e2e_shot_dir = (e2e or {}).get("screenshot_dir")

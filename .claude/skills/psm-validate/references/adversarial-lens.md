@@ -28,19 +28,20 @@ dilewati.
 ## Bentuk kembalian (HANYA JSON ini, tanpa prosa)
 
 ```json
-{"versions": ["<versi yang kamu TINJAU — token sama dengan --versions>"],
+{"versions": ["<versi yang kamu TINJAU — token sama dengan versi target yang diberikan>"],
  "findings": [
   {"id": "adv-<slug>",
    "severity": "error|warning",
    "message": "<apa yang salah>",
    "location": "<file:line>",
    "fix": "<perbaikannya>",
-   "versions": ["<versi TERPENGARUH, token sama dengan --versions; kosongkan bila semua target>"]}
+   "versions": ["<versi TERPENGARUH, token sama dengan versi target yang diberikan; kosongkan bila semua target>"]}
 ]}
 ```
 
 Aturan kembalian yang ditegakkan skrip agregat (pelanggaran = exit 2, bukan vonis):
 
+- `versions` top-level **wajib ada** dan berisi minimal satu versi (string tak kosong).
 - `severity` hanya `error` atau `warning`. Token lain (`critical`, `high`, `blocker`)
   ditolak — dan seandainya lolos, tak akan pernah memblok.
 - Tiap entri `versions` harus resolve ke salah satu versi target: tulis sebagai string
@@ -48,5 +49,8 @@ Aturan kembalian yang ditegakkan skrip agregat (pelanggaran = exit 2, bukan voni
 - `findings` harus list of object.
 
 `versions` top-level = cakupan yang kamu tinjau (beda dari `versions` per temuan =
-versi terpengaruh). Tanpanya, run yang terputus selalu mengulang lapis ini —
+versi terpengaruh). Nyatakan JUJUR: versi yang tak kamu tinjau ditandai **tak konklusif**
+oleh agregat dan menjatuhkan `ready` — itu memang jawaban yang benar, dan jauh lebih baik
+daripada vonis "siap rilis" atas review yang tak pernah terjadi. Cakupan yang lebih luas
+dari target satu run tetap sah (review penuh boleh dipakai ulang di run yang dipersempit);
 `ps-plan-layers.py` memakainya untuk tahu file ini masih mencakup versi yang diminta.

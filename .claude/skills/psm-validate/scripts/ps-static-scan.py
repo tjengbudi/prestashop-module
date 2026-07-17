@@ -54,21 +54,72 @@ def norm_versions(targets):
     return out
 
 
+def _extends_module(path):
+    """True bila file PHP ini mendeklarasikan class turunan Module."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return re.search(r"extends\s+Module\b", text) is not None
+
+
 def find_main_file(module_dir):
-    """Main module file = <modulename>.php di root (konvensi PrestaShop)."""
+    """Main module file + alasan bila tak ketemu. Return (path|None, reason|None).
+
+    Konvensi PrestaShop: <namafolder>.php. Bila tak ada, jangan langsung menyerah —
+    pilih root .php yang isinya `extends Module`. Penyempitan itu deterministik dan
+    menyelesaikan kasus paling lumrah tanpa judgment: folder hasil clone/unzip sering
+    bernama mymod-master sementara file utamanya tetap mymod.php.
+
+    Alasannya DIBEDAKAN karena konsumennya beda. `no_php_at_root` = memang bukan module
+    PrestaShop; itu satu-satunya yang layak menghentikan run. `ambiguous_main_file` =
+    ada kandidat tapi skrip tak bisa memilih — pertanyaan makna, wilayah model. Dulu
+    keduanya dilebur jadi `main_file_found: false` yang menghentikan run, jadi module
+    nyata yang namanya tak cocok divonis "bukan module PrestaShop".
+    """
     cand = module_dir / f"{module_dir.name}.php"
     if cand.is_file():
-        return cand
+        return cand, None
     php_root = [p for p in module_dir.glob("*.php") if p.name != "index.php"]
-    return php_root[0] if len(php_root) == 1 else None
+    if not php_root:
+        return None, "no_php_at_root"
+    if len(php_root) == 1:
+        return php_root[0], None
+    extends = [p for p in php_root if _extends_module(p)]
+    if len(extends) == 1:
+        return extends[0], None
+    return None, "ambiguous_main_file"
+
+
+def ruleset_provenance(paths):
+    """Jejak ruleset yang MEMPRODUKSI vonis ini: daftar file + mtime termuda.
+
+    Vonis Lapis 1 punya DUA input — source module DAN ruleset — tapi pra-pass kesegaran
+    dulu hanya men-stat yang pertama. Akibatnya aturan knowledge-base yang baru ditambahkan
+    tak pernah menyala: file lapis lama dinilai "lebih baru dari module" lalu dipakai ulang
+    dan melaporkan pass, sementara SKILL.md justru melarang model menilai kesegaran sendiri.
+    Dicatat di output supaya reuse diputuskan dari yang DIAKUI file itu, bukan diturunkan
+    ulang oleh pembacanya.
+    """
+    files = sorted(str(Path(p).resolve()) for p in paths if p)
+    newest = 0.0
+    for f in files:
+        try:
+            newest = max(newest, Path(f).stat().st_mtime)
+        except OSError:
+            pass
+    return {"files": files, "mtime": newest}
 
 
 def iter_files(module_dir, glob_filters):
+    # Cabang glob (`files: ["*.php"]`, jalur yang dipakai aturan knowledge-base) dulu TAK
+    # menyaring sama sekali: satu `eval(` di vendor/ pihak-ketiga memblok module yang
+    # source-nya bersih. Skip dipakai di KEDUA cabang — satu definisi, is_skipped.
     if glob_filters and "__MAIN__" not in glob_filters:
         seen = set()
         for g in glob_filters:
             for p in module_dir.rglob(g):
-                if p.is_file() and p not in seen:
+                if p.is_file() and p not in seen and not is_skipped(p, module_dir):
                     seen.add(p)
                     yield p
         return
@@ -115,7 +166,11 @@ def scan_structure_rule(rule, module_dir, main_file, target_ver=None):
         return []
     if expect == "index_php_each_dir":
         missing = []
-        for d in [module_dir, *[p for p in module_dir.rglob("*") if p.is_dir() and "vendor" not in p.parts]]:
+        # `"vendor" not in p.parts` (path ABSOLUT, buta node_modules/.git) adalah
+        # implementasi KETIGA dari "folder mana yang bukan source module" — is_skipped
+        # sudah memilikinya, relatif ke module.
+        for d in [module_dir, *[p for p in module_dir.rglob("*")
+                                if p.is_dir() and not is_skipped(p, module_dir)]]:
             if not (d / "index.php").is_file():
                 missing.append({"file": str(d.relative_to(module_dir)) or ".", "line": 0, "snippet": "index.php tidak ada di folder ini"})
         return missing
@@ -290,16 +345,23 @@ def main():
         for grp in RULE_GROUPS:
             rules.setdefault(grp, []).extend(extra.get(grp, []))
 
-    main_file = find_main_file(module_dir)
+    main_file, main_reason = find_main_file(module_dir)
     if args.verbose:
-        print(f"module={module_dir.name} main_file={main_file}", file=sys.stderr)
+        print(f"module={module_dir.name} main_file={main_file} reason={main_reason}", file=sys.stderr)
 
     all_rules = []
     for grp in RULE_GROUPS:
         all_rules.extend(rules.get(grp, []))
 
     versions = norm_versions(args.versions.split(","))
-    result = {"module": module_dir.name, "module_path": str(module_dir), "main_file_found": main_file is not None, "versions": {}}
+    result = {"module": module_dir.name, "module_path": str(module_dir),
+              "main_file_found": main_file is not None,
+              "ruleset": ruleset_provenance([args.rules, args.extra_rules]),
+              "versions": {}}
+    if main_reason:
+        result["main_file_reason"] = main_reason
+        result["main_file_candidates"] = sorted(
+            p.name for p in module_dir.glob("*.php") if p.name != "index.php")
     overall_errors = 0
 
     for full_ver, major in versions:
