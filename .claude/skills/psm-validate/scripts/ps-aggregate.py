@@ -261,18 +261,50 @@ def flashlight_layer(flash, full_ver):
     elif cs.get("parse_ok") is False:
         layer["inconclusive_note"] = (cs.get("note", "laporan phpstan tak terparse")
                                       + " — coding standard tak diuji; tak memblok")
+    elif cs.get("coverage_ok") is False:
+        # Canary tak terdeteksi: phpstan jalan & laporannya terparse, tapi TAK menganalisis satu
+        # file pun dari module (mis. neon module meng-excludePaths dirinya sendiri). Laporan JSON
+        # phpstan tak bisa membedakan ini dari "bersih" — map `files` cuma memuat file YANG
+        # BER-ERROR — jadi tanpa kontrol positif sebuah module bisa MEMBELI vonis CS bersih
+        # dengan neon yang mengecualikan dirinya.
+        layer["inconclusive_note"] = ("phpstan tak menganalisis satu file pun dari module "
+                                      "(neon module mengecualikannya — canary tak terdeteksi) "
+                                      "— coding standard tak diuji; tak memblok")
+    elif "coverage_ok" not in cs:
+        layer["inconclusive_note"] = ("hasil flashlight tak mencatat `coverage_ok` (file lapis dari "
+                                      "skrip lama) — cakupan phpstan tak bisa dipastikan; "
+                                      "jalankan ulang Lapis 2")
     return layer
 
 
-def is_smoke_only(e2e):
-    """True bila Lapis 4 cuma menjalankan smoke universal — tak ada spec authored module.
+def authored_assertions(e2e, full_ver):
+    """Assertion authored yang benar-benar dinilai di versi ini. None = tak tercatat.
+
+    Tipe dijaga, bukan cuma nilai: `"0"`/`[]`/`true`/`-1` yang lolos jadi hitungan sah akan
+    memulihkan `ready` persis seperti di static_layer. Tak tercatat = cakupan tak diketahui,
+    dan tak diketahui tak pernah boleh terbaca sebagai teruji.
+    """
+    v = ((e2e or {}).get("versions") or {}).get(full_ver) or {}
+    n = v.get("authored_assertions")
+    if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+        return None
+    return n
+
+
+def is_smoke_only(e2e, full_ver):
+    """True bila Lapis 4 di versi ini tak menegakkan satu assertion authored pun.
 
     Satu definisi dipakai e2e_layer (yang menjatuhkan `ready`) dan main (yang meng-echo
-    field-nya): dua perhitungan terpisah atas pertanyaan yang sama pernah bikin field
-    dan gerbang berbeda pendapat. Sumber `builtin:` = smoke bawaan skrip.
+    field-nya): dua perhitungan terpisah atas pertanyaan yang sama pernah bikin field dan
+    gerbang berbeda pendapat.
+
+    Dulu jawabannya diambil dari NAMA skenario — ada `source` bukan `builtin:` = "ada uji
+    perilaku". Premis struktural itu bisa dipuaskan file yang tak menegakkan apa pun: spec
+    berisi dua `screenshot` membalik `ready` false->true tanpa menguji sebutir pun. Sekarang
+    jawabannya hitungan assertion konklusif dari produsen. `None` (tak tercatat) BUKAN 0 —
+    itu ditangani terpisah di e2e_layer sebagai "tak bisa dipastikan".
     """
-    sources = (e2e or {}).get("scenario_sources") or []
-    return all(s.startswith("builtin:") for s in sources)
+    return authored_assertions(e2e, full_ver) == 0
 
 
 def e2e_layer(e2e, full_ver):
@@ -320,9 +352,14 @@ def e2e_layer(e2e, full_ver):
     # di flashlight_layer, jadi ia lewat kanal yang sama: `ready` jatuh, `pass` tak diblok.
     # Dulu dihitung di main() sbg `e2e_smoke_only` yang tak dibaca gerbang mana pun, jadi
     # module tanpa satu pun uji perilaku dapat hijau empat-lapis penuh.
-    if is_smoke_only(e2e):
-        notes.append("hanya smoke universal — perilaku module tak teruji; "
-                     "tulis skenario di tests/e2e/")
+    n_assert = authored_assertions(e2e, full_ver)
+    if n_assert is None:
+        notes.append("hasil E2E tak mencatat `authored_assertions` (file lapis dari skrip lama "
+                     "atau salah bentuk) — cakupan uji perilaku tak bisa dipastikan; "
+                     "jalankan ulang Lapis 4")
+    elif is_smoke_only(e2e, full_ver):
+        notes.append("nol assertion authored dinilai — perilaku module tak teruji (spec tanpa "
+                     "aksi expect_* tak menegakkan apa pun); tulis skenario di tests/e2e/")
     inc = v.get("inconclusive") or []
     if inc:
         notes.append(f"{len(inc)} assertion tak konklusif (mis. login BO gagal)")
@@ -632,7 +669,11 @@ def main():
     e2e_sources = (e2e or {}).get("scenario_sources") or []
     if e2e_ran:
         result["e2e_scenario_sources"] = e2e_sources
-        result["e2e_smoke_only"] = is_smoke_only(e2e)
+        # Field top-level = "tiap versi yang benar-benar jalan cuma smoke". Versi yang tak jalan
+        # tak dihitung: ia sudah tak konklusif lewat kanal infra, dan menyebutnya "smoke only"
+        # akan menyalahkan spec atas container yang gagal boot.
+        ran_vers = [v for v in target_versions if v in ((e2e or {}).get("versions") or {})]
+        result["e2e_smoke_only"] = bool(ran_vers) and all(is_smoke_only(e2e, v) for v in ran_vers)
     # Folder screenshot E2E di-echo agar path artefak visual ('cek web asli') sampai ke laporan
     # gabungan — supaya render bisa ditinjau, bukan cuma diproduksi lalu terlupakan.
     e2e_shot_dir = (e2e or {}).get("screenshot_dir")

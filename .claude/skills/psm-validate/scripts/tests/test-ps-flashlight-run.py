@@ -35,9 +35,18 @@ def check(name, cond):
     return cond
 
 
-PHPSTAN_JSON = ('{"totals":{"errors":0,"file_errors":2},'
+# Laporan phpstan yang REALISTIS: produsen selalu menulis canary ke pohon module, jadi laporan
+# yang benar-benar menganalisis module SELALU memuat temuannya. file_errors=3 = 2 milik module
+# + 1 canary; yang boleh sampai ke vonis cuma yang 2.
+PHPSTAN_JSON = ('{"totals":{"errors":0,"file_errors":3},'
                 '"files":{"a.php":{"errors":2,"messages":['
-                '{"message":"bad","line":3},{"message":"worse","line":9}]}},"errors":[]}')
+                '{"message":"bad","line":3},{"message":"worse","line":9}]},'
+                '"/var/www/html/modules/m/psm-coverage-canary.php":{"errors":1,"messages":['
+                '{"message":"Function psm_canary_undefined_fn_xyz not found.","line":2}]}},'
+                '"errors":[]}')
+# Canary TAK muncul = phpstan tak menyentuh pohon module. Bentuknya identik dgn module bersih —
+# itulah sebabnya laporan JSON saja tak pernah cukup.
+PHPSTAN_JSON_NOCOVER = '{"totals":{"errors":0,"file_errors":0},"files":{},"errors":[]}'
 
 
 def main():
@@ -91,6 +100,35 @@ def main():
     ok &= check("phpstan auto-neon -> advisory: errors=0 (tak memblok)", adv.get("errors") == 0)
     ok &= check("phpstan auto-neon -> temuan jadi warnings & generated_config True",
                 adv.get("warnings") == 2 and adv.get("generated_config") is True)
+
+    # --- CANARY: kontrol positif cakupan phpstan (keputusan user 2026-07-17, opsi 1) ---
+    # Laporan JSON phpstan TAK bisa membedakan "bersih" dari "tak menganalisis apa-apa": map
+    # `files` cuma memuat file YANG BER-ERROR, jadi module bersih & module yang neon-nya
+    # mengecualikan dirinya sama-sama menghasilkan files:{} + file_errors:0. Tanpa kontrol
+    # positif, yang kedua dulu diklaim "coding standard bersih, konklusif".
+    ok &= check("canary terdeteksi -> coverage_ok True (phpstan benar-benar menyentuh module)",
+                conc.get("coverage_ok") is True and adv.get("coverage_ok") is True)
+    ok &= check("temuan canary TAK bocor ke vonis (2 pesan module, bukan 3)",
+                conc.get("errors") == 2 and len(conc.get("error_messages", [])) == 2
+                and not any("canary" in (m.get("file") or "")
+                            for m in conc.get("error_messages", [])))
+    nocov = mod.parse_phpstan(
+        f"PSM_PHPSTAN_GEN=0\nPSM_PHPSTAN_JSON_START {PHPSTAN_JSON_NOCOVER} PSM_PHPSTAN_JSON_END")
+    ok &= check("canary tak muncul -> coverage_ok False (0 error = tak diukur, bukan bersih)",
+                nocov.get("parse_ok") is True and nocov.get("errors") == 0
+                and nocov.get("coverage_ok") is False)
+    # Nama canary dipakai DUA sisi: INNER_SH menulis filenya, parse_phpstan mengenalinya di
+    # laporan. Dua string terpisah bisa mendrift diam-diam & mematikan kontrol positifnya
+    # tanpa satu test pun merah — sama seperti rename CONTAINER_PREFIX dulu.
+    # Assert ke perintah TULIS-nya, bukan sekadar "nama canary muncul di INNER_SH": baris `rm -f`
+    # juga memuat nama itu, jadi cek keberadaan saja tetap hijau walau penulisannya dimatikan
+    # atau namanya mendrift (kubuktikan: 2 mutasi lolos senyap sebelum assert ini diperketat).
+    ok &= check("INNER_SH MENULIS canary dgn nama yang SAMA dgn yang dikenali parse_phpstan",
+                f'> "modules/$MOD_NAME/{mod.CANARY_BASENAME}"' in mod.INNER_SH)
+    ok &= check("INNER_SH menghapus canary lagi sesudah phpstan",
+                f'rm -f "modules/$MOD_NAME/{mod.CANARY_BASENAME}"' in mod.INNER_SH)
+    ok &= check("canary dijamin ber-error di level phpstan berapa pun (fungsi tak dikenal)",
+                "psm_canary_undefined_fn_xyz();" in mod.INNER_SH)
 
     # --- parse_phpstan: degrade jujur ---
     ok &= check("phpstan absent -> available False", mod.parse_phpstan("PSM_PHPSTAN_ABSENT").get("available") is False)

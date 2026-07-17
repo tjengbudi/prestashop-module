@@ -310,6 +310,11 @@ def main():
                 r["pass"] and "checkout.json" in r["layers"]["e2e"].get("inconclusive_note", ""))
 
     def _flash_cs(cs):
+        # `coverage_ok` ditambahkan seperti produsen sehat (canary terdeteksi) kecuali test
+        # menyetelnya sendiri — agregat kini membacanya: phpstan yang tak menganalisis satu
+        # file pun dari module bukan "bersih", melainkan "tak diukur".
+        if cs.get("available") and cs.get("parse_ok") and "coverage_ok" not in cs:
+            cs = {**cs, "coverage_ok": True}
         return {"module": "m", "docker_available": True, "status": "ran",
                 "versions": {"8.1": {"version": "8.1", "image": "img",
                                      "install": {"ok": True, "no_console": False, "log": ""},
@@ -392,12 +397,18 @@ def main():
                             "--versions", "8.1", "-o", str(op)], capture_output=True, text=True)
             return json.loads(op.read_text(encoding="utf-8"))
 
-    def _e2e_ran(sources):
+    def _e2e_ran(sources, assertions=None):
+        """`assertions` default meniru produsen sehat: spec authored yang benar-benar
+        menegakkan sesuatu. Test yang menguji cabang spec-kosong menyetelnya eksplisit ke 0.
+        """
+        if assertions is None:
+            assertions = 3 if any(not s.startswith("builtin:") for s in sources) else 0
         return {"module": "m", "e2e_available": True, "status": "ran",
                 "scenario_sources": sources,
                 "versions": {"8.1": {"version": "8.1", "install": {"ok": True},
                                      "browsers": ["chromium"], "findings": [], "inconclusive": [],
-                                     "browser_notes": [], "errors": [], "pass": True}}}
+                                     "browser_notes": [], "errors": [], "pass": True,
+                                     "authored_assertions": assertions}}}
 
     smoke = _aggregate(_e2e_ran(["builtin:psm-universal-smoke"]))
     ok &= check("E2E hanya smoke -> e2e_smoke_only True (cakupan jujur, walau lolos)",
@@ -471,9 +482,9 @@ def main():
     e2e_auth = _e2e_ran(["builtin:psm-universal-smoke", "configure.json"])
     l_smoke = mod.e2e_layer(e2e_smoke, "8.1")
     ok &= check("e2e smoke-only -> inconclusive_note (perilaku module tak teruji)",
-                "smoke universal" in l_smoke.get("inconclusive_note", ""))
+                "tak teruji" in l_smoke.get("inconclusive_note", ""))
     ok &= check("e2e dgn spec authored -> tanpa catatan smoke-only",
-                "smoke universal" not in mod.e2e_layer(e2e_auth, "8.1").get("inconclusive_note", ""))
+                "tak teruji" not in mod.e2e_layer(e2e_auth, "8.1").get("inconclusive_note", ""))
     ready_smoke = mod.compute_ready(
         {"8.1": mod.merge_version("8.1", static, None, None, e2e_smoke)}, ["static", "e2e"])
     ok &= check("ready: E2E smoke-only -> False walau lapis konklusif & lolos",
@@ -491,7 +502,39 @@ def main():
                 mod.compute_ready({"8.1": mod.merge_version("8.1", static, None, None, e2e_broken)},
                                   ["static", "e2e"]) is False and ready_smoke is False)
     ok &= check("is_smoke_only: satu definisi dipakai gerbang & field top-level",
-                mod.is_smoke_only(e2e_smoke) is True and mod.is_smoke_only(e2e_auth) is False)
+                mod.is_smoke_only(e2e_smoke, "8.1") is True
+                and mod.is_smoke_only(e2e_auth, "8.1") is False)
+
+    # 13c-bis. Keputusan user 2026-07-17: cakupan uji perilaku = ASSERTION YANG DINILAI,
+    # bukan FILE YANG ADA. Premis lama ("ada source bukan builtin:") dipuaskan spec berisi
+    # dua screenshot — nol assertion — jadi ready naik false->true karena sebuah FILE ada.
+    # Insentifnya terbalik: cara termurah dapat siap-rilis = menulis spec kosong.
+    e2e_empty_spec = _e2e_ran(["builtin:psm-universal-smoke", "trivial.json"], assertions=0)
+    ok &= check("spec authored TANPA assertion -> tetap smoke-only (dulu: ready true)",
+                mod.is_smoke_only(e2e_empty_spec, "8.1") is True
+                and "tak menegakkan apa pun" in
+                    mod.e2e_layer(e2e_empty_spec, "8.1").get("inconclusive_note", ""))
+    ok &= check("spec authored TANPA assertion -> ready False (insentif terbalik tutup)",
+                mod.compute_ready(
+                    {"8.1": mod.merge_version("8.1", static, None, None, e2e_empty_spec)},
+                    ["static", "e2e"]) is False)
+    ok &= check("satu assertion konklusif sudah cukup -> ready True (kontrol positif)",
+                mod.compute_ready(
+                    {"8.1": mod.merge_version("8.1", static, None, None,
+                                              _e2e_ran(["builtin:x", "s.json"], assertions=1))},
+                    ["static", "e2e"]) is True)
+    # Hitungan yang salah bentuk = cakupan tak diketahui, BUKAN nol dan BUKAN teruji.
+    for bad in (None, "3", [], True, -1):
+        e2e_bad = _e2e_ran(["builtin:x", "s.json"], assertions=1)
+        if bad is None:
+            del e2e_bad["versions"]["8.1"]["authored_assertions"]
+        else:
+            e2e_bad["versions"]["8.1"]["authored_assertions"] = bad
+        ok &= check(f"authored_assertions={bad!r} -> tak bisa dipastikan, bukan teruji",
+                    "tak bisa dipastikan" in mod.e2e_layer(e2e_bad, "8.1").get("inconclusive_note", "")
+                    and mod.compute_ready(
+                        {"8.1": mod.merge_version("8.1", static, None, None, e2e_bad)},
+                        ["static", "e2e"]) is False)
 
     # 13e. Error console = OBSERVASI, bukan celah cakupan (ditemukan saat run container NYATA:
     # module & spec identik menghasilkan ready=true saat console_errors=0 lalu ready=false saat
@@ -549,6 +592,39 @@ def main():
                 rc == 2 and "1.7.8" in err and "9.1" in err and "Traceback" not in err)
     rc, _ = _cli_versions(static81, "8.1")
     ok &= check("versi target sepenuhnya terpindai -> jalan normal", rc == 0)
+
+    # 13d. CANARY phpstan (keputusan user 2026-07-17, opsi 1): laporan JSON phpstan tak bisa
+    # membedakan "bersih" dari "tak menganalisis apa-apa" (map `files` cuma memuat file
+    # ber-error), jadi module bisa MEMBELI vonis CS bersih lewat neon yang mengecualikan
+    # dirinya sendiri. Kelas det-1 yang sama, di Lapis 2.
+    fl_nocov = _flash_cs({"available": True, "parse_ok": True, "generated_config": False,
+                          "coverage_ok": False, "errors": 0, "warnings": 0, "error_messages": []})
+    ok &= check("phpstan tak menyentuh module -> inconclusive_note (0 error bukan bersih)",
+                "tak menganalisis satu file pun"
+                in mod.flashlight_layer(fl_nocov, "8.1").get("inconclusive_note", ""))
+    ok &= check("phpstan tak menyentuh module -> ready jatuh, tapi TAK memblok",
+                mod.compute_ready({"8.1": mod.merge_version("8.1", static, fl_nocov, None, None)},
+                                  ["static", "flashlight"]) is False
+                and mod.merge_version("8.1", static, fl_nocov, None, None)["pass"] is True)
+    fl_cov = _flash_cs({"available": True, "parse_ok": True, "generated_config": False,
+                        "coverage_ok": True, "errors": 0, "warnings": 0, "error_messages": []})
+    ok &= check("phpstan benar-benar menganalisis module & bersih -> tanpa note, ready utuh "
+                "(kontrol positif: gerbang tak menandai module bersih)",
+                "inconclusive_note" not in mod.flashlight_layer(fl_cov, "8.1")
+                and mod.compute_ready({"8.1": mod.merge_version("8.1", static, fl_cov, None, None)},
+                                      ["static", "flashlight"]) is True)
+    fl_old = _flash_cs({"available": True, "parse_ok": True, "generated_config": False,
+                        "errors": 0, "warnings": 0, "error_messages": []})
+    del fl_old["versions"]["8.1"]["coding_standard"]["coverage_ok"]
+    ok &= check("file lapis lama tanpa coverage_ok -> tak bisa dipastikan, bukan bersih",
+                "tak bisa dipastikan"
+                in mod.flashlight_layer(fl_old, "8.1").get("inconclusive_note", ""))
+    # Urutan cabang: parse_ok False tak pernah punya coverage_ok, jadi cabang "skrip lama"
+    # akan menyalip pesan parse-gagal & menyalahkan file lapis atas laporan yang rusak.
+    fl_parsefail = _flash_cs({"available": True, "parse_ok": False, "note": "gagal parse JSON phpstan"})
+    note_pf = mod.flashlight_layer(fl_parsefail, "8.1").get("inconclusive_note", "")
+    ok &= check("parse gagal tetap dilaporkan sbg parse gagal (cabang canary tak menyalip)",
+                "gagal parse JSON phpstan" in note_pf and "skrip lama" not in note_pf)
 
     # 14. determinism-1 (analyze ronde-5, CRITICAL): static_layer dulu pin conclusive=True
     # dengan alasan "Lapis 1 selalu jalan". Benar tentang skripnya, salah tentang aturannya —

@@ -100,6 +100,14 @@ Satu file = satu skenario `{ "name", "steps":[...] }`. Aksi yang didukung:
 
 Placeholder yang disubstitusi di `path`/`url`/`text`/`value`: `{mod}` `{fo}` `{bo}` `{browser}`
 (`{browser}` = nama engine aktif — pakai untuk nama data unik per-browser).
+
+**Yang dihitung sebagai cakupan uji perilaku: aksi `expect_*` saja.** `goto`/`click`/`fill`/
+`screenshot` menggerakkan browser tapi tak menyatakan benar/salah — `click` cuma membuktikan
+tombolnya ada, bukan hasilnya benar. Spec tanpa satu pun `expect_*` tetap dijalankan (sebuah
+`goto` yang kena HTTP ≥ 500 tetap temuan yang memblok) tapi **tak** menaikkan `ready`: vonisnya
+sama dengan module yang tak punya spec sama sekali (`e2e_smoke_only`), dan pra-pass
+`ps-plan-layers.py` menandainya sebelum container boot. Assertion yang hasilnya tak konklusif
+(mis. area `bo` saat login admin gagal) juga tak dihitung.
 Spec tak valid (JSON rusak / tanpa `steps` / aksi tak dikenal) dilewati dengan catatan, bukan crash.
 Rujukan otoritatif: `uv run scripts/ps-e2e-run.py --help`.
 

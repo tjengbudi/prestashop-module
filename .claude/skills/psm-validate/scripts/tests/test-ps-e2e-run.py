@@ -492,7 +492,8 @@ def main():
         e2e = mdir / "tests" / "e2e"
         e2e.mkdir(parents=True)
         (e2e / "good.json").write_text(json.dumps(
-            {"name": "cfg", "steps": [{"action": "goto", "area": "bo", "path": "/x"}]}), encoding="utf-8")
+            {"name": "cfg", "steps": [{"action": "goto", "area": "bo", "path": "/x"},
+                                      {"action": "expect_visible", "selector": "#ok"}]}), encoding="utf-8")
         (e2e / "nosteps.json").write_text(json.dumps({"name": "x"}), encoding="utf-8")
         (e2e / "broken.json").write_text("{bukan json", encoding="utf-8")
         (e2e / "typo.json").write_text(json.dumps(
@@ -504,9 +505,43 @@ def main():
         found, notes = mod.discover_scenarios(mdir)
         ok &= check("spec valid ditemukan (2: cfg + spec ber-click_optional) dgn name",
                     len(found) == 2 and found[0]["name"] == "cfg" and found[1]["name"] == "opt")
-        ok &= check("spec tanpa steps & JSON rusak & aksi typo dicatat (3 notes)", len(notes) == 3)
+        ok &= check("spec tanpa steps & JSON rusak & aksi typo dicatat (3 notes)",
+                    len([n for n in notes if "expect_*" not in n]) == 3)
         ok &= check("note aksi tak dikenal menyebut aksinya",
                     any("expect_visable" in n for n in notes))
+        # Spec tanpa satu pun expect_* dicatat SEBELUM container boot — tapi TETAP dijalankan,
+        # sebab `goto` yang kena HTTP 500 masih temuan yang memblok. Catatannya lahir di
+        # pemilik tunggal aturan spec, jadi pra-pass ps-plan-layers ikut memancarkannya.
+        ok &= check("spec tanpa aksi expect_* dicatat (tak menegakkan apa pun)",
+                    any("zz-optional.json" in n and "tak menegakkan apa pun" in n for n in notes))
+        ok &= check("spec tanpa expect_* TETAP dijalankan (goto 500 tetap memblok)",
+                    any(s["source"] == "zz-optional.json" for s in found))
+        ok &= check("spec ber-expect_* TIDAK dicatat sebagai kosong (kontrol positif)",
+                    not any("good.json" in n for n in notes))
+
+    # --- count_authored_assertions: cakupan = assertion yang DINILAI, bukan file yang ADA ---
+    def _sc(source, results):
+        return {"browser": "chromium", "scenarios": [{"name": "s", "source": source,
+                                                      "results": results}]}
+    def _r(action, conclusive=True):
+        return {"action": action, "ok": True, "conclusive": conclusive, "message": "", "location": ""}
+
+    ok &= check("smoke builtin tak dihitung sbg cakupan authored",
+                mod.count_authored_assertions([_sc("builtin", [_r("expect_visible")])]) == 0)
+    ok &= check("spec authored cuma screenshot/goto/click -> 0 (dulu: dianggap 'punya uji')",
+                mod.count_authored_assertions([_sc("trivial.json", [
+                    _r("screenshot"), _r("goto"), _r("click"), _r("fill"),
+                    _r("click_optional")])]) == 0)
+    ok &= check("aksi expect_* authored dihitung",
+                mod.count_authored_assertions([_sc("cfg.json", [
+                    _r("expect_visible"), _r("expect_text"), _r("goto")])]) == 2)
+    ok &= check("assertion TAK konklusif tak dihitung (jangan percaya sesi rusak)",
+                mod.count_authored_assertions([_sc("cfg.json", [
+                    _r("expect_visible", conclusive=False), _r("expect_text")])]) == 1)
+    ok &= check("ASSERT_ACTIONS diturunkan dari SUPPORTED_ACTIONS (tanpa daftar kedua)",
+                set(mod.ASSERT_ACTIONS) == {a for a in mod.SUPPORTED_ACTIONS
+                                            if a.startswith("expect_")}
+                and len(mod.ASSERT_ACTIONS) == 4)
 
     # --- playwright_available -> bool (env apa pun) ---
     ok &= check("playwright_available -> bool", isinstance(mod.playwright_available(), bool))
@@ -601,6 +636,34 @@ def main():
         ok &= check("console error TIDAK dituang ke browser_notes (kanal cakupan bersih)",
                     not any("console" in n.lower() for n in r["browser_notes"]))
         ok &= check("default headed False diteruskan ke drive_engine", captured["headed"] is False)
+        # WIRING produsen->agregat. Mutasi "res['authored_assertions'] -> res['_unused']" SEMULA
+        # LOLOS SENYAP: count_authored_assertions punya test, e2e_layer punya test, tapi tak ada
+        # yang menguji run_one_version benar-benar MENGEMIT angkanya — persis mode "jalur tanpa
+        # coverage" yang bikin test hijau di atas kode salah.
+        ok &= check("run_one_version mengemit authored_assertions (smoke saja -> 0)",
+                    r["authored_assertions"] == 0)
+
+        def fake_drive_authored(engine, scenarios, ctx, headed=False):
+            return {"browser": engine, "bo_authed": True, "launch_error": None, "scenarios": [
+                {"name": "psm-universal-smoke", "source": "builtin",
+                 "results": [{"action": "expect_no_fatal", "ok": True, "conclusive": True,
+                              "message": "", "location": ""}]},
+                {"name": "cfg", "source": "cfg.json",
+                 "results": [{"action": "expect_visible", "ok": True, "conclusive": True,
+                              "message": "", "location": ""},
+                             {"action": "screenshot", "ok": True, "conclusive": True,
+                              "message": "", "location": ""}]}]}
+        mod.drive_engine = fake_drive_authored
+        r_auth = mod.run_one_version(Path("/tmp"), "m", "9.1", "9.1.4-nginx", ["chromium"],
+                                     [mod.universal_smoke()], requested_browsers=["chromium"],
+                                     orchestrator="auto", db_image="mariadb:lts",
+                                     ps_domain="localhost:8000", admin_path="admin-dev",
+                                     admin_email="a", admin_password="b", startup_timeout=1,
+                                     op_timeout=1, nav_timeout=1000, allow_pull=False)
+        ok &= check("run_one_version mengemit authored_assertions (1 expect_* authored, "
+                    "screenshot & smoke tak dihitung)",
+                    r_auth["authored_assertions"] == 1)
+        mod.drive_engine = fake_drive
 
         # probe-miss: firefox tak lolos probe di main -> browser_notes coverage, chromium tetap jalan
         r2 = mod.run_one_version(Path("/tmp"), "m", "9.1", "9.1.4-nginx", ["chromium"],

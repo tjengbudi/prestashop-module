@@ -172,7 +172,8 @@ def main():
         e2e_dir = mod_dir / "tests" / "e2e"
         e2e_dir.mkdir(parents=True)
         (e2e_dir / "ok.json").write_text(json.dumps(
-            {"name": "ok", "steps": [{"action": "goto", "area": "fo", "path": "/"}]}))
+            {"name": "ok", "steps": [{"action": "goto", "area": "fo", "path": "/"},
+                                     {"action": "expect_visible", "selector": "#blk"}]}))
         (e2e_dir / "typo.json").write_text(json.dumps(
             {"name": "bad", "steps": [{"action": "expect_visable", "selector": "#x"}]}))
         # Jalur CLI: unit test memanggil plan_layer LANGSUNG, jadi wiring main() ->
@@ -211,6 +212,15 @@ def main():
         ok &= check("CLI: e2e_scenario_notes sampai ke JSON pra-pass",
                     len(plan.get("e2e_scenario_notes") or []) == 1
                     and "typo.json" in plan["e2e_scenario_notes"][0])
+        # Spec yang tak menegakkan apa pun ketahuan di PRA-PASS — sebelum flashlight boot
+        # x N versi x M browser. Dulu penulisnya baru tahu sesudah run termahal selesai.
+        (e2e_dir / "hampa.json").write_text(json.dumps(
+            {"name": "hampa", "steps": [{"action": "screenshot"}]}))
+        plan2 = _plan_cli()
+        ok &= check("CLI pra-pass menandai spec tanpa expect_* SEBELUM container boot",
+                    any("hampa.json" in n and "tak menegakkan apa pun" in n
+                        for n in (plan2.get("e2e_scenario_notes") or []))
+                    and "hampa.json" in (plan2.get("e2e_scenarios") or []))
 
     # Refutasi verifier atas fix ronde-5: gerbang himpunan kosong ditutup di ps-aggregate,
     # lalu kelasnya selamat SATU SEAM di sini — di skrip yang justru bertugas MENOLAK bukti

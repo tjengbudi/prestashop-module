@@ -86,6 +86,11 @@ DEFAULT_BROWSERS = "chromium,firefox"
 SUPPORTED_ENGINES = ("chromium", "firefox", "webkit")
 SUPPORTED_ACTIONS = ("goto", "expect_no_fatal", "expect_visible", "expect_text",
                      "expect_no_console_error", "click", "click_optional", "fill", "screenshot")
+# Aksi yang benar-benar MENEGAKKAN sesuatu. goto/click/fill/screenshot menggerakkan browser
+# tapi tak menyatakan apa pun soal benar/salah — `click` cuma membuktikan tombolnya ADA, bukan
+# hasilnya benar. Diturunkan dari SUPPORTED_ACTIONS supaya aksi expect_* yang ditambahkan nanti
+# ikut terhitung tanpa daftar kedua yang bisa melenceng.
+ASSERT_ACTIONS = tuple(a for a in SUPPORTED_ACTIONS if a.startswith("expect_"))
 CONTAINER_HTTP_PORT = 80          # nginx/apache flashlight mendengarkan di 80
 DEFAULT_HOST_PORT = 8000
 # Default admin flashlight (BO folder `admin-dev`); override lewat flag. Login BO
@@ -318,6 +323,15 @@ def discover_scenarios(module_dir):
             notes.append(f"{f.name}: aksi tak dikenal ({', '.join(unknown)}) — dilewati; "
                          f"sah: {', '.join(SUPPORTED_ACTIONS)}")
             continue
+        # Spec tanpa satu pun aksi expect_* tak menegakkan apa pun — ia tetap DIJALANKAN
+        # (sebuah `goto` yang kena HTTP 500 tetap temuan yang memblok), tapi tak dihitung
+        # sebagai cakupan uji perilaku. Catatannya lahir di sini, pemilik tunggal aturan
+        # "spec mana yang sah", supaya pra-pass ps-plan-layers ikut memancarkannya SEBELUM
+        # container boot — dulu penulisnya baru tahu sesudah N versi x M browser terbakar.
+        if not any(isinstance(s, dict) and s.get("action") in ASSERT_ACTIONS for s in steps):
+            notes.append(f"{f.name}: tak ada aksi expect_* — skenario ini tak menegakkan apa pun, "
+                         f"jadi tak dihitung sebagai cakupan uji perilaku (tetap dijalankan); "
+                         f"assertion yang sah: {', '.join(ASSERT_ACTIONS)}")
         found.append({"name": data.get("name") or f.stem, "source": f.name, "steps": steps})
     return found, notes
 
@@ -486,6 +500,30 @@ def run_steps(page, steps, ctx):
         if results and not results[-1]["ok"]:
             _snap(page, ctx, f"{idx:02d}-FAIL-{action or 'x'}")
     return results
+
+
+def count_authored_assertions(driven):
+    """Berapa assertion authored yang BENAR-BENAR dinilai di versi ini — fakta yang DIHITUNG.
+
+    Dulu pertanyaan "module ini punya uji perilaku?" dijawab dari NAMA skenario: ada `source`
+    yang bukan `builtin:` berarti ya. Itu premis STRUKTURAL, dan sebuah spec berisi dua
+    `screenshot` — nol assertion — menjawabnya "ya" juga, jadi `ready` naik dari false ke true
+    karena sebuah FILE ada. Insentifnya terbalik: cara termurah dapat siap-rilis justru menulis
+    spec kosong, kebalikan dari tekanan menuju TDD yang jadi alasan gerbang ini dipilih.
+
+    Yang dihitung: hasil dari skenario authored (bukan builtin), aksinya keluarga expect_*, DAN
+    konklusif — assertion yang tak konklusif (mis. area BO tanpa login) tak membuktikan apa pun,
+    sejalan aturan "jangan percaya sesi rusak" yang sudah berlaku di seam lain.
+    """
+    n = 0
+    for eng in driven:
+        for sc in eng.get("scenarios", []):
+            if str(sc.get("source", "")).startswith("builtin"):
+                continue
+            for r in sc.get("results", []):
+                if r.get("action") in ASSERT_ACTIONS and r.get("conclusive"):
+                    n += 1
+    return n
 
 
 def assemble_findings(full_ver, driven):
@@ -839,6 +877,9 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
                                     for eng in driven for sc in eng.get("scenarios", []))
         res["screenshots"] = [s for eng in driven for sc in eng.get("scenarios", [])
                               for s in sc.get("screenshots", [])]
+        # Cakupan authored versi ini, DIHITUNG di sini karena hanya di sini langkah per-skenario
+        # terlihat; agregat cuma menerima ringkasan dan tak bisa menurunkannya sendiri.
+        res["authored_assertions"] = count_authored_assertions(driven)
 
         findings, inconclusive = assemble_findings(full_ver, driven)
         res["findings"] = findings

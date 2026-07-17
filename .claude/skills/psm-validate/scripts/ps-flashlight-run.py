@@ -46,6 +46,9 @@ import uuid
 from pathlib import Path
 
 DEFAULT_TAG_MAP = {"1.7.8": "1.7.8.11", "8.1": "8.1.6-nginx", "9.1": "9.1.4-nginx"}
+# Kontrol positif cakupan phpstan. Namanya dipakai DUA sisi — INNER_SH menulis filenya, parse_phpstan
+# mengenalinya di laporan — jadi ia satu konstanta, bukan dua string yang bisa mendrift diam-diam.
+CANARY_BASENAME = "psm-coverage-canary.php"
 IMAGE = "prestashop/prestashop-flashlight"
 DEFAULT_DB_IMAGE = "mariadb:lts"
 DEFAULT_PS_DOMAIN = "localhost:8000"
@@ -87,9 +90,18 @@ if [ -z "$NEON" ]; then
 fi
 if command -v phpstan >/dev/null 2>&1; then
   echo "PSM_PHPSTAN_GEN=$GEN"
+  # CANARY / kontrol positif. Laporan JSON phpstan TAK bisa membedakan "bersih" dari "tak
+  # menganalisis apa-apa": map `files` hanya memuat file YANG BER-ERROR, jadi module bersih dan
+  # module yang neon-nya mengecualikan dirinya sendiri sama-sama menghasilkan files:{} &
+  # file_errors:0 — dan yang kedua dulu diklaim "coding standard bersih, konklusif". File ini
+  # dijamin ber-error di level berapa pun (fungsi tak dikenal); kalau ia TAK muncul di laporan,
+  # berarti phpstan tak menyentuh pohon module dan vonis CS tak boleh diklaim. Ditulis ke
+  # SALINAN dalam container (module di-cp di atas), jadi pohon module di host tak tersentuh.
+  printf '<?php\npsm_canary_undefined_fn_xyz();\n' > "modules/$MOD_NAME/psm-coverage-canary.php"
   echo PSM_PHPSTAN_JSON_START
   phpstan analyse --no-progress --error-format=json --memory-limit=-1 -c "$NEON" "modules/$MOD_NAME" 2>/dev/null || true
   echo PSM_PHPSTAN_JSON_END
+  rm -f "modules/$MOD_NAME/psm-coverage-canary.php"
 else
   echo PSM_PHPSTAN_ABSENT
 fi
@@ -189,19 +201,32 @@ def parse_phpstan(out):
     generic = report.get("errors", []) or []  # error non-file (mis. neon/bootstrap)
     files = report.get("files", {}) or {}
     messages = []
+    canary_hits = 0
     for path, fdata in files.items():
-        for m in (fdata.get("messages", []) or []):
+        msgs = fdata.get("messages", []) or []
+        # Temuan canary BUKAN temuan module: ia cuma membuktikan phpstan benar-benar menyentuh
+        # pohon module. Disaring dari vonis lalu dikurangkan dari hitungan supaya kontrol positif
+        # ini tak pernah bocor jadi error yang memblok.
+        if CANARY_BASENAME in str(path):
+            canary_hits += len(msgs)
+            continue
+        for m in msgs:
             messages.append({"line": m.get("line"), "source": "phpstan",
                              "message": (m.get("message") or "")[:160], "file": path})
     for g in generic:
         messages.append({"line": 0, "source": "phpstan", "message": str(g)[:160]})
-    count = totals.get("file_errors", 0) + len(generic)
+    count = totals.get("file_errors", 0) - canary_hits + len(generic)
+    # Canary tak muncul = phpstan tak menganalisis satu file pun dari module (mis. neon module
+    # meng-excludePaths dirinya sendiri). 0 error di situ bukan "bersih" — itu "tak diukur".
+    coverage_ok = canary_hits > 0
     if generated:
         return {"available": True, "parse_ok": True, "generated_config": True,
-                "errors": 0, "warnings": count, "error_messages": messages[:50],
+                "coverage_ok": coverage_ok, "errors": 0, "warnings": count,
+                "error_messages": messages[:50],
                 "note": "phpstan pakai neon auto-generate (advisory — tak memblok)"}
     return {"available": True, "parse_ok": True, "generated_config": False,
-            "errors": count, "warnings": 0, "error_messages": messages[:50]}
+            "coverage_ok": coverage_ok, "errors": count, "warnings": 0,
+            "error_messages": messages[:50]}
 
 
 def _health_status(container):
