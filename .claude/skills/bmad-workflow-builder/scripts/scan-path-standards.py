@@ -25,6 +25,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from skill_files import is_build_artifact, skill_files  # noqa: E402  (sibling, resolved above)
+
 
 # Patterns to detect
 # Double-prefix: {project-root}/{config-variable} — config vars already contain project-root
@@ -113,10 +116,16 @@ def check_frontmatter(content: str, filepath: Path) -> list[dict]:
 
 
 def check_root_md_files(skill_path: Path) -> list[dict]:
-    """Check that no .md files exist at skill root except SKILL.md."""
+    """Check that no .md files exist at skill root except SKILL.md.
+
+    Build artifacts are exempt: `.memlog.md` MUST live at the root — this builder writes it
+    there and reads it there to resume. Flagging it told every round to "move .memlog.md to
+    references/.memlog.md", advice that would break resume, so it was dismissed by hand every
+    round instead (first recorded as a known false positive in round 1).
+    """
     findings = []
     for md_file in skill_path.glob('*.md'):
-        if md_file.name != 'SKILL.md':
+        if md_file.name != 'SKILL.md' and not is_build_artifact(md_file, skill_path):
             findings.append({
                 'file': md_file.name,
                 'line': 0,
@@ -203,8 +212,10 @@ def scan_skill(skill_path: Path, skip_fenced: bool = True) -> dict:
         content = skill_md.read_text(encoding='utf-8')
         all_findings.extend(check_frontmatter(content, skill_md))
 
-    # Find all .md and .json files
-    md_files = sorted(list(skill_path.rglob('*.md')) + list(skill_path.rglob('*.json')))
+    # Skill CONTENT only. Scanning `.analysis/` meant re-reading our own prior reports:
+    # 7248 findings for psm-validate, zero of them in the live tree, doubling every round
+    # because each scan ate the ones before it. See skill_files.is_build_artifact.
+    md_files = skill_files(skill_path, ('*.md', '*.json'))
     if not md_files:
         print(f"Warning: No .md or .json files found in {skill_path}", file=sys.stderr)
 
