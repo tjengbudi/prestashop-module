@@ -967,7 +967,7 @@ def main():
               "scenario_notes": notes, "versions": {}}
     overall_pass = True
     for full_ver in [v.strip() for v in args.versions.split(",")]:
-        tag = tag_map.get(full_ver) or tag_map.get(full_ver.rsplit(".", 1)[0]) or full_ver
+        tag = fl.resolve_tag(tag_map, full_ver)
         if args.verbose:
             print(f"versi {full_ver} -> {fl.IMAGE}:{tag} | browser terpasang: {','.join(usable) or '(none)'}",
                   file=sys.stderr)

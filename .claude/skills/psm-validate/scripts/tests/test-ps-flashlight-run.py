@@ -127,6 +127,16 @@ def main():
                 f'> "modules/$MOD_NAME/{mod.CANARY_BASENAME}"' in mod.INNER_SH)
     ok &= check("INNER_SH menghapus canary lagi sesudah phpstan",
                 f'rm -f "modules/$MOD_NAME/{mod.CANARY_BASENAME}"' in mod.INNER_SH)
+    # Nama itu DITURUNKAN dari konstanta, bukan diketik ulang di INNER_SH. Bedanya nyata:
+    # diketik ulang -> rename konstanta memalsukan error yang memblok (temuan canary tak
+    # dikenali lalu dihitung sbg milik module) SEKALIGUS memvoidkan cakupan. Di-sulih ->
+    # drift-nya mustahil, bukan sekadar terjaga test.
+    # Hitung nama TELANJANG, bukan yang berkutip: mutasi yang mengetik ulang literalnya dgn
+    # kutip tunggal lolos dari hitungan berkutip-ganda (kubuktikan). Tepat SATU kemunculan di
+    # seluruh source = definisi konstanta; lebih dari itu berarti ada yang mengetik ulang.
+    ok &= check("nama canary disulih dari konstanta (token habis, literal tak diketik ulang)",
+                mod._CANARY_TOKEN not in mod.INNER_SH
+                and MOD_PATH.read_text().count(mod.CANARY_BASENAME) == 1)
     ok &= check("canary dijamin ber-error di level phpstan berapa pun (fungsi tak dikenal)",
                 "psm_canary_undefined_fn_xyz();" in mod.INNER_SH)
 

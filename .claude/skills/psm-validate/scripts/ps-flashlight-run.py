@@ -46,9 +46,14 @@ import uuid
 from pathlib import Path
 
 DEFAULT_TAG_MAP = {"1.7.8": "1.7.8.11", "8.1": "8.1.6-nginx", "9.1": "9.1.4-nginx"}
-# Kontrol positif cakupan phpstan. Namanya dipakai DUA sisi — INNER_SH menulis filenya, parse_phpstan
-# mengenalinya di laporan — jadi ia satu konstanta, bukan dua string yang bisa mendrift diam-diam.
+# Kontrol positif cakupan phpstan. Namanya dipakai DUA sisi — INNER_SH menulis filenya,
+# parse_phpstan mengenalinya di laporan — jadi ia disulih ke INNER_SH lewat token di bawah,
+# bukan diketik ulang di sana. Mengetiknya ulang membuat komentar ini bohong: rename konstanta
+# akan memalsukan error yang memblok (temuan canary tak dikenali lalu dihitung sbg milik module)
+# SEKALIGUS memvoidkan cakupan (canary "tak muncul") — dua cacat dari satu refactor yang tampak
+# tak berbahaya, persis kelas rename CONTAINER_PREFIX.
 CANARY_BASENAME = "psm-coverage-canary.php"
+_CANARY_TOKEN = "__PSM_CANARY_BASENAME__"
 IMAGE = "prestashop/prestashop-flashlight"
 DEFAULT_DB_IMAGE = "mariadb:lts"
 DEFAULT_PS_DOMAIN = "localhost:8000"
@@ -97,15 +102,15 @@ if command -v phpstan >/dev/null 2>&1; then
   # dijamin ber-error di level berapa pun (fungsi tak dikenal); kalau ia TAK muncul di laporan,
   # berarti phpstan tak menyentuh pohon module dan vonis CS tak boleh diklaim. Ditulis ke
   # SALINAN dalam container (module di-cp di atas), jadi pohon module di host tak tersentuh.
-  printf '<?php\npsm_canary_undefined_fn_xyz();\n' > "modules/$MOD_NAME/psm-coverage-canary.php"
+  printf '<?php\npsm_canary_undefined_fn_xyz();\n' > "modules/$MOD_NAME/__PSM_CANARY_BASENAME__"
   echo PSM_PHPSTAN_JSON_START
   phpstan analyse --no-progress --error-format=json --memory-limit=-1 -c "$NEON" "modules/$MOD_NAME" 2>/dev/null || true
   echo PSM_PHPSTAN_JSON_END
-  rm -f "modules/$MOD_NAME/psm-coverage-canary.php"
+  rm -f "modules/$MOD_NAME/__PSM_CANARY_BASENAME__"
 else
   echo PSM_PHPSTAN_ABSENT
 fi
-'''
+'''.replace(_CANARY_TOKEN, CANARY_BASENAME)
 
 
 def docker_available():
@@ -158,6 +163,17 @@ def parse_tag_map(raw, extra=None):
     base = _parse_pairs(raw) or dict(DEFAULT_TAG_MAP)
     base.update(_parse_pairs(extra))
     return base
+
+
+def resolve_tag(tag_map, full_ver):
+    """Tag image untuk satu versi target: cocokkan versi penuh, lalu bentuk yang dipendekkan.
+
+    Satu pemilik untuk aturan ini. Ekspresinya sempat disalin di dua main() (flashlight & e2e),
+    dan pra-pass kesegaran butuh jawaban yang SAMA untuk tahu apakah file lapis diproduksi image
+    yang sama — implementasi ketiga yang mendrift akan membuat gerbangnya menolak reuse yang sah
+    atau, lebih buruk, menerima bukti dari core yang lain.
+    """
+    return tag_map.get(full_ver) or tag_map.get(full_ver.rsplit(".", 1)[0]) or full_ver
 
 
 def parse_install(out):
@@ -518,7 +534,7 @@ def main():
               "orchestrator": args.orchestrator, "versions": {}}
     overall_pass = True
     for full_ver in [v.strip() for v in args.versions.split(",")]:
-        tag = tag_map.get(full_ver) or tag_map.get(full_ver.rsplit(".", 1)[0]) or full_ver
+        tag = resolve_tag(tag_map, full_ver)
         if args.verbose:
             print(f"versi {full_ver} -> {IMAGE}:{tag}", file=sys.stderr)
         r = run_one_version(module_dir, mod_name, full_ver, tag,

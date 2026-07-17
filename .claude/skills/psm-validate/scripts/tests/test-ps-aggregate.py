@@ -621,6 +621,30 @@ def main():
                 in mod.flashlight_layer(fl_old, "8.1").get("inconclusive_note", ""))
     # Urutan cabang: parse_ok False tak pernah punya coverage_ok, jadi cabang "skrip lama"
     # akan menyalip pesan parse-gagal & menyalahkan file lapis atas laporan yang rusak.
+    # determinism-3 (analyze ronde-5): auto-neon = OBSERVASI (phpstan BENAR-BENAR jalan, tapi
+    # penegakan ditahan karena config-nya kami yang karang). Dulu `generated_config` diemit KHUSUS
+    # untuk menandai itu lalu tak dibaca siapa pun & ke-N pesannya dibuang: run advisory jadi
+    # byte-identik dgn run bersih yang DITEGAKKAN. Kanalnya sama dgn error console: disurface,
+    # tak menggerbang.
+    fl_adv = _flash_cs({"available": True, "parse_ok": True, "generated_config": True,
+                        "coverage_ok": True, "errors": 0, "warnings": 2,
+                        "error_messages": [{"line": 12, "message": "Call to undefined method Foo::bar()"},
+                                           {"line": 3, "message": "bad"}]})
+    l_adv = mod.flashlight_layer(fl_adv, "8.1")
+    ok &= check("auto-neon -> advisory_note (bukan sinyal yatim) & sebut jalan keluarnya",
+                "advisory_note" in l_adv and "phpstan.neon milik module" in l_adv["advisory_note"])
+    ok &= check("auto-neon -> advisory TIDAK menjatuhkan ready (bukan celah cakupan)",
+                "inconclusive_note" not in l_adv
+                and mod.compute_ready({"8.1": mod.merge_version("8.1", static, fl_adv, None, None)},
+                                      ["static", "flashlight"]) is True)
+    ok &= check("auto-neon -> pesan phpstan sampai ke laporan sbg warning (dulu dibuang di lantai)",
+                len([f for f in l_adv["findings"] if f["severity"] == "warning"]) == 2
+                and any("undefined method" in f["message"] for f in l_adv["findings"])
+                and l_adv["errors"] == 0 and l_adv["state"] == "pass")
+    ok &= check("run advisory kini TERBEDAKAN dari run bersih yang ditegakkan (dulu byte-identik)",
+                mod.flashlight_layer(fl_cov, "8.1") != l_adv
+                and "advisory_note" not in mod.flashlight_layer(fl_cov, "8.1"))
+
     fl_parsefail = _flash_cs({"available": True, "parse_ok": False, "note": "gagal parse JSON phpstan"})
     note_pf = mod.flashlight_layer(fl_parsefail, "8.1").get("inconclusive_note", "")
     ok &= check("parse gagal tetap dilaporkan sbg parse gagal (cabang canary tak menyalip)",
@@ -730,6 +754,50 @@ def main():
         ok &= check(f"file lapis rusak ({name}) -> exit 2, BUKAN Traceback exit 1 yang "
                     "bertabrakan dgn vonis-gagal",
                     rc == 2 and "Traceback" not in err)
+
+    # 17. Sapuan orphan (analyze ronde-5 rank-2). (a) `ready` PER-VERSI dibaca KETIGA skill
+    # sibling ("siap hanya bila ready true di 1.7.x, 8.x, dan 9.x") tapi diemit NOL produsen:
+    # bukan cuma tak ditulis — TAK BISA dinyatakan, karena yang ada cuma satu ready global.
+    # Model lalu membaca yang global & melaporkannya tiga kali = klaim per-versi palsu.
+    st3 = static_result({"1.7.8": [], "8.1": [("cls-attribute", "error")], "9.1": []})
+    with tempfile.TemporaryDirectory() as td:
+        sp, op = Path(td) / "s.json", Path(td) / "o.json"
+        sp.write_text(json.dumps(st3), encoding="utf-8")
+        subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp), "--versions",
+                        "1.7.8,8.1,9.1", "--require", "static", "-o", str(op)],
+                       capture_output=True, text=True)
+        v3 = json.loads(op.read_text(encoding="utf-8"))
+    ok &= check("`ready` per-versi diemit (kontrak 3 sibling akhirnya bisa dinyatakan)",
+                all("ready" in m for m in v3["versions"].values()))
+    ok &= check("`ready` per-versi MEMBEDAKAN versi (8.1 gagal, dua lainnya siap)",
+                v3["versions"]["8.1"]["ready"] is False
+                and v3["versions"]["1.7.8"]["ready"] is True
+                and v3["versions"]["9.1"]["ready"] is True)
+    ok &= check("`ready` keseluruhan = AND dari per-versi (satu pemilik, tak bisa beda pendapat)",
+                v3["ready"] is False)
+    # (b) Rollup error/warning per-versi: SKILL.md & psm-scaffold disuruh membacanya "apa
+    # adanya", tapi satu-satunya `warnings` yang ada milik lapis static -> warning
+    # adversarial/flashlight tak terhitung. Kanal warning BARU dari fix advisory auto-neon
+    # bahkan tak punya penghitung sejak lahir.
+    adv_warn = {"versions": ["8.1"], "findings": [
+        {"id": "a1", "severity": "warning", "message": "harga tak divalidasi", "versions": ["8.1"]}]}
+    m_w = mod.merge_version("8.1", static_result({"8.1": [("x", "warning")]}), fl_adv, adv_warn, None)
+    ok &= check("rollup per-versi menghitung warning dari SEMUA lapis (static+adversarial+advisory)",
+                m_w["warnings"] == 4 and m_w["errors"] == 0)
+    ok &= check("rollup errors per-versi = jumlah temuan yang memblok",
+                mod.merge_version("8.1", static_bad, None, None, None)["errors"] == 1)
+    # (c) `--require` yang menyempit dulu MELEWATI konklusivitas static sepenuhnya -> ready=true
+    # atas versi yang nol aturan pernah menyentuhnya, dan satu-satunya yang mencatatnya
+    # (`conclusive` per-versi) tak dibaca gerbang mana pun.
+    st_nobase = static_result({"8.1": []}, rules_evaluated=0)
+    m_nb = mod.merge_version("8.1", st_nobase, None, None, _e2e_ran(["builtin:x", "s.json"]))
+    ok &= check("versi tanpa vonis DASAR -> tak siap walau lapis yang diwajibkan konklusif",
+                m_nb["conclusive"] is False
+                and mod.version_ready(m_nb, ["e2e"]) is False
+                and mod.compute_ready({"8.1": m_nb}, ["e2e"]) is False)
+    ok &= check("versi ber-vonis dasar & lapis wajib konklusif -> siap (gerbang tak kelebihan sapu)",
+                mod.version_ready(mod.merge_version("8.1", static, None, None,
+                                                    _e2e_ran(["builtin:x", "s.json"])), ["e2e"]) is True)
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

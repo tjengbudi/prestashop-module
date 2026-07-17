@@ -53,6 +53,7 @@ def load_sibling(path, name):
 
 
 ss = load_sibling(Path(__file__).resolve().parent / "ps-static-scan.py", "ps_static_scan")
+fl = load_sibling(Path(__file__).resolve().parent / "ps-flashlight-run.py", "ps_flashlight_run")
 
 
 def newest_source_mtime(module_dir):
@@ -90,12 +91,20 @@ def layer_versions(payload):
     return None
 
 
-def plan_layer(path, requested, src_mtime, src_path, ruleset=None):
+def plan_layer(path, requested, src_mtime, src_path, provenance=None):
     """Putuskan reuse/rerun satu file lapis + alasannya.
 
-    `ruleset` (hanya Lapis 1): jejak ruleset yang berlaku SEKARANG. Vonis static punya dua
-    input — module dan ruleset — jadi membandingkan mtime module saja membuat aturan KB yang
-    baru ditambahkan tak pernah menyala di file lapis yang dipakai ulang.
+    `provenance` = INPUT KEDUA lapis ini (selain source module), bila punya. Tiap lapis punya
+    satu, dan membandingkan mtime module saja membuat perubahan pada input kedua itu tak pernah
+    menyala di file lapis yang dipakai ulang:
+      {"kind": "ruleset", "files": [...], "mtime": float}  — Lapis 1: aturan KB baru ditambahkan
+      {"kind": "image", "expect": {versi: tag}}             — Lapis 2/4: tag-map di-bump, jadi
+          file lapis lama memvonis core yang BERBEDA dari yang jadi target sekarang
+
+    Dulu param ini bernama `ruleset` dan hanya Lapis 1 yang mengisinya — padahal alasan yang
+    ditulisnya berlaku sama persis untuk Lapis 2/4, yang bahkan SUDAH mencatat tag/image-nya dan
+    tak dibaca siapa pun. Bentuk umum ini supaya input kedua Lapis 3 (kontrak lensa adversarial)
+    punya rumah kalau nanti dipasang, bukan jadi korban berikutnya.
     """
     p = Path(path)
     if not p.is_file():
@@ -111,16 +120,34 @@ def plan_layer(path, requested, src_mtime, src_path, ruleset=None):
     if age <= src_mtime:
         where = f" ({src_path})" if src_path else ""
         return {"reuse": False, "reason": f"module lebih baru dari file lapis{where}", "path": str(p)}
-    if ruleset is not None:
+    kind = (provenance or {}).get("kind")
+    if kind == "ruleset":
         recorded = payload.get("ruleset")
         if not isinstance(recorded, dict) or not recorded.get("files"):
             return {"reuse": False, "path": str(p),
                     "reason": "file lapis tak mencatat ruleset yang memproduksinya"}
-        if set(recorded.get("files") or []) != set(ruleset["files"]):
+        if set(recorded.get("files") or []) != set(provenance["files"]):
             return {"reuse": False, "path": str(p),
                     "reason": "ruleset berbeda dari yang memproduksi file lapis"}
-        if ruleset["mtime"] > float(recorded.get("mtime") or 0.0):
+        if provenance["mtime"] > float(recorded.get("mtime") or 0.0):
             return {"reuse": False, "path": str(p), "reason": "ruleset lebih baru dari file lapis"}
+    elif kind == "image":
+        # Versi yang TAK ada di file lapis dilewati di sini — itu celah cakupan, dan pemeriksaan
+        # `missing` di bawah yang menjawabnya dengan alasan yang benar.
+        vers = payload.get("versions") or {}
+        for ver in requested:
+            entry = vers.get(ver)
+            if not isinstance(entry, dict):
+                continue
+            recorded_tag = entry.get("tag")
+            expect = (provenance.get("expect") or {}).get(ver)
+            if not recorded_tag:
+                return {"reuse": False, "path": str(p),
+                        "reason": "file lapis tak mencatat tag image yang memproduksinya"}
+            if expect and recorded_tag != expect:
+                return {"reuse": False, "path": str(p),
+                        "reason": f"image berbeda dari yang memproduksi file lapis "
+                                  f"({ver}: {recorded_tag} vs {expect})"}
     covered = layer_versions(payload)
     if covered is None:
         return {"reuse": False, "reason": "cakupan versi file lapis tak bisa dipastikan", "path": str(p)}
@@ -168,6 +195,12 @@ def main():
     ap.add_argument("--extra-rules", help="Path aturan TAMBAHAN yang akan dipakai Lapis 1 — "
                                           "teruskan yang sama seperti ke ps-static-scan.py, "
                                           "supaya kesegaran dinilai atas ruleset yang benar-benar berlaku")
+    ap.add_argument("--tag-map", help="Peta versi->tag image yang berlaku (mis. dari "
+                                      "psm_flashlight_tag_map) — MENGGANTI peta default. Dipakai "
+                                      "untuk tahu apakah file lapis 2/4 diproduksi image yang SAMA "
+                                      "dengan target sekarang; tag di-bump = bukti dari core lain.")
+    ap.add_argument("--extra-tag-map", help="Tag TAMBAHAN di atas peta yang berlaku — MENAMBAH, "
+                                            "bukan mengganti. Teruskan yang sama seperti ke Lapis 2/4.")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     args = ap.parse_args()
 
@@ -185,12 +218,21 @@ def main():
     rel = str(src_path.relative_to(module_dir)) if src_path else None
 
     ruleset = ss.ruleset_provenance([args.rules, args.extra_rules])
+    # Tag yang berlaku SEKARANG untuk tiap versi target. Diresolve lewat pemilik aturannya
+    # (ps-flashlight-run), bukan disalin ke sini — implementasi ketiga yang mendrift akan
+    # membuat gerbang ini menolak reuse yang sah, atau menerima bukti dari core yang lain.
+    tag_map = fl.parse_tag_map(args.tag_map, args.extra_tag_map)
+    image_prov = {"kind": "image", "expect": {v: fl.resolve_tag(tag_map, v) for v in requested}}
+    # Tiap lapis punya input KEDUA-nya sendiri: ruleset memproduksi vonis Lapis 1, image
+    # memproduksi vonis Lapis 2 & 4. Lapis 3 (judgment model) belum punya jejak yang bisa
+    # dibandingkan — biarkan None sampai kontraknya mencatat sesuatu, jangan mengarang.
+    prov_of = {"static": {"kind": "ruleset", **ruleset}, "flashlight": image_prov,
+               "e2e": image_prov, "adversarial": None}
     plans = {}
     for layer in LAYERS:
         path = Path(args.reports_dir) / f"{module_dir.name}-{layer}.json"
-        # Ruleset hanya memproduksi vonis Lapis 1; lapis lain tak berubah karenanya.
         plans[layer] = plan_layer(path, requested, src_mtime, rel,
-                                  ruleset=ruleset if layer == "static" else None)
+                                  provenance=prov_of[layer])
 
     result = {"module": module_dir.name, "versions": requested,
               "newest_source": rel, "layers": plans,

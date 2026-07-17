@@ -142,16 +142,16 @@ def main():
 
         base_state = mod.ss.ruleset_provenance([str(rules)])
         _write_layer([rules], base_state["mtime"])
-        r = mod.plan_layer(layer, TV, 0.0, None, ruleset=base_state)
+        r = mod.plan_layer(layer, TV, 0.0, None, provenance={"kind": "ruleset", **base_state})
         ok &= check("ruleset sama & tak berubah -> reuse", r["reuse"] is True)
 
         with_extra = mod.ss.ruleset_provenance([str(rules), str(extra)])
-        r = mod.plan_layer(layer, TV, 0.0, None, ruleset=with_extra)
+        r = mod.plan_layer(layer, TV, 0.0, None, provenance={"kind": "ruleset", **with_extra})
         ok &= check("aturan KB BARU ditambahkan -> rerun (dulu: reuse, aturan tak pernah menyala)",
                     r["reuse"] is False and "ruleset berbeda" in r["reason"])
 
         os.utime(rules, (9e9 + 100, 9e9 + 100))  # ruleset inti disunting sesudah file lapis
-        r = mod.plan_layer(layer, TV, 0.0, None, ruleset=mod.ss.ruleset_provenance([str(rules)]))
+        r = mod.plan_layer(layer, TV, 0.0, None, provenance={"kind": "ruleset", **mod.ss.ruleset_provenance([str(rules)])})
         ok &= check("ruleset inti lebih baru dari file lapis -> rerun",
                     r["reuse"] is False and "lebih baru" in r["reason"])
 
@@ -160,10 +160,10 @@ def main():
         del stale["ruleset"]
         layer.write_text(json.dumps(stale))
         os.utime(layer, (9e9, 9e9))
-        r = mod.plan_layer(layer, TV, 0.0, None, ruleset=base_state)
+        r = mod.plan_layer(layer, TV, 0.0, None, provenance={"kind": "ruleset", **base_state})
         ok &= check("file lapis tanpa jejak ruleset -> rerun (tak bisa dipastikan, jangan tebak)",
                     r["reuse"] is False and "tak mencatat ruleset" in r["reason"])
-        r = mod.plan_layer(layer, TV, 0.0, None, ruleset=None)
+        r = mod.plan_layer(layer, TV, 0.0, None, provenance=None)
         ok &= check("lapis non-static tak dinilai atas ruleset (ruleset tak memproduksinya)",
                     r["reuse"] is True)
 
@@ -221,6 +221,54 @@ def main():
                     any("hampa.json" in n and "tak menegakkan apa pun" in n
                         for n in (plan2.get("e2e_scenario_notes") or []))
                     and "hampa.json" in (plan2.get("e2e_scenarios") or []))
+
+    # --- enhancement-1 (analyze ronde-5): vonis Lapis 2/4 juga punya DUA input — module DAN
+    # image core-nya. Keduanya SUDAH mencatat tag yang memproduksinya; gerbang kesegaran tak
+    # pernah membacanya, jadi tag-map yang di-bump (9.0->9.1, nightly->9.1.4-nginx: pernah
+    # terjadi sungguhan) membuat file lapis lama dipakai ulang & dinyatakan "cakupan cocok"
+    # padahal ia memvonis core yang BERBEDA. Fix ruleset-provenance ronde lalu berhenti di
+    # Lapis 1 padahal docstring-nya sendiri menalar untuk kedua lapis ini.
+    with tempfile.TemporaryDirectory() as td8:
+        t8 = Path(td8)
+        m8 = t8 / "mymod"
+        _touch(m8 / "mymod.php", 1000)
+        lay = t8 / "mymod-flashlight.json"
+        lay.write_text(json.dumps({"module": "mymod", "versions": {
+            "9.1": {"version": "9.1", "tag": "9.1.4-nginx", "image": "x:9.1.4-nginx",
+                    "pass": True}}}))
+        os.utime(lay, (9e9, 9e9))
+        same = {"kind": "image", "expect": {"9.1": "9.1.4-nginx"}}
+        bumped = {"kind": "image", "expect": {"9.1": "9.1.5-nginx"}}
+        ok &= check("image sama -> reuse (gerbang tak kelebihan sapu)",
+                    mod.plan_layer(lay, ["9.1"], 1000, None, provenance=same)["reuse"] is True)
+        r_bump = mod.plan_layer(lay, ["9.1"], 1000, None, provenance=bumped)
+        ok &= check("tag-map di-bump -> rerun (dulu: reuse 'cakupan versi cocok' atas core LAIN)",
+                    r_bump["reuse"] is False and "image berbeda" in r_bump["reason"])
+        ok &= check("alasan sebut tag lama & baru supaya operator paham",
+                    "9.1.4-nginx" in r_bump["reason"] and "9.1.5-nginx" in r_bump["reason"])
+        lay_notag = t8 / "mymod-e2e.json"
+        lay_notag.write_text(json.dumps({"versions": {"9.1": {"pass": True}}}))
+        os.utime(lay_notag, (9e9, 9e9))
+        # Assert ke ALASANnya, bukan cuma reuse=False: tanpa gerbang ini hasilnya tetap False
+        # lewat cabang "image berbeda" (None != tag), jadi cek reuse saja lolos senyap —
+        # dan pesannya jadi salah ("image berbeda (9.1: None vs ...)") padahal file lapisnya
+        # cuma tak mencatat apa-apa. Kubuktikan lewat mutasi.
+        r_notag = mod.plan_layer(lay_notag, ["9.1"], 1000, None, provenance=same)
+        ok &= check("file lapis tak mencatat tag -> rerun beralasan BENAR (bukan 'image berbeda')",
+                    r_notag["reuse"] is False and "tak mencatat tag" in r_notag["reason"])
+        # Satu pemilik: tag yang diharapkan diresolve lewat ps-flashlight-run, bukan disalin.
+        # Ekspresinya sempat ada di DUA main(); implementasi ketiga di sini akan mendrift.
+        ok &= check("resolve_tag dipakai dari pemiliknya (bentuk penuh & dipendekkan)",
+                    mod.fl.resolve_tag({"9.1": "9.1.4-nginx"}, "9.1") == "9.1.4-nginx"
+                    and mod.fl.resolve_tag({"8.1": "8.1.6-nginx"}, "8.1.6") == "8.1.6-nginx")
+        # CLI: wiring main() -> plan_layer(provenance=image) — jalur yang unit test lewati.
+        r_cli = subprocess.run(["uv", "run", str(MOD_PATH), str(m8), "--reports-dir", str(t8),
+                                "--versions", "9.1", "--extra-tag-map", "9.1=9.1.5-nginx"],
+                               capture_output=True, text=True)
+        plan_cli = json.loads(r_cli.stdout)
+        ok &= check("CLI: --extra-tag-map sampai ke gerbang reuse Lapis 2 (wiring, bukan cuma fungsi)",
+                    "flashlight" in (plan_cli.get("rerun") or [])
+                    and "image berbeda" in plan_cli["layers"]["flashlight"]["reason"])
 
     # Refutasi verifier atas fix ronde-5: gerbang himpunan kosong ditutup di ps-aggregate,
     # lalu kelasnya selamat SATU SEAM di sini — di skrip yang justru bertugas MENOLAK bukti

@@ -82,13 +82,32 @@ def compute_ready(versions, required):
     # bukan cuma jalur CLI.
     if not versions:
         return False
-    for m in versions.values():
-        if not m["pass"]:
+    return all(version_ready(m, required) for m in versions.values())
+
+
+def version_ready(m, required):
+    """`ready` untuk SATU versi. Pemilik tunggal aturannya; `ready` keseluruhan = AND-nya.
+
+    Dipisah karena kontrak yang dibaca TIGA skill sibling ditulis per-versi ("siap hanya bila
+    `ready` true di 1.7.x, 8.x, dan 9.x") sementara yang diemit cuma satu `ready` top-level:
+    per-versi bukan sekadar tak ditulis, ia TAK BISA dinyatakan. Model lalu berimprovisasi —
+    membaca `ready` global lalu melaporkannya tiga kali — yang diam-diam mengubah klaim
+    per-versi jadi klaim global, persis kegagalan yang pemisahan `pass`/`ready` ada untuk cegah.
+    Satu fungsi, dua pemakai, jadi keduanya tak bisa berbeda pendapat.
+    """
+    if not m["pass"]:
+        return False
+    # Lantai, terlepas dari `--require`: versi tanpa vonis DASAR (nol aturan dinilai, main file
+    # tak resolve) tak pernah siap-rilis. Tanpa ini `--require e2e` melewati konklusivitas static
+    # sepenuhnya -> ready=true atas versi yang nol aturan pernah menyentuhnya, dan satu-satunya
+    # yang mencatatnya (`conclusive` per-versi) tak dibaca siapa pun. Penyempitan itu memilih
+    # lapis mana yang WAJIB, bukan izin untuk memvonis tanpa dasar.
+    if not m.get("conclusive"):
+        return False
+    for layer in required:
+        info = m["layers"].get(layer)
+        if info is None or not info.get("conclusive") or info.get("inconclusive_note"):
             return False
-        for layer in required:
-            info = m["layers"].get(layer)
-            if info is None or not info.get("conclusive") or info.get("inconclusive_note"):
-                return False
     return True
 
 
@@ -249,6 +268,19 @@ def flashlight_layer(flash, full_ver):
             findings.append({"source": "flashlight", "id": "flashlight-phpstan",
                              "severity": ERROR, "message": f"{cs['errors']} phpstan error",
                              "fix": "", "location": v.get("image", "")})
+    # Neon auto-generate: phpstan BENAR-BENAR jalan dan temuannya nyata, tapi penegakannya
+    # sengaja ditahan — menjatuhkan rilis atas config yang kami karang sendiri, bukan milik
+    # module, bukan vonis. Temuannya tetap dibawa sebagai WARNING supaya sampai ke laporan
+    # seperti warning static. Dulu ke-N pesan itu dibuang di lantai dan satu-satunya penandanya
+    # (`generated_config`) tak dibaca siapa pun, jadi run advisory tak terbedakan dari run
+    # bersih yang ditegakkan. Cabang ini tak pernah bentrok dgn yang di atas: advisory selalu
+    # errors=0 by construction di ps-flashlight-run.
+    if cs.get("available") and cs.get("parse_ok") and cs.get("generated_config"):
+        for m in cs.get("error_messages", []):
+            findings.append({"source": "flashlight", "id": "flashlight-phpstan-advisory",
+                             "severity": "warning", "message": m.get("message", "phpstan"),
+                             "fix": "kirim phpstan.neon milik module untuk menegakkannya",
+                             "location": f"line {m.get('line', '?')}"})
     errs = sum(1 for f in findings if f["severity"] == ERROR)
     layer = {"state": "fail" if errs else "pass", "conclusive": True,
              "errors": errs, "findings": findings}
@@ -274,6 +306,13 @@ def flashlight_layer(flash, full_ver):
         layer["inconclusive_note"] = ("hasil flashlight tak mencatat `coverage_ok` (file lapis dari "
                                       "skrip lama) — cakupan phpstan tak bisa dipastikan; "
                                       "jalankan ulang Lapis 2")
+    # OBSERVASI, bukan celah cakupan — kanal yang sama dengan error console di e2e_layer:
+    # disurface supaya tak jadi sinyal yatim, tapi TAK menggerbang, dan jalan keluarnya
+    # (kirim neon sendiri) disebut supaya "advisory" bukan jalan buntu.
+    if cs.get("generated_config") and cs.get("parse_ok"):
+        layer["advisory_note"] = (f"{cs.get('warnings', 0)} temuan phpstan lewat neon "
+                                  "auto-generate — advisory: tak memblok & tak menjatuhkan "
+                                  "`ready`; tegakkan dengan mengirim phpstan.neon milik module")
     return layer
 
 
@@ -508,7 +547,8 @@ def merge_version(full_ver, static, flash, adversarial, e2e):
     adv = adversarial_layer(adversarial, full_ver)
     e = e2e_layer(e2e, full_ver)
 
-    blocking = [f for layer in (s, fl, adv, e) for f in layer["findings"] if f["severity"] == ERROR]
+    all_findings = [f for layer in (s, fl, adv, e) for f in layer["findings"]]
+    blocking = [f for f in all_findings if f["severity"] == ERROR]
     # Lolos bila tak ada error dari lapis KONKLUSIF manapun.
     passed = len(blocking) == 0
     # Vonis konklusif hanya bila setidaknya static teruji; catat flashlight/e2e tak konklusif.
@@ -518,6 +558,12 @@ def merge_version(full_ver, static, flash, adversarial, e2e):
         "conclusive": conclusive,
         "flashlight_conclusive": fl["conclusive"],
         "e2e_conclusive": e["conclusive"],
+        # Rollup KEEMPAT lapis. SKILL.md & psm-scaffold sudah disuruh membaca "hitungan
+        # error/warning per versi dari situ apa adanya" — hitungan yang tak pernah ada
+        # produsennya: satu-satunya `warnings` yang diemit milik lapis static saja, jadi
+        # warning adversarial/flashlight tak terhitung. Pemilik hitungannya agregat, bukan prosa.
+        "errors": len(blocking),
+        "warnings": len([f for f in all_findings if f["severity"] == "warning"]),
         "layers": {"static": s, "flashlight": fl, "adversarial": adv, "e2e": e},
         "blocking": blocking,
     }
@@ -641,6 +687,13 @@ def main():
             return 2
     else:
         required = list(LAYERS)
+
+    # `ready` per versi, dari fungsi yang sama yang menghitung `ready` keseluruhan. Kontrak
+    # ketiga skill sibling ditulis per-versi ("siap hanya bila `ready` true di 1.7.x, 8.x, 9.x")
+    # dan sampai sekarang tak ada yang mengemitnya, jadi mereka membaca yang global lalu
+    # menyebutnya per-versi. Diisi di sini karena `required` baru diketahui setelah gerbangnya.
+    for m in versions.values():
+        m["ready"] = version_ready(m, required)
 
     result = {
         "module": static.get("module", ""),
