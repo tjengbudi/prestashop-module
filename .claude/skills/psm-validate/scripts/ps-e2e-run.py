@@ -104,19 +104,54 @@ FATAL_SIGNS = (
 _SCRIPT_RE = re.compile(r"<script\b.*?</script>", re.IGNORECASE | re.DOTALL)
 
 
-def fatal_sign_in(html):
-    """Tanda fatal pertama di markup TERLIHAT, atau None.
+def fatal_sign_in(raw_body):
+    """Tanda fatal pertama di body respons MENTAH, atau None.
 
-    Konten <script>…</script> dibuang dulu: halaman PS sehat meng-embed kamus
-    terjemahan/JSON di inline script yang bisa memuat frasa ini — match di sana =
-    temuan memblok palsu atas module sehat. Blok <script> tak tertutup (fatal
-    memotong render di tengah script) sengaja TETAP terperiksa.
+    WAJIB diberi body mentah (`response.text()`), BUKAN `page.content()`.
+    content() adalah DOM TERSERIALISASI: parser menutup setiap tag yang terbuka,
+    jadi fatal yang memotong render di tengah `<script>` justru ikut tersapu regex
+    di bawah dan terbaca "tak ada fatal" — lolos konklusif atas toko rusak.
+    Di body mentah, script terpotong TAK punya `</script>` sehingga tak match
+    _SCRIPT_RE dan fatalnya tetap terlihat.
+
+    Blok script yang benar-benar tertutup dibuang: halaman PS sehat meng-embed
+    kamus terjemahan/JSON yang bisa memuat frasa ini — match di sana = temuan
+    memblok palsu atas module sehat.
     """
-    visible = _SCRIPT_RE.sub("", html or "")
+    visible = _SCRIPT_RE.sub("", raw_body or "")
     for s in FATAL_SIGNS:
         if s in visible:
             return s
     return None
+
+
+def _track_document(sink, resp):
+    """Simpan body MENTAH tiap respons dokumen, dikunci URL-nya, ke `sink`.
+
+    Dikunci URL supaya expect_no_fatal mengambil body milik halaman yang SEDANG
+    dibuka (page.url) — bukan body basi navigasi sebelumnya, bukan body iframe
+    (URL-nya beda). Ini jalur BEST-EFFORT untuk navigasi yang dipicu klik; jalur
+    utama (goto) menyimpan body langsung lewat _capture_body, karena Playwright
+    sync baru mendispatch event saat ada panggilan API yang memompa event loop —
+    listener saja TAK deterministik.
+    """
+    try:
+        if resp.request.resource_type != "document":
+            return
+        sink[resp.url] = resp.text()
+    except Exception:  # noqa: BLE001 — body tak tersedia; degrade jujur di titik pakai
+        pass
+
+
+def _capture_body(ctx, resp):
+    """Ambil body MENTAH langsung dari respons goto — deterministik, tanpa event."""
+    sink = ctx.get("doc")
+    if sink is None or resp is None:
+        return
+    try:
+        sink[resp.url] = resp.text()
+    except Exception:  # noqa: BLE001 — body tak terbaca (redirect/non-teks); degrade jujur
+        pass
 
 # Dijalankan DI DALAM container flashlight setelah healthy: salin + install module
 # (TANPA phpstan — coding-standard adalah wilayah Lapis 2). $MOD_NAME dari env.
@@ -253,10 +288,10 @@ def _res(action, ok, conclusive, message, location):
             "message": message, "location": location}
 
 
-def _fatal_message(status, html):
+def _fatal_message(status, raw_body):
     if status is not None and status >= 500:
         return f"HTTP {status} (server error)"
-    sign = fatal_sign_in(html)
+    sign = fatal_sign_in(raw_body)
     return f"tanda fatal: '{sign}'" if sign else "tak ada fatal"
 
 
@@ -288,10 +323,13 @@ def _snap(page, ctx, label):
 def run_steps(page, steps, ctx):
     """Eksekusi langkah skenario terhadap `page` (Playwright-like). Return list hasil.
 
-    `page` cukup mengekspos goto()->response(status), content()->str, locator(sel)
-    (.first.is_visible()/.count()), get_by_text(txt)(.count()), click(sel), fill(sel,val)
-    — sehingga logika ini teruji dengan page-tiruan. `click_optional` = klik bila elemen
-    ada, lewati tanpa gagal bila tidak (interstitial yang muncul hanya di sebagian versi).
+    `page` cukup mengekspos goto()->response(status), url, content()->str, locator(sel)
+    (.first.is_visible()/.count()), get_by_text(txt).filter(visible=True)(.count()),
+    click(sel), fill(sel,val) — sehingga logika ini teruji dengan page-tiruan.
+    `expect_no_fatal` menilai body MENTAH dari ctx['doc'][page.url] (diisi
+    _track_document lewat listener response); tanpa body itu ia TAK menilai (tak
+    konklusif) alih-alih menebak dari DOM. `click_optional` = klik bila elemen ada,
+    lewati tanpa gagal bila tidak (interstitial yang muncul hanya di sebagian versi).
     Assertion di area BO konklusif hanya bila ctx['bo_authed'] True. `expect_no_console_error`
     membaca error JS/console yang ditangkap drive_engine (ctx['console_sink'] sejak
     ctx['console_base']). Screenshot otomatis diambil sesudah goto & pada kegagalan bila
@@ -310,13 +348,30 @@ def run_steps(page, steps, ctx):
                 url = _resolve_url(step, ctx, area)
                 resp = page.goto(url)
                 last_status = getattr(resp, "status", None) if resp is not None else None
+                _capture_body(ctx, resp)
                 ok = last_status is None or last_status < 500
                 results.append(_res(action, ok, conclusive, f"status={last_status}", url))
                 _snap(page, ctx, f"{idx:02d}-goto")
             elif action == "expect_no_fatal":
-                html = page.content() or ""
-                bad = (last_status is not None and last_status >= 500) or fatal_sign_in(html) is not None
-                results.append(_res(action, not bad, conclusive, _fatal_message(last_status, html), area))
+                if last_status is not None and last_status >= 500:
+                    results.append(_res(action, False, conclusive, f"HTTP {last_status} (server error)", area))
+                else:
+                    try:
+                        # Memompa event loop (Playwright sync mendispatch event hanya
+                        # saat ada panggilan API) supaya body navigasi-lewat-klik sempat
+                        # tertangkap listener, sekaligus menunggu dokumen selesai.
+                        page.wait_for_load_state("load", timeout=SETTLE_TIMEOUT_MS)
+                    except Exception:  # noqa: BLE001 — pompa best-effort
+                        pass
+                    body = (ctx.get("doc") or {}).get(getattr(page, "url", None))
+                    if body is None:
+                        # Tanpa body mentah halaman ini, tak ada penilaian jujur —
+                        # jangan menebak dari page.content() (lihat fatal_sign_in).
+                        results.append(_res(action, False, False,
+                                            "body respons mentah tak tertangkap — fatal tak dinilai", area))
+                    else:
+                        results.append(_res(action, fatal_sign_in(body) is None, conclusive,
+                                            _fatal_message(last_status, body), area))
             elif action == "expect_visible":
                 sel = step.get("selector", "")
                 vis = page.locator(sel).first.is_visible()
@@ -329,10 +384,11 @@ def run_steps(page, steps, ctx):
                 except Exception:  # noqa: BLE001 — settle best-effort, assertion tetap dievaluasi
                     pass
                 txt = substitute(step.get("text", ""), ctx)
-                # Teks TERLIHAT lewat locator, BUKAN substring di HTML terserialisasi:
-                # kamus terjemahan/JSON di <script> memuat frasa yang tak pernah dirender,
-                # jadi substring bisa LOLOS konklusif atas halaman yang gagal (false pass).
-                present = page.get_by_text(txt).count() > 0
+                # Teks yang BENAR-BENAR TERLIHAT. get_by_text saja tak cukup: ia
+                # mencocokkan node teks apa pun termasuk yang display:none, dan BO
+                # PrestaShop membawa template growl/modal tersembunyi — 'successful'
+                # di sana bikin simpan yang GAGAL terbaca lolos konklusif.
+                present = page.get_by_text(txt).filter(visible=True).count() > 0
                 results.append(_res(action, present, conclusive, f"text present={present}: {txt[:50]}", area))
             elif action == "expect_no_console_error":
                 errs = ctx.get("console_sink", [])[ctx.get("console_base", 0):]
@@ -516,9 +572,13 @@ def _drive_page(browser, engine, scenarios, ctx):
     page.on("console", lambda m: console_sink.append({"type": m.type, "text": (m.text or "")[:200]})
             if getattr(m, "type", "") == "error" else None)
     page.on("pageerror", lambda e: console_sink.append({"type": "pageerror", "text": str(e)[:200]}))
+    # Body respons MENTAH per URL — satu-satunya masukan sah expect_no_fatal.
+    doc_sink = {}
+    page.on("response", lambda r: _track_document(doc_sink, r))
     base = dict(ctx)
     base["engine"] = engine
     base["console_sink"] = console_sink
+    base["doc"] = doc_sink
     base["bo_authed"] = _bo_login(page, base) if _needs_bo(scenarios) else False
     out = []
     for sc in scenarios:

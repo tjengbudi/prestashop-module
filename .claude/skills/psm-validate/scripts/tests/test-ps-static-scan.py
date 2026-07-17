@@ -185,10 +185,27 @@ def main():
              "pattern": "x", "message": "m"}]}))
         p = run_raw(xmod, "8.1", ["--extra-rules", str(badsev)])
         ok &= check("extra-rules severity di luar enum -> exit 2", p.returncode == 2)
+        def _one(rule, grp="forbidden_functions"):
+            return mod_validate({grp: [rule]})
+
+        base = {"id": "r", "severity": "error", "kind": "function", "affects": ["8"], "message": "m"}
+
         ok &= check("extra-rules sehat -> lolos gerbang (tanpa pelanggaran)",
                     mod_validate({"forbidden_functions": [
                         {"id": "good", "severity": "error", "kind": "function", "affects": ["8"],
                          "pattern": r"\bfoo\(", "message": "m"}]}) == [])
+        # REGRESI: tipe ELEMEN yang dibaca kode scan, bukan cuma container
+        ok &= check("affects [9] angka -> pelanggaran (dulu lolos & rule diam-diam tak menyala)",
+                    len(_one({**base, "pattern": "x", "affects": [9]})) == 1)
+        ok &= check("affects ['9.1'] versi penuh -> pelanggaran (domain = major key)",
+                    len(_one({**base, "pattern": "x", "affects": ["9.1"]})) == 1)
+        ok &= check("affects ['9'] major key -> lolos", _one({**base, "pattern": "x", "affects": ["9"]}) == [])
+        ok &= check("affects [] KOSONG -> pelanggaran (lolos cek tipe tapi rule tak pernah menyala)",
+                    len(_one({**base, "pattern": "x", "affects": []})) == 1)
+        ok &= check("files [123] -> pelanggaran (dulu TypeError di rglob -> exit 1)",
+                    len(_one({**base, "pattern": "x", "files": [123]})) == 1)
+        ok &= check("files [''] kosong -> pelanggaran (dulu diam-diam tak memindai apa pun)",
+                    len(_one({**base, "pattern": "x", "files": [""]})) == 1)
         ok &= check("extra-rules struktural: expect tak dikenal -> pelanggaran",
                     len(mod_validate({"structure": [
                         {"id": "s", "severity": "error", "kind": "structure", "affects": ["8"],
@@ -197,10 +214,6 @@ def main():
         # REGRESI: gerbang harus menjaga TIPE tiap field yang disentuh kode pindai,
         # bukan cuma keberadaannya. Empat bentuk di bawah dulu LOLOS gerbang lalu
         # meledak (KeyError/TypeError/re.error) -> exit 1 = kode "module punya error".
-        def _one(rule, grp="forbidden_functions"):
-            return mod_validate({grp: [rule]})
-
-        base = {"id": "r", "severity": "error", "kind": "function", "affects": ["8"], "message": "m"}
         ok &= check("struktural expect=present TANPA pattern -> pelanggaran (dulu KeyError saat scan)",
                     len(_one({**base, "kind": "compliancy", "expect": "present"}, "structure")) == 1)
         ok &= check("struktural expect non-present tanpa pattern -> LOLOS (pattern memang tak dipakai)",
@@ -228,6 +241,35 @@ def main():
             ok &= check(f"CLI {name} -> exit 2 bersih (bukan crash exit 1)",
                         p.returncode == 2 and "Traceback" not in p.stderr)
 
+    # 7d. skip-vendor: komponen RELATIF, bukan substring & bukan path absolut
+    with tempfile.TemporaryDirectory() as td2:
+        tmp2 = Path(td2)
+        # (a) module DI BAWAH ancestor bernama vendor/ -> source-nya TETAP dipindai
+        deep = tmp2 / "vendor" / "acme" / "shop" / "modules"
+        deep.mkdir(parents=True)
+        vmod = make_module(deep, "vmod", GOOD_MAIN.replace(
+            "$this->name = 'goodmod';", "$this->name = 'vmod'; eval('1;');"))
+        res, _ = run_scan(vmod, "8.1")
+        ok &= check("module di bawah ancestor vendor/ -> source TETAP dipindai (fn-eval kena)",
+                    "fn-eval" in [f["id"] for f in res["versions"]["8.1"]["findings"]])
+        # (b) folder bernama myvendor/ BUKAN vendor -> tetap dipindai (dulu substring membuangnya)
+        mv = make_module(tmp2, "mvmod", GOOD_MAIN)
+        (mv / "myvendor").mkdir()
+        (mv / "myvendor" / "index.php").write_text("<?php")
+        (mv / "myvendor" / "thing.php").write_text("<?php eval($a);")
+        res, _ = run_scan(mv, "8.1")
+        occ = [o["file"] for f in res["versions"]["8.1"]["findings"] if f["id"] == "fn-eval"
+               for o in f["occurrences"]]
+        ok &= check("folder 'myvendor/' tetap dipindai (bukan vendor/)",
+                    any("myvendor" in o for o in occ))
+        # (c) vendor/ MILIK module tetap dilewati
+        (mv / "vendor").mkdir()
+        (mv / "vendor" / "dep.php").write_text("<?php eval($b);")
+        res, _ = run_scan(mv, "8.1")
+        occ = [o["file"] for f in res["versions"]["8.1"]["findings"] if f["id"] == "fn-eval"
+               for o in f["occurrences"]]
+        ok &= check("vendor/ milik module tetap dilewati", not any(o.startswith("vendor") for o in occ))
+
     # 8. Kontrak authoring ruleset: pattern/expect konsisten dgn kind (rule salah-tulis
     #    ketahuan di test, bukan KeyError saat scan)
     EXPECTS = {"present", "index_php_each_dir", "composer_prepend_autoloader_false", "compliancy_covers_target"}
@@ -245,6 +287,17 @@ def main():
             elif not structural and "pattern" not in r:
                 bad_rules.append(f"{r['id']}: rule non-struktural tanpa pattern (KeyError saat scan)")
     ok &= check(f"kontrak ruleset: pattern/expect konsisten dgn kind ({bad_rules or 'bersih'})", not bad_rules)
+    # _meta.schema = satu-satunya spec yang dibaca penulis aturan KB; ia HARUS sepakat
+    # dgn validator & scan (dulu menjanjikan severity 'info' & tak menyebut domain affects)
+    schema = rules_doc["_meta"]["schema"]
+    ok &= check("_meta.schema: severity sepakat dgn validator (error|warning, tanpa info)",
+                "error|warning" in schema and "|info" not in schema)
+    ok &= check("_meta.schema: domain affects didokumentasikan (major key)",
+                "MAJOR KEY" in schema and "1.7 | 8 | 9" in schema)
+    ok &= check("ruleset sendiri patuh domain affects & enum severity",
+                all(a in ("1.7", "8", "9") and r["severity"] in ("error", "warning")
+                    for g, items in rules_doc.items() if g != "_meta"
+                    for r in items for a in r["affects"]))
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

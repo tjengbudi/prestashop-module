@@ -54,6 +54,14 @@ def main():
         # vendor/ diabaikan walau jauh lebih baru (bukan source yang kita vonis)
         _touch(mdir / "vendor" / "lib" / "big.php", 9000)
 
+        # REGRESI: match path ABSOLUT dulu membuang seluruh module yang kebetulan
+        # berada di bawah ancestor bernama vendor/ -> mtime 0.0 -> file lapis 1970
+        # dianggap SEGAR = vonis atas bukti basi (bencana yang skrip ini cegah).
+        under = root / "vendor" / "acme" / "shop" / "mymod"
+        _touch(under / "mymod.php", 1000)
+        nm_under, _ = mod.newest_source_mtime(under)
+        ok &= check("module di bawah ancestor vendor/ -> mtime NYATA, bukan 0.0", nm_under == 1000)
+
         newest, where = mod.newest_source_mtime(mdir)
         ok &= check("newest_source_mtime abaikan vendor/ (1000, bukan 9000)", newest == 1000)
         ok &= check("newest_source_mtime sebut file-nya", where is not None and where.name == "mymod.php")
@@ -97,6 +105,17 @@ def main():
         ok &= check("layer_versions bentuk tak dikenal -> None", mod.layer_versions({"x": 1}) is None)
         ok &= check("layer_versions dari dict versions -> set", mod.layer_versions(
             {"versions": {"9.1": {}}}) == {"9.1"})
+        # Lapis adversarial menyatakan cakupan yang DITINJAU di top-level `versions`
+        ok &= check("layer_versions dari list versions (adversarial) -> set",
+                    mod.layer_versions({"versions": ["1.7.8", "8.1"], "findings": []}) == {"1.7.8", "8.1"})
+        ok &= check("cakupan TAK diturunkan dari findings (versi terpengaruh != yang ditinjau)",
+                    mod.layer_versions({"findings": [{"versions": ["8.1"]}]}) is None)
+        adv_fresh = reports / "mymod-adversarial.json"
+        adv_fresh.write_text(json.dumps({"versions": TV, "findings": []}), encoding="utf-8")
+        os.utime(adv_fresh, (2000, 2000))
+        pa = mod.plan_layer(adv_fresh, TV, newest, None)
+        ok &= check("lapis adversarial segar + cakupan dinyatakan -> reuse (lapis termahal tak diulang)",
+                    pa["reuse"] is True)
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

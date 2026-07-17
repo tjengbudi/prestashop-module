@@ -20,19 +20,30 @@ berbahaya bila salah — file lapis basi membuat vonis mengklaim coverage atas k
 sudah berubah, dan ps-aggregate tak bisa mendeteksinya (ia percaya JSON yang disodorkan).
 """
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
 
 LAYERS = ("static", "flashlight", "adversarial", "e2e")
-SKIP_DIRS = {"vendor", "node_modules", ".git"}
+
+# "Folder mana yang bukan source module" hanya boleh punya SATU definisi — dua
+# implementasi berbeda (substring vs komponen path) pernah sama-sama salah &
+# gagal ke arah tak aman. Pakai-ulang dari ps-static-scan (impor by-path karena
+# nama file ber-tanda-hubung), pola yang sama dgn ps-e2e-run -> ps-flashlight-run.
+_SS_PATH = Path(__file__).resolve().parent / "ps-static-scan.py"
+_spec = importlib.util.spec_from_file_location("ps_static_scan", _SS_PATH)
+assert _spec and _spec.loader, f"tak bisa memuat sibling {_SS_PATH}"
+ss = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ss)
 
 
 def newest_source_mtime(module_dir):
     """mtime file termuda di source module. Return (mtime, path) — (0.0, None) bila kosong."""
     newest, where = 0.0, None
-    for p in Path(module_dir).rglob("*"):
-        if not p.is_file() or SKIP_DIRS & set(p.parts):
+    module_dir = Path(module_dir)
+    for p in module_dir.rglob("*"):
+        if not p.is_file() or ss.is_skipped(p, module_dir):
             continue
         try:
             m = p.stat().st_mtime
@@ -44,16 +55,21 @@ def newest_source_mtime(module_dir):
 
 
 def layer_versions(payload):
-    """Versi yang tercakup file lapis. None = tak bisa ditentukan (jangan pakai ulang)."""
+    """Versi yang DITINJAU file lapis. None = tak bisa ditentukan (jangan pakai ulang).
+
+    Dua bentuk sah: `versions` dict (static/flashlight/e2e, kunci = versi) dan
+    `versions` list (lapis adversarial menyatakan cakupan yang ditinjau — lihat
+    references/adversarial-lens.md). Cakupan TAK diturunkan dari `findings`:
+    versi di temuan adalah versi TERPENGARUH, bukan yang ditinjau — review 3 versi
+    yang menemukan satu bug di 8.1 akan terbaca "cuma meninjau 8.1".
+    """
     if not isinstance(payload, dict):
         return None
     versions = payload.get("versions")
     if isinstance(versions, dict):
         return set(versions.keys())
-    # Lapis adversarial: temuan boleh menyebut versi, kosong = berlaku semua target.
-    findings = payload.get("findings")
-    if isinstance(findings, list):
-        return None  # cakupannya implisit; keputusannya milik pemanggil, bukan tebakan di sini
+    if isinstance(versions, list) and all(isinstance(v, str) for v in versions):
+        return set(versions)
     return None
 
 

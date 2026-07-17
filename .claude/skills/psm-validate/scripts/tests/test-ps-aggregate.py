@@ -302,6 +302,67 @@ def main():
     ok &= check("scenario_notes (spec authored dilewati) disurface di note walau lolos",
                 r["pass"] and "checkout.json" in r["layers"]["e2e"].get("inconclusive_note", ""))
 
+    def _flash_cs(cs):
+        return {"module": "m", "docker_available": True, "status": "ran",
+                "versions": {"8.1": {"version": "8.1", "image": "img",
+                                     "install": {"ok": True, "no_console": False, "log": ""},
+                                     "coding_standard": cs, "errors": [], "pass": True}}}
+
+    # 10e. CS tak dievaluasi -> install tetap konklusif TAPI disurface di
+    # inconclusive_note (kanal yang dibaca aturan jujur SKILL.md). Dulu dicatat di
+    # cs_note yang tak dibaca siapa pun -> separuh vonis Lapis 2 hilang senyap.
+    r = mod.merge_version("8.1", static, _flash_cs(
+        {"available": True, "parse_ok": False, "note": "JSON phpstan kosong/tak valid"}), None, None, TV)
+    fl_layer = r["layers"]["flashlight"]
+    ok &= check("phpstan tak terparse -> inconclusive_note (bukan cs_note yang tak dibaca)",
+                "phpstan" in fl_layer.get("inconclusive_note", "") and "cs_note" not in fl_layer)
+    r = mod.merge_version("8.1", static, _flash_cs({"available": False}), None, None, TV)
+    ok &= check("phpstan absen dari image -> inconclusive_note (dulu senyap total)",
+                "tak diuji" in r["layers"]["flashlight"].get("inconclusive_note", ""))
+
+
+    # 11b. compute_ready: pass buta konklusivitas, ready menjawab siap-rilis
+    v_clean = {"8.1": mod.merge_version("8.1", static, None, None, None, TV)}
+    ok &= check("ready: hanya static diwajibkan & bersih -> True",
+                mod.compute_ready(v_clean, ["static"]) is True)
+    ok &= check("ready: flashlight diwajibkan tapi tak jalan -> False (pass=True tapi tak siap)",
+                v_clean["8.1"]["pass"] is True and mod.compute_ready(v_clean, ["static", "flashlight"]) is False)
+    v_bad = {"8.1": mod.merge_version("8.1", static_bad, None, None, None, TV)}
+    ok &= check("ready: ada error memblok -> False walau lapis konklusif",
+                mod.compute_ready(v_bad, ["static"]) is False)
+    ok &= check("compute_ready: lapis diwajibkan tak ada di hasil -> False (bukan KeyError)",
+                mod.compute_ready(v_clean, ["ngawur"]) is False)
+    # Lapis boleh konklusif TAPI separuhnya tak dievaluasi (phpstan absen) / cakupan
+    # menyusut -> inconclusive_note. ready HARUS ikut jatuh; kalau tidak ia mengklaim
+    # persis coverage yang tak diuji.
+    v_note = {"8.1": mod.merge_version("8.1", static, _flash_cs({"available": False}), None, None, TV)}
+    ok &= check("ready: lapis konklusif tapi ber-inconclusive_note -> False (CS tak dievaluasi)",
+                v_note["8.1"]["layers"]["flashlight"]["conclusive"] is True
+                and mod.compute_ready(v_note, ["static", "flashlight"]) is False)
+
+    # 11c. Gerbang CLI --require (dulu NOL coverage: mutasi apa pun lolos senyap)
+    def _cli(args_extra):
+        with tempfile.TemporaryDirectory() as td:
+            sp, op = Path(td) / "s.json", Path(td) / "o.json"
+            sp.write_text(json.dumps(static), encoding="utf-8")
+            r = subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp),
+                                "--versions", "8.1", "-o", str(op), *args_extra],
+                               capture_output=True, text=True)
+            out = json.loads(op.read_text(encoding="utf-8")) if op.exists() else None
+            return r.returncode, r.stderr, out
+
+    rc, _, out = _cli([])
+    ok &= check("CLI default: KEEMPAT lapis diwajibkan (bukan 'yang kebetulan dijalankan')",
+                out["required_layers"] == ["static", "flashlight", "adversarial", "e2e"])
+    ok &= check("CLI default: static-only run -> ready False walau pass True (anti false-confidence)",
+                out["pass"] is True and out["ready"] is False)
+    rc, _, out = _cli(["--require", "static"])
+    ok &= check("CLI --require static: penyempitan sadar -> ready True & terekam",
+                out["ready"] is True and out["required_layers"] == ["static"])
+    rc, err, _ = _cli(["--require", "static,ngawur"])
+    ok &= check("CLI --require lapis tak dikenal -> exit 2 bersih (bukan KeyError Traceback exit 1)",
+                rc == 2 and "ngawur" in err and "Traceback" not in err)
+
     # 11. e2e_layer langsung: skipped -> findings kosong
     ok &= check("e2e_layer skipped -> findings kosong", mod.e2e_layer(e2e_skip, "8.1")["findings"] == [])
 

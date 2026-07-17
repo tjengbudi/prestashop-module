@@ -25,6 +25,31 @@ import sys
 from pathlib import Path
 
 ERROR = "error"
+LAYERS = ("static", "flashlight", "adversarial", "e2e")
+
+
+def compute_ready(versions, required):
+    """`ready` = lolos DAN tiap lapis yang diwajibkan benar-benar TUNTAS dinilai
+    di SEMUA versi target — konklusif dan tanpa catatan cakupan tersisa.
+
+    `pass` sengaja buta konklusivitas (lapis yang tak jalan tak boleh memblok), jadi
+    `pass` sendirian bukan sinyal siap-rilis: di runner tanpa Docker ia hijau atas
+    2 dari 4 lapis. `ready` menjawab itu dalam SATU field supaya tiap pemanggil tak
+    merakit sendiri dari pass + empat flag.
+
+    `inconclusive_note` ikut dihitung: lapis boleh konklusif (mis. install teruji)
+    sambil separuhnya tak pernah dievaluasi (phpstan absen) atau cakupannya menyusut
+    (browser absen, spec authored dilewati). Itu tetap "tak tuntas" — kalau tidak,
+    `ready` mengklaim persis coverage yang tak diuji.
+    """
+    for m in versions.values():
+        if not m["pass"]:
+            return False
+        for layer in required:
+            info = m["layers"].get(layer)
+            if info is None or not info.get("conclusive") or info.get("inconclusive_note"):
+                return False
+    return True
 
 
 def load_json(path, label):
@@ -62,7 +87,9 @@ def flashlight_layer(flash, full_ver):
     """Lapis 2 — konklusif hanya bila container benar-benar menjalankan uji.
 
     Tak konklusif (degrade jujur, tak memblok): Docker absen, gagal pull, timeout,
-    atau tak ada PS console. Konklusif: install teruji (lolos/ditolak) & CS terbaca.
+    PS console/root tak ada. Konklusif = install benar-benar diuji (lolos/ditolak);
+    bila phpstan tak terbaca, install tetap divonis tapi separuh CS disurface lewat
+    `inconclusive_note` — bukan diklaim teruji.
     """
     if not flash or flash.get("status") == "skipped" or not flash.get("docker_available", False):
         reason = (flash or {}).get("reason", "Docker tidak tersedia — uji flashlight dilewati.")
@@ -102,15 +129,18 @@ def flashlight_layer(flash, full_ver):
             findings.append({"source": "flashlight", "id": "flashlight-phpstan",
                              "severity": ERROR, "message": f"{cs['errors']} phpstan error",
                              "fix": "", "location": v.get("image", "")})
-    # CS tak terparse: install tetap konklusif, tapi catat CS tak teruji.
-    cs_note = None
-    if cs.get("available") and cs.get("parse_ok") is False:
-        cs_note = cs.get("note", "laporan phpstan tak terparse — coding standard tak diuji")
     errs = sum(1 for f in findings if f["severity"] == ERROR)
     layer = {"state": "fail" if errs else "pass", "conclusive": True,
              "errors": errs, "findings": findings}
-    if cs_note:
-        layer["cs_note"] = cs_note
+    # CS tak dievaluasi: install TETAP konklusif (benar-benar diuji), tapi separuh
+    # vonis Lapis 2 (phpstan) tak pernah terbaca. Disurface lewat `inconclusive_note`
+    # — kanal yang memang dibaca aturan jujur SKILL.md & dipakai e2e_layer. Dulu
+    # dicatat di `cs_note` yang tak dibaca siapa pun = gap senyap.
+    if not cs.get("available"):
+        layer["inconclusive_note"] = "phpstan tak ada di image — coding standard tak diuji; tak memblok"
+    elif cs.get("parse_ok") is False:
+        layer["inconclusive_note"] = (cs.get("note", "laporan phpstan tak terparse")
+                                      + " — coding standard tak diuji; tak memblok")
     return layer
 
 
@@ -276,6 +306,12 @@ def main():
     ap.add_argument("--adversarial", help="JSON temuan adversarial buatan model (opsional)")
     ap.add_argument("--e2e", help="JSON output ps-e2e-run.py (Lapis 4, opsional bila dilewati)")
     ap.add_argument("--versions", help="Versi target dipisah koma (default: dari hasil static)")
+    ap.add_argument("--require", help="Lapis yang WAJIB tuntas agar `ready` true, dipisah koma "
+                                      f"({'|'.join(LAYERS)}). DEFAULT: KEEMPATNYA — siap-rilis berarti "
+                                      "keempat lapis membuktikannya. Runner yang tak sanggup (tanpa Docker/"
+                                      "browser) memang menghasilkan ready=false: itu jujur, bukan cacat. "
+                                      "Sengaja menggating lebih sempit? Nyatakan di sini — pilihannya terekam "
+                                      "di `required_layers`, bukan tersembunyi di flag yang kebetulan tak dipakai.")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     args = ap.parse_args()
 
@@ -313,11 +349,28 @@ def main():
 
     flashlight_ran = bool(flash and flash.get("docker_available"))
     e2e_ran = bool(e2e and e2e.get("e2e_available") and e2e.get("status") == "ran")
+
+    # Default KETAT: keempat lapis. Dulu defaultnya "lapis yang filenya diberikan" —
+    # itu membuat lapis yang TAK dijalankan otomatis TAK diwajibkan, jadi pemanggil
+    # yang melewatkan flag dapat ready=true atas satu lapis saja: bug lama bersalin nama.
+    # Penyempitan harus jadi pernyataan sadar yang terekam, bukan efek samping kelalaian.
+    if args.require:
+        required = [l.strip() for l in args.require.split(",") if l.strip()]
+        bad = [l for l in required if l not in LAYERS]
+        if bad:
+            print(f"error: --require memuat lapis tak dikenal: {', '.join(bad)} — sah: {', '.join(LAYERS)}",
+                  file=sys.stderr)
+            return 2
+    else:
+        required = list(LAYERS)
+
     result = {
         "module": static.get("module", ""),
         "target_versions": target_versions,
         "versions": versions,
         "pass": overall_pass,
+        "ready": compute_ready(versions, required),
+        "required_layers": required,
         "flashlight_conclusive": all_conclusive,
         "e2e_conclusive": all_e2e_conclusive,
         "layers_run": {

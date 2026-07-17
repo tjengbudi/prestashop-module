@@ -10,7 +10,6 @@ page-tiruan (duck-typed). Jalankan: uv run scripts/tests/test-ps-e2e-run.py
 """
 import importlib.util
 import json
-import re
 import sys
 import tempfile
 from pathlib import Path
@@ -51,32 +50,63 @@ class _Loc:
 
 
 class _TextLoc:
-    """Locator teks TERLIHAT: cocokkan hanya markup di luar <script> — meniru
-    get_by_text Playwright yang membaca teks ter-render, bukan HTML mentah."""
-    def __init__(self, html, txt):
-        visible = re.sub(r"<script\b.*?</script>", "", html or "", flags=re.I | re.S)
-        visible = re.sub(r"<[^>]+>", " ", visible)
-        self._n = 1 if txt and txt in visible else 0
+    """Locator teks dengan VISIBILITAS sebagai sumbu nyata, bukan turunan markup.
+
+    Mock lama menurunkan "terlihat" dengan me-regex-strip <script>+tag — yaitu
+    mengimplementasi ULANG teknik yang justru diganti, sehingga suite mustahil
+    menangkap get_by_text yang tak memfilter visibilitas. Di sini halaman-tiruan
+    menyatakan teks terlihat & tersembunyi secara terpisah: `count()` menghitung
+    keduanya (persis get_by_text asli), `filter(visible=True)` hanya yang terlihat.
+    """
+    def __init__(self, vis_hits, hid_hits):
+        self._vis, self._hid = vis_hits, hid_hits
 
     def count(self):
-        return self._n
+        return self._vis + self._hid
+
+    def filter(self, visible=False):
+        return _TextLoc(self._vis, 0 if visible else self._hid)
+
+
+class _FakeReq:
+    def __init__(self, kind):
+        self.resource_type = kind
+
+
+class _FakeResp:
+    """Respons dgn body MENTAH — beda kanal dari DOM (page.content())."""
+    def __init__(self, url, body, status=200, kind="document"):
+        self.url, self._body, self.status = url, body, status
+        self.request = _FakeReq(kind)
+
+    def text(self):
+        return self._body
 
 
 class FakePage:
+    """Halaman-tiruan. Tiga kanal dipisah sengaja, karena browser asli memisahkannya:
+    `raw_body` (yang dikirim server), `html` (DOM terserialisasi), dan teks
+    terlihat/tersembunyi. Fatal yang memotong render hanya kelihatan di raw_body."""
     def __init__(self, *, status=200, html="<html><body>halaman ok</body></html>",
-                 visible=True, raise_on=None, loc_count=1, url_after_click=None):
+                 visible=True, raise_on=None, loc_count=1, url_after_click=None,
+                 raw_body="<html><body>halaman ok</body></html>", visible_text="", hidden_text=""):
         self._status = status
         self._html = html
         self._visible = visible
         self._raise_on = set(raise_on or ())
         self._loc_count = loc_count
         self._url_after_click = url_after_click
+        self._raw_body = raw_body
+        self._visible_text = visible_text
+        self._hidden_text = hidden_text
+        self._handlers = {}
         self.url = ""
         self.log = []
 
     def get_by_text(self, txt):
         self.log.append(("get_by_text", txt))
-        return _TextLoc(self._html, txt)
+        return _TextLoc(1 if txt and txt in self._visible_text else 0,
+                        1 if txt and txt in self._hidden_text else 0)
 
     def set_default_timeout(self, t):
         pass
@@ -86,12 +116,20 @@ class FakePage:
         if state in self._raise_on:
             raise RuntimeError(f"{state} timeout")
 
+    def emit_response(self, url=None, kind="document"):
+        """Picu listener response — meniru navigasi yang dipicu klik (bukan goto)."""
+        h = self._handlers.get("response")
+        if h and self._raw_body is not None:
+            h(_FakeResp(url or self.url, self._raw_body, self._status, kind))
+
     def goto(self, url):
         self.log.append(("goto", url))
         self.url = url
         if "goto" in self._raise_on:
             raise RuntimeError("nav gagal")
-        return _Resp(self._status)
+        if self._raw_body is None:
+            return _Resp(self._status)          # respons tanpa body terbaca
+        return _FakeResp(url, self._raw_body, self._status)
 
     def content(self):
         return self._html
@@ -115,6 +153,7 @@ class FakePage:
 
     def on(self, event, handler):
         self.log.append(("on", event))
+        self._handlers[event] = handler
 
     def screenshot(self, path=None, full_page=False):
         self.log.append(("screenshot", path))
@@ -149,6 +188,17 @@ class _FakeBrowser:
 
 def _ctx(bo_authed=False):
     return {"fo": "http://fo", "bo": "http://bo", "mod": "m", "bo_authed": bo_authed}
+
+
+def _wired(page, bo_authed=False):
+    """ctx dgn kanal body mentah dipasang persis seperti _drive_page produksi.
+
+    Penting: sink diisi HANYA lewat listener response nyata, jadi test menempuh
+    seam yang sama dengan produksi — bukan menyuapi body langsung ke ctx.
+    """
+    doc = {}
+    page.on("response", lambda r: mod._track_document(doc, r))
+    return {**_ctx(bo_authed), "doc": doc}
 
 
 def _by_action(results, action):
@@ -208,13 +258,15 @@ def main():
                 mod._needs_bo([{"steps": [{"action": "goto", "area": "fo"}]}]) is False)
 
     # --- run_steps: smoke bersih -> semua ok; BO tak konklusif tanpa login ---
-    res = mod.run_steps(FakePage(), sm["steps"], _ctx(bo_authed=False))
+    pg_sm = FakePage()
+    res = mod.run_steps(pg_sm, sm["steps"], _wired(pg_sm))
     ok &= check("smoke bersih -> semua langkah ok", all(r["ok"] for r in res))
     fo_nofatal = _by_action(res, "expect_no_fatal")
     ok &= check("FO expect_no_fatal konklusif", fo_nofatal[0]["conclusive"] is True)
     ok &= check("BO expect_no_fatal TAK konklusif tanpa login", fo_nofatal[-1]["conclusive"] is False)
     # dengan login BO -> BO jadi konklusif
-    res_auth = mod.run_steps(FakePage(), sm["steps"], _ctx(bo_authed=True))
+    pg_auth = FakePage()
+    res_auth = mod.run_steps(pg_auth, sm["steps"], _wired(pg_auth, bo_authed=True))
     ok &= check("BO konklusif bila bo_authed True", _by_action(res_auth, "expect_no_fatal")[-1]["conclusive"] is True)
 
     # --- run_steps: fatal terdeteksi (status 500 & tanda fatal) ---
@@ -222,51 +274,92 @@ def main():
                                                 {"action": "expect_no_fatal"}], _ctx())
     ok &= check("status 500 -> goto ok False & expect_no_fatal gagal",
                 _by_action(r500, "goto")[0]["ok"] is False and _by_action(r500, "expect_no_fatal")[0]["ok"] is False)
-    rfatal = mod.run_steps(FakePage(html="<b>Fatal error</b>: boom"),
-                           [{"action": "goto", "area": "fo", "path": "/"}, {"action": "expect_no_fatal"}], _ctx())
-    ok &= check("tanda 'Fatal error' -> expect_no_fatal gagal (konklusif)",
-                _by_action(rfatal, "expect_no_fatal")[0] == _by_action(rfatal, "expect_no_fatal")[0] and
-                _by_action(rfatal, "expect_no_fatal")[0]["ok"] is False)
-    # REGRESI determinism-2: frasa fatal generik hanya dihitung di markup TERLIHAT —
-    # kamus terjemahan/JSON di <script> halaman sehat bukan fatal (anti false-block).
-    rscript = mod.run_steps(FakePage(html='<script>var t={"e":"There was an error"};</script><body>ok</body>'),
-                            [{"action": "goto", "area": "fo", "path": "/"}, {"action": "expect_no_fatal"}], _ctx())
-    ok &= check("frasa generik DI DALAM <script> (kamus terjemahan) -> BUKAN fatal",
-                _by_action(rscript, "expect_no_fatal")[0]["ok"] is True)
-    rvisible = mod.run_steps(FakePage(html="<body>There was an error</body>"),
-                             [{"action": "goto", "area": "fo", "path": "/"}, {"action": "expect_no_fatal"}], _ctx())
-    ok &= check("frasa generik di markup terlihat -> tetap fatal",
-                _by_action(rvisible, "expect_no_fatal")[0]["ok"] is False)
-    ok &= check("fatal_sign_in: <script> tak tertutup (fatal memotong render) tetap terperiksa",
-                mod.fatal_sign_in("<script>Fatal error: boom") == "Fatal error")
+    pg_fatal = FakePage(raw_body="<html><body><b>Fatal error</b>: boom</body></html>")
+    rfatal = mod.run_steps(pg_fatal, [{"action": "goto", "area": "fo", "path": "/"},
+                                      {"action": "expect_no_fatal"}], _wired(pg_fatal))
+    ok &= check("tanda 'Fatal error' di body mentah -> expect_no_fatal gagal (konklusif)",
+                _by_action(rfatal, "expect_no_fatal")[0]["ok"] is False
+                and _by_action(rfatal, "expect_no_fatal")[0]["conclusive"] is True)
+
+    # REGRESI CRITICAL: fatal PHP memotong render DI TENGAH <script> (status tetap 200).
+    # Body MENTAH tak punya </script>, jadi _SCRIPT_RE tak match & fatalnya tetap terlihat.
+    # Cek lama membaca page.content() — DOM terserialisasi yang MENUTUP tag itu — sehingga
+    # seluruh fatal tersapu strip dan smoke universal LOLOS KONKLUSIF atas toko rusak.
+    pg_trunc = FakePage(
+        html='<html><body><div>toko</div><script>var t={"a":1};\n<b>Fatal error</b>: boom</script></body></html>',
+        raw_body='<html><body><div>toko</div><script>var t={"a":1};\n<b>Fatal error</b>: boom')
+    rtrunc = mod.run_steps(pg_trunc, [{"action": "goto", "area": "fo", "path": "/"},
+                                      {"action": "expect_no_fatal"}], _wired(pg_trunc))
+    ok &= check("fatal memotong render di tengah <script> -> GAGAL konklusif (anti false-pass)",
+                _by_action(rtrunc, "expect_no_fatal")[0]["ok"] is False
+                and _by_action(rtrunc, "expect_no_fatal")[0]["conclusive"] is True)
+    ok &= check("mock jujur: DOM terserialisasi MENUTUP script (kalau dibaca, fatal tersapu)",
+                mod.fatal_sign_in(pg_trunc._html) is None and mod.fatal_sign_in(pg_trunc._raw_body) == "Fatal error")
+
+    # Kamus terjemahan di script TERTUTUP pada body mentah -> bukan fatal (anti false-block)
+    pg_dict = FakePage(raw_body='<html><head><script>var t={"e":"There was an error"};</script></head>'
+                                '<body>ok</body></html>')
+    rdict = mod.run_steps(pg_dict, [{"action": "goto", "area": "fo", "path": "/"},
+                                    {"action": "expect_no_fatal"}], _wired(pg_dict))
+    ok &= check("frasa generik di <script> TERTUTUP (kamus terjemahan) -> BUKAN fatal",
+                _by_action(rdict, "expect_no_fatal")[0]["ok"] is True)
+
+    # Body mentah tak tertangkap -> TAK menilai (tak konklusif), bukan menebak dari DOM
+    pg_nobody = FakePage(raw_body=None, html="<b>Fatal error</b>: boom")
+    rnobody = mod.run_steps(pg_nobody, [{"action": "goto", "area": "fo", "path": "/"},
+                                        {"action": "expect_no_fatal"}], _wired(pg_nobody))
+    nf = _by_action(rnobody, "expect_no_fatal")[0]
+    ok &= check("tanpa body mentah -> tak konklusif & disurface (bukan tebakan dari DOM)",
+                nf["ok"] is False and nf["conclusive"] is False and "mentah" in nf["message"])
+
+    # --- _track_document: jalur listener (navigasi dipicu klik, bukan goto) ---
+    sink = {}
+    mod._track_document(sink, _FakeResp("http://x/a", "<b>Fatal error</b>: boom"))
+    ok &= check("_track_document simpan body dokumen dikunci URL", sink.get("http://x/a") is not None)
+    mod._track_document(sink, _FakeResp("http://x/img.png", "binari", kind="image"))
+    ok &= check("_track_document abaikan non-dokumen (iframe/subresource tak mencemari)",
+                "http://x/img.png" not in sink)
+
+    class _RaisingResp(_FakeResp):
+        def text(self):
+            raise RuntimeError("body tak tersedia (redirect)")
+    mod._track_document(sink, _RaisingResp("http://x/b", ""))
+    ok &= check("_track_document: body tak terbaca -> sink tak terisi (tak crash, degrade jujur)",
+                "http://x/b" not in sink)
+
+    # body basi TAK dipakai: sink punya URL lain, halaman kini di URL berbeda
+    pg_stale = FakePage(raw_body=None)
+    stale_ctx = {**_ctx(), "doc": {"http://lama": "<b>Fatal error</b>: lama"}}
+    pg_stale.url = "http://baru"
+    rstale = mod.run_steps(pg_stale, [{"action": "expect_no_fatal"}], stale_ctx)
+    ok &= check("body basi URL lain -> tak dipakai (tak konklusif), bukan divonis dari halaman lama",
+                rstale[0]["conclusive"] is False and rstale[0]["ok"] is False)
 
     # --- run_steps: expect_visible / expect_text ---
     rvis = mod.run_steps(FakePage(visible=False), [{"action": "expect_visible", "selector": "#x"}], _ctx())
     ok &= check("expect_visible False -> gagal", rvis[0]["ok"] is False)
-    pg_text = FakePage(html="<body>Update successful</body>")
+    pg_text = FakePage(visible_text="Update successful")
     rtext = mod.run_steps(pg_text,
                           [{"action": "expect_text", "text": "successful"},
                            {"action": "expect_text", "text": "tak-ada"}], _ctx())
-    ok &= check("expect_text ada -> ok, tak ada -> gagal",
+    ok &= check("expect_text terlihat -> ok, tak ada -> gagal",
                 rtext[0]["ok"] is True and rtext[1]["ok"] is False)
     ok &= check("expect_text settle 'load' dulu (anti false-fail timing pasca submit/redirect)",
                 ("wait", "load") in pg_text.log)
-    rsettle = mod.run_steps(FakePage(html="<body>x</body>", raise_on={"load"}),
+    rsettle = mod.run_steps(FakePage(visible_text="x", raise_on={"load"}),
                             [{"action": "expect_text", "text": "x"}], _ctx())
     ok &= check("expect_text: settle raise -> best-effort, assertion tetap dievaluasi",
                 rsettle[0]["ok"] is True)
-    # REGRESI determinism-1 (false PASS): banner sukses TAK render, teks 'successful'
-    # cuma hidup di kamus terjemahan <script> -> assertion HARUS gagal. Cek substring
-    # lama ('successful' in page.content()) LOLOS konklusif di sini = simpan gagal
-    # terbaca sukses. Sekarang lewat locator teks terlihat.
-    pg_script = FakePage(html='<head><script>var t={"m":"Update successful"};</script></head>'
-                              '<body><div class="alert-danger">Terjadi kegagalan</div></body>')
-    rscript_txt = mod.run_steps(pg_script, [{"action": "expect_text", "text": "successful"}],
-                                _ctx(bo_authed=True))
-    ok &= check("expect_text: teks HANYA di <script> -> GAGAL (anti false-pass simpan-gagal)",
-                rscript_txt[0]["ok"] is False)
-    ok &= check("expect_text pakai locator teks terlihat, bukan substring HTML",
-                ("get_by_text", "successful") in pg_script.log)
+    # REGRESI: teks HANYA di node tersembunyi (template growl/modal BO) -> HARUS gagal.
+    # get_by_text tanpa filter menghitung node display:none -> simpan GAGAL terbaca lolos.
+    pg_hidden = FakePage(visible_text="Invalid security token", hidden_text="Update successful")
+    rhidden = mod.run_steps(pg_hidden, [{"action": "expect_text", "text": "successful"}],
+                            _ctx(bo_authed=True))
+    ok &= check("expect_text: teks hanya di node tersembunyi -> GAGAL (anti false-pass)",
+                rhidden[0]["ok"] is False)
+    ok &= check("mock jujur: tanpa filter(visible=True) node tersembunyi TERHITUNG",
+                pg_hidden.get_by_text("successful").count() == 1
+                and pg_hidden.get_by_text("successful").filter(visible=True).count() == 0)
 
     # --- run_steps: click/fill sukses & exception -> gagal ---
     rcf = mod.run_steps(FakePage(), [{"action": "fill", "selector": "#a", "value": "1"},

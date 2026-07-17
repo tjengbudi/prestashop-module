@@ -19,6 +19,23 @@ from pathlib import Path
 
 DEFAULT_RULES = Path(__file__).resolve().parent.parent / "assets" / "ps-rules.json"
 SCANNED_SUFFIXES = {".php", ".tpl", ".json", ".yml", ".yaml", ".js", ".html", ".twig"}
+# Folder yang bukan source module. Satu definisi, dipakai-ulang ps-plan-layers.py.
+SKIP_DIRS = {"vendor", "node_modules", ".git"}
+
+
+def is_skipped(path, module_dir):
+    """True bila `path` ada DI DALAM folder yang dilewati, RELATIF ke module.
+
+    Komponen relatif, bukan substring & bukan path absolut: substring membuang
+    `myvendor/thing.php` (tak pernah dipindai, diam-diam), sedangkan mencocokkan
+    path absolut membuang SELURUH module yang kebetulan berada di bawah ancestor
+    bernama vendor/ — dua-duanya gagal ke arah yang tak aman.
+    """
+    try:
+        parts = set(Path(path).relative_to(module_dir).parts)
+    except ValueError:
+        return False
+    return bool(SKIP_DIRS & parts)
 RULE_GROUPS = [
     "forbidden_dependencies_ps9", "removed_classes_methods", "removed_hooks",
     "removed_constants", "forbidden_functions", "structure", "smarty",
@@ -56,7 +73,7 @@ def iter_files(module_dir, glob_filters):
                     yield p
         return
     for p in module_dir.rglob("*"):
-        if p.is_file() and p.suffix.lower() in SCANNED_SUFFIXES and "vendor/" not in str(p.relative_to(module_dir)):
+        if p.is_file() and p.suffix.lower() in SCANNED_SUFFIXES and not is_skipped(p, module_dir):
             yield p
 
 
@@ -145,6 +162,9 @@ def scan_structure_rule(rule, module_dir, main_file, target_ver=None):
 
 STRUCT_EXPECTS = {"present", "index_php_each_dir", "composer_prepend_autoloader_false",
                   "compliancy_covers_target"}
+# Domain `affects`: major key yang dihasilkan norm_versions — bukan versi penuh.
+# Ditegakkan di sini DAN didokumentasikan di ps-rules.json _meta.schema.
+MAJOR_KEYS = ("1.7", "8", "9")
 
 
 def _check_regex(notes, rid, field, value):
@@ -190,10 +210,32 @@ def validate_extra_rules(extra):
                 notes.append(f"{rid}: field wajib hilang: {', '.join(missing)}")
             if r.get("severity") not in ("error", "warning"):
                 notes.append(f"{rid}: severity '{r.get('severity')}' di luar enum error|warning")
-            if "affects" in r and not isinstance(r["affects"], list):
-                notes.append(f"{rid}: 'affects' bertipe {type(r['affects']).__name__}, harus list")
-            if "files" in r and not isinstance(r["files"], list):
-                notes.append(f"{rid}: 'files' bertipe {type(r['files']).__name__}, harus list")
+            # Tipe ELEMEN, bukan cuma container: 'affects': [9] (angka JSON tanpa kutip)
+            # lolos cek list lalu rule-nya DIAM-DIAM tak pernah menyala ('9' not in [9]),
+            # dan 'files': [123] meledak TypeError di rglob -> exit 1 = kode "module error".
+            if "affects" in r:
+                if not isinstance(r["affects"], list):
+                    notes.append(f"{rid}: 'affects' bertipe {type(r['affects']).__name__}, harus list")
+                elif not r["affects"]:
+                    # Container KOSONG = seam yang sama dgn elemen salah-tipe: lolos cek
+                    # tipe, lalu `major not in []` selalu benar -> rule tak pernah menyala.
+                    notes.append(f"{rid}: 'affects' kosong — rule tak akan pernah menyala; "
+                                 f"sebut versi terpengaruh ({'|'.join(MAJOR_KEYS)})")
+                else:
+                    for a in r["affects"]:
+                        if not isinstance(a, str):
+                            notes.append(f"{rid}: affects {a!r} bukan string — tulis sebagai teks "
+                                         f"({'|'.join(MAJOR_KEYS)}); rule tak akan pernah menyala")
+                        elif a not in MAJOR_KEYS:
+                            notes.append(f"{rid}: affects '{a}' bukan major key — sah: {', '.join(MAJOR_KEYS)}"
+                                         " (rule diam-diam tak pernah dipakai)")
+            if "files" in r:
+                if not isinstance(r["files"], list):
+                    notes.append(f"{rid}: 'files' bertipe {type(r['files']).__name__}, harus list")
+                else:
+                    for fl in r["files"]:
+                        if not isinstance(fl, str) or not fl.strip():
+                            notes.append(f"{rid}: files {fl!r} harus string tak kosong")
             structural = r.get("kind") in ("structure", "compliancy")
             if structural and r.get("expect") not in STRUCT_EXPECTS:
                 notes.append(f"{rid}: expect '{r.get('expect')}' tak dikenal untuk rule struktural"

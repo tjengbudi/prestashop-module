@@ -1,7 +1,10 @@
-# Lensa review adversarial e-commerce (Lapis 3)
+# Kontrak review adversarial e-commerce (Lapis 3)
 
-Briefing untuk subagent reviewer psm-validate saat `{project-root}/_bmad/psm/memory/ecommerce/adversarial-checks.md`
-belum ada. Bila checklist itu ada, ia yang dipakai — file ini fallback-nya.
+Briefing WAJIB untuk subagent reviewer psm-validate — diberikan di **setiap** run.
+File ini memegang sikap dan bentuk kembalian yang ditegakkan skrip agregat.
+
+`{project-root}/_bmad/psm/memory/ecommerce/adversarial-checks.md` (bila ada) MENAMBAH
+pertanyaan domain di atas ini; ia tak pernah menggantikan kontrak di bawah.
 
 Sikap: **skeptis, berasumsi ada yang salah**. Yang dicari adalah cacat yang LOLOS pindai
 statis dan LOLOS install di core asli — yaitu yang hanya kelihatan lewat penalaran atas
@@ -25,13 +28,14 @@ dilewati.
 ## Bentuk kembalian (HANYA JSON ini, tanpa prosa)
 
 ```json
-{"findings": [
+{"versions": ["<versi yang kamu TINJAU — token sama dengan --versions>"],
+ "findings": [
   {"id": "adv-<slug>",
    "severity": "error|warning",
    "message": "<apa yang salah>",
    "location": "<file:line>",
    "fix": "<perbaikannya>",
-   "versions": ["<versi terpengaruh, token SAMA dengan --versions; kosongkan bila semua target>"]}
+   "versions": ["<versi TERPENGARUH, token sama dengan --versions; kosongkan bila semua target>"]}
 ]}
 ```
 
@@ -42,3 +46,7 @@ Aturan kembalian yang ditegakkan skrip agregat (pelanggaran = exit 2, bukan voni
 - Tiap entri `versions` harus resolve ke salah satu versi target: tulis sebagai string
   (`"8.1"`, atau bentuk major `"8"`), bukan angka.
 - `findings` harus list of object.
+
+`versions` top-level = cakupan yang kamu tinjau (beda dari `versions` per temuan =
+versi terpengaruh). Tanpanya, run yang terputus selalu mengulang lapis ini —
+`ps-plan-layers.py` memakainya untuk tahu file ini masih mencakup versi yang diminta.
