@@ -799,6 +799,40 @@ def main():
                 mod.version_ready(mod.merge_version("8.1", static, None, None,
                                                     _e2e_ran(["builtin:x", "s.json"])), ["e2e"]) is True)
 
+    # 18. Sinyal yatim sisa dari inventaris: bukti ditangkap lalu menganggur di file lapis
+    # sementara vonisnya menyuruh operator mencarinya sendiri.
+    fl_boot = {"module": "m", "docker_available": True, "status": "ran",
+               "versions": {"8.1": {"version": "8.1", "image": "img",
+                                    "errors": ["flashlight tak jadi healthy (timeout)"],
+                                    "boot_log": "nginx: [emerg] bind() to 0.0.0.0:80 failed",
+                                    "install": None, "pass": False}}}
+    l_boot = mod.flashlight_layer(fl_boot, "8.1")
+    ok &= check("boot_log ikut ke alasan tak-konklusif (kegagalan boot paling sulit didiagnosis)",
+                l_boot["conclusive"] is False and "bind() to 0.0.0.0:80" in l_boot["reason"])
+    e2e_boot = {"module": "m", "e2e_available": True, "status": "ran",
+                "versions": {"8.1": {"version": "8.1", "errors": ["container tak healthy"],
+                                     "boot_log": "php-fpm: gagal start", "install": {"ok": False},
+                                     "browsers": [], "findings": [], "inconclusive": [],
+                                     "browser_notes": []}}}
+    ok &= check("boot_log Lapis 4 juga terikat (kelas ditutup di KEDUA situs, bukan satu)",
+                "php-fpm: gagal start" in mod.e2e_layer(e2e_boot, "8.1")["reason"])
+    fl_ifail = _flash_cs({"available": False})
+    fl_ifail["versions"]["8.1"]["install"] = {"ok": False, "no_console": False, "no_psroot": False,
+                                              "log": "CRITICAL Error thrown while running command"}
+    f_inst = [f for f in mod.flashlight_layer(fl_ifail, "8.1")["findings"]
+              if f["id"] == "flashlight-install"]
+    ok &= check("install.log ikut ke temuan install-fail (vonis membawa buktinya, bukan menyuruh cari)",
+                len(f_inst) == 1 and "Error thrown while running command" in f_inst[0]["fix"])
+    fl_loc = _flash_cs({"available": True, "parse_ok": True, "generated_config": False,
+                        "coverage_ok": True, "errors": 1,
+                        "error_messages": [{"line": 42, "message": "boom",
+                                            "file": "/var/www/html/modules/m/m.php"}]})
+    ok &= check("lokasi phpstan = file:line, bukan 'line 42' telanjang (file dulu tak dibaca)",
+                mod.flashlight_layer(fl_loc, "8.1")["findings"][0]["location"]
+                == "/var/www/html/modules/m/m.php:42")
+    ok &= check("tanpa `file` -> tetap degrade ke 'line N' (bukan crash / 'None:42')",
+                mod._phpstan_loc({"line": 7}) == "line 7")
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

@@ -222,6 +222,24 @@ def _first_loc(occ):
     return ""
 
 
+def _log_tail(log, label, limit=300):
+    """Ekor log, bila ada — supaya bukti ikut ke vonis alih-alih menganggur di file lapis."""
+    tail = (log or "").strip()
+    return f" — {label}: …{tail[-limit:]}" if tail else ""
+
+
+def _phpstan_loc(m):
+    """Lokasi temuan phpstan: file:line, bukan 'line 42' telanjang.
+
+    `file` diemit tiap pesan lalu tak dibaca siapa pun, jadi temuan yang MEMBLOK melaporkan
+    nomor baris tanpa nama file — tak bisa ditindaklanjuti di module banyak-file, padahal
+    _first_loc di atas sudah menjawab pertanyaan yang sama dengan benar untuk lapis static.
+    """
+    line = m.get("line", "?")
+    f = m.get("file")
+    return f"{f}:{line}" if f else f"line {line}"
+
+
 def flashlight_layer(flash, full_ver):
     """Lapis 2 — konklusif hanya bila container benar-benar menjalankan uji.
 
@@ -247,15 +265,25 @@ def flashlight_layer(flash, full_ver):
     if install.get("no_psroot"):
         infra.append("PS root tak ada di image — install tak bisa diuji")
     if infra:
+        # Ekor log container ikut: kegagalan boot adalah kegagalan yang PALING sulit
+        # didiagnosis, dan tanpa ini vonisnya cuma "flashlight tak jadi healthy (timeout)".
+        # `boot_log` ditangkap tepat pada kondisi ini lalu tak dibaca siapa pun — kelas
+        # PSM_NO_CONSOLE, dan ia yatim di KEDUA lapis, jadi keduanya diikat sekarang.
         return {"state": "not_conclusive", "conclusive": False, "errors": 0,
-                "reason": "; ".join(infra), "findings": []}
+                "reason": "; ".join(infra) + _log_tail(v.get("boot_log"), "log container"),
+                "findings": []}
 
     # Konklusif: kumpulkan temuan error nyata (install ditolak / phpcs error).
     findings = []
     if not install.get("ok"):
+        # Ekor log install ikut ke temuan. Ini temuan pemblokir yang PALING sering, `install.log`
+        # menangkap sebabnya, dan tak ada yang membacanya — sementara fix-nya menyuruh operator
+        # "periksa log install flashlight" yang tak pernah dibawa vonis, padahal SKILL.md
+        # melarang menilai ulang dengan tangan.
         findings.append({"source": "flashlight", "id": "flashlight-install",
                          "severity": ERROR, "message": "modul gagal install di core asli",
-                         "fix": "periksa log install flashlight", "location": v.get("image", "")})
+                         "fix": "periksa log install flashlight" + _log_tail(install.get("log"), "ekor log"),
+                         "location": v.get("image", "")})
     cs = v.get("coding_standard") or {}
     # Hanya errors konklusif yang memblok. Neon auto-generate (advisory) memetakan
     # temuannya ke warnings (errors=0) di ps-flashlight-run, jadi tak sampai sini.
@@ -263,7 +291,7 @@ def flashlight_layer(flash, full_ver):
         for m in cs.get("error_messages", []):
             findings.append({"source": "flashlight", "id": "flashlight-phpstan",
                              "severity": ERROR, "message": m.get("message", "phpstan error"),
-                             "fix": m.get("source", ""), "location": f"line {m.get('line', '?')}"})
+                             "fix": m.get("source", ""), "location": _phpstan_loc(m)})
         if not cs.get("error_messages"):
             findings.append({"source": "flashlight", "id": "flashlight-phpstan",
                              "severity": ERROR, "message": f"{cs['errors']} phpstan error",
@@ -280,7 +308,7 @@ def flashlight_layer(flash, full_ver):
             findings.append({"source": "flashlight", "id": "flashlight-phpstan-advisory",
                              "severity": "warning", "message": m.get("message", "phpstan"),
                              "fix": "kirim phpstan.neon milik module untuk menegakkannya",
-                             "location": f"line {m.get('line', '?')}"})
+                             "location": _phpstan_loc(m)})
     errs = sum(1 for f in findings if f["severity"] == ERROR)
     layer = {"state": "fail" if errs else "pass", "conclusive": True,
              "errors": errs, "findings": findings}
@@ -372,8 +400,11 @@ def e2e_layer(e2e, full_ver):
     if not v.get("browsers"):
         infra.append("tak ada browser dijalankan")
     if infra:
+        # `boot_log` yatim di KEDUA lapis; ditutup berpasangan supaya kelasnya tak selamat
+        # satu seam di sebelahnya — persis cara PSM_NO_CONSOLE dulu lolos satu ronde.
         return {"state": "not_conclusive", "conclusive": False, "errors": 0,
-                "reason": "; ".join(dict.fromkeys(infra)), "findings": []}
+                "reason": "; ".join(dict.fromkeys(infra)) + _log_tail(v.get("boot_log"), "log container"),
+                "findings": []}
 
     # Konklusif (≥1 browser jalan & module ter-install): temuan browser memblok versi ini.
     # Masalah per-browser (browser_notes) & spec authored rusak (scenario_notes) TAK

@@ -163,17 +163,10 @@ def _capture_body(ctx, resp):
 
 # Dijalankan DI DALAM container flashlight setelah healthy: salin + install module
 # (TANPA phpstan — coding-standard adalah wilayah Lapis 2). $MOD_NAME dari env.
-INSTALL_SH = r'''
-if ! cp -r /ps-module-src "/var/www/html/modules/$MOD_NAME" 2>&1; then echo PSM_COPY_FAIL; fi
-cd /var/www/html || echo PSM_NO_PSROOT
-if [ ! -f bin/console ]; then
-  echo PSM_NO_CONSOLE
-elif php -d memory_limit=-1 bin/console prestashop:module --no-interaction install "$MOD_NAME" 2>&1; then
-  echo PSM_INSTALL_OK
-else
-  echo PSM_INSTALL_FAIL
-fi
-'''
+# Blok yang SAMA dengan yang dipakai Lapis 2, dari pemiliknya — bukan salinan. Sentinelnya
+# berpasangan dgn fl.parse_install yang sudah kita impor: reader dibagi, jadi writer-nya
+# harus dibagi juga. Dua salinan yang kebetulan cocok tak menahan apa pun.
+INSTALL_SH = fl.INSTALL_BLOCK_SH
 
 
 # ---------------------------------------------------------------------------

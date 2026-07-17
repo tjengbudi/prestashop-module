@@ -63,10 +63,18 @@ DB_USER = "prestashop"
 DB_PASSWORD = "prestashop"
 DB_NAME = "prestashop"
 
-# Skrip yang dijalankan DI DALAM container flashlight setelah healthy: salin module,
-# install via PS console, lalu phpstan (neon module bila ada, else auto-generate).
-# Memakai $MOD_NAME dari env (dilewatkan lewat `docker ... -e MOD_NAME=...`).
-INNER_SH = r'''
+# Awalan SEMUA sentinel fase phpstan (PSM_PHPSTAN_GEN=/_JSON_START/_JSON_END/_ABSENT). Dipakai
+# untuk memotong ekor phpstan dari log install; dinamai supaya kopling ke awalannya terlihat,
+# dan dikunci test yang memeriksa tiap sentinel fase itu benar-benar berawalan ini.
+PHPSTAN_SENTINEL_PREFIX = "PSM_PHPSTAN"
+
+# Blok install yang dijalankan DI DALAM container. Dipakai KEDUA lapis: Lapis 2 (INNER_SH, +
+# phpstan) dan Lapis 4 (ps-e2e-run.INSTALL_SH, tanpa phpstan). SATU konstanta, karena sentinel
+# di sini berpasangan dengan parse_install di bawah. Seam-nya dulu asimetris — reader dibagi
+# lewat impor, writer disalin — jadi rename satu sentinel di satu sisi bikin install dilaporkan
+# GAGAL untuk module yang sebenarnya sukses, lalu jatuh jadi tak-konklusif berbentuk infra dan
+# `ready` turun tanpa ada yang menyebut sebabnya. $MOD_NAME dari env.
+INSTALL_BLOCK_SH = r'''
 if ! cp -r /ps-module-src "/var/www/html/modules/$MOD_NAME" 2>&1; then echo PSM_COPY_FAIL; fi
 cd /var/www/html || echo PSM_NO_PSROOT
 if [ ! -f bin/console ]; then
@@ -76,6 +84,11 @@ elif php -d memory_limit=-1 bin/console prestashop:module --no-interaction insta
 else
   echo PSM_INSTALL_FAIL
 fi
+'''
+
+# Skrip yang dijalankan DI DALAM container flashlight setelah healthy: salin module,
+# install via PS console, lalu phpstan (neon module bila ada, else auto-generate).
+INNER_SH = INSTALL_BLOCK_SH + r'''
 NEON=""
 for c in "modules/$MOD_NAME/phpstan.neon" "modules/$MOD_NAME/phpstan.neon.dist"; do
   if [ -f "$c" ]; then NEON="$c"; break; fi
@@ -481,7 +494,7 @@ def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_ima
             return res
         res["install"] = {"ok": inst["ok"], "no_console": inst.get("no_console", False),
                           "no_psroot": inst.get("no_psroot", False),
-                          "log": out.split("PSM_PHPSTAN", 1)[0][-2000:]}
+                          "log": out.split(PHPSTAN_SENTINEL_PREFIX, 1)[0][-2000:]}
         res["coding_standard"] = parse_phpstan(out)
         cs = res["coding_standard"]
         res["pass"] = bool(res["install"]["ok"]) and \

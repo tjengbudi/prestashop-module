@@ -140,6 +140,46 @@ def main():
     ok &= check("canary dijamin ber-error di level phpstan berapa pun (fungsi tak dikenal)",
                 "psm_canary_undefined_fn_xyz();" in mod.INNER_SH)
 
+    # --- Seam sentinel: WRITER dibagi, bukan cuma reader ---
+    # Sentinel install berpasangan dgn parse_install. Reader-nya sudah dibagi lewat impor sejak
+    # awal; writer-nya disalin ke INSTALL_SH milik Lapis 4 — jadi rename satu sentinel di satu
+    # sisi membuat install dilaporkan GAGAL untuk module yang sukses, lalu jatuh jadi
+    # tak-konklusif berbentuk infra & `ready` turun tanpa ada yang menyebut sebabnya.
+    _e2e_path = MOD_PATH.parent / "ps-e2e-run.py"
+    _spec_e = importlib.util.spec_from_file_location("ps_e2e_run_x", _e2e_path)
+    _e2e = importlib.util.module_from_spec(_spec_e)
+    _spec_e.loader.exec_module(_e2e)
+    # Kesamaan ISI + bukti tak diketik ulang di bawah = derivasi. (Identitas objek tak bisa
+    # dipakai: test ini memuat ps-e2e-run segar, yang memuat instance ps-flashlight-run-nya
+    # sendiri, jadi objeknya memang beda meski sumbernya satu.)
+    ok &= check("Lapis 4 memakai blok install dari PEMILIKNYA (isi sama persis)",
+                _e2e.INSTALL_SH == mod.INSTALL_BLOCK_SH)
+    ok &= check("INNER_SH (Lapis 2) dibangun dari blok yang sama",
+                mod.INNER_SH.startswith(mod.INSTALL_BLOCK_SH))
+    ok &= check("blok install tak diketik ulang di ps-e2e-run",
+                "PSM_INSTALL_OK" not in _e2e_path.read_text())
+    # Tiap sentinel yang dibaca parse_install benar-benar ditulis blok itu — pasangan
+    # writer/reader dikunci di sini, bukan dianggap benar.
+    ok &= check("tiap sentinel yang dibaca parse_install ditulis blok install",
+                all(s in mod.INSTALL_BLOCK_SH
+                    for s in ("PSM_COPY_FAIL", "PSM_NO_PSROOT", "PSM_NO_CONSOLE", "PSM_INSTALL_OK")))
+    # Perintah pembersih port-leak di SKILL.md menyebut prefix container sebagai LITERAL —
+    # tak bisa disatukan lewat konstanta (itu dokumen), jadi dikunci di sini. Rename
+    # CONTAINER_PREFIX akan membuat perintah itu diam-diam tak cocok apa pun, dan gunanya
+    # justru melepas container pemegang port sesudah run di-kill: ia gagal tepat saat dibutuhkan.
+    _skill = (MOD_PATH.parent.parent / "SKILL.md").read_text(encoding="utf-8")
+    ok &= check("perintah pembersih di SKILL.md memakai CONTAINER_PREFIX yang berlaku",
+                f"name={mod.CONTAINER_PREFIX}" in _skill)
+
+    # Pemotong log kopel ke AWALAN sentinel fase phpstan; kunci awalannya benar-benar awalan
+    # SEMUA sentinel itu, kalau tidak split() mengembalikan seluruh output & log install
+    # menelan laporan phpstan.
+    ok &= check("tiap sentinel fase phpstan berawalan PHPSTAN_SENTINEL_PREFIX",
+                all(s.startswith(mod.PHPSTAN_SENTINEL_PREFIX)
+                    for s in ("PSM_PHPSTAN_GEN=", "PSM_PHPSTAN_JSON_START",
+                              "PSM_PHPSTAN_JSON_END", "PSM_PHPSTAN_ABSENT"))
+                and mod.PHPSTAN_SENTINEL_PREFIX in mod.INNER_SH)
+
     # --- parse_phpstan: degrade jujur ---
     ok &= check("phpstan absent -> available False", mod.parse_phpstan("PSM_PHPSTAN_ABSENT").get("available") is False)
     ok &= check("phpstan tanpa penanda -> parse_ok False",
