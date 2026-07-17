@@ -590,11 +590,16 @@ def main():
                     r["browsers"] == ["chromium"] and len(r["findings"]) == 1 and r["pass"] is False)
         ok &= check("warm-up BO: wait_http menyentuh AdminLogin sebelum drive (cold-container 1.7/8)",
                     any("controller=AdminLogin" in u for u in warm_urls))
-        # rollup artefak visual: console_errors dihitung + screenshot terkumpul + advisory di browser_notes
+        # rollup artefak visual: console_errors dihitung + screenshot terkumpul
         ok &= check("rollup: console_errors=1 & screenshot terkumpul",
                     r["console_errors"] == 1 and r["screenshots"] == ["/tmp/shot/chromium-smoke-00-goto.png"])
-        ok &= check("console error disurface advisory di browser_notes (tak memblok)",
-                    any("console/JS" in n for n in r["browser_notes"]))
+        # Error console TAK boleh masuk browser_notes. Field itu memikul celah CAKUPAN yang
+        # menjatuhkan `ready`; error console adalah observasi yang tak memblok. Menyatukannya
+        # bikin `ready` tak deterministik — direproduksi di container nyata: module & spec
+        # identik, ready=true saat console_errors=0 lalu ready=false saat =3. Assert lama
+        # ("advisory di browser_notes") mensertifikasi cacat itu.
+        ok &= check("console error TIDAK dituang ke browser_notes (kanal cakupan bersih)",
+                    not any("console" in n.lower() for n in r["browser_notes"]))
         ok &= check("default headed False diteruskan ke drive_engine", captured["headed"] is False)
 
         # probe-miss: firefox tak lolos probe di main -> browser_notes coverage, chromium tetap jalan

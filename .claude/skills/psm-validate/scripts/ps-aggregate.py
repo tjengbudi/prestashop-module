@@ -245,6 +245,14 @@ def e2e_layer(e2e, full_ver):
         notes.append(f"{len(sn)} spec E2E authored dilewati: {'; '.join(sn)}")
     if notes:
         layer["inconclusive_note"] = "; ".join(notes) + " — tak memblok"
+    # Error console/JS: OBSERVASI, bukan celah cakupan. Kanalnya dipisah dari
+    # `inconclusive_note` karena compute_ready menjatuhkan `ready` atas note itu — dan
+    # `ready` yang bergantung pada berisik-tidaknya skrip pihak-ketiga saat itu bukan
+    # ketegasan, melainkan tak deterministik. Tetap disurface supaya tak jadi sinyal yatim.
+    if v.get("console_errors"):
+        layer["advisory_note"] = (f"{v['console_errors']} error console/JS terdeteksi — advisory: "
+                                  "tak memblok & tak menjatuhkan `ready`; tegakkan dengan aksi "
+                                  "`expect_no_console_error` di skenario")
     return layer
 
 

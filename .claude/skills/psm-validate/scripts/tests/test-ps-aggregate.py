@@ -487,6 +487,34 @@ def main():
     ok &= check("is_smoke_only: satu definisi dipakai gerbang & field top-level",
                 mod.is_smoke_only(e2e_smoke) is True and mod.is_smoke_only(e2e_auth) is False)
 
+    # 13e. Error console = OBSERVASI, bukan celah cakupan (ditemukan saat run container NYATA:
+    # module & spec identik menghasilkan ready=true saat console_errors=0 lalu ready=false saat
+    # =3, karena rollup-nya dulu masuk browser_notes -> inconclusive_note -> compute_ready).
+    # `ready` yang bergantung pada berisik-tidaknya skrip pihak-ketiga bukan ketegasan.
+    e2e_noisy = _e2e_ran(["builtin:smoke", "configure.json"])
+    e2e_noisy["versions"]["8.1"]["console_errors"] = 3
+    l_noisy = mod.e2e_layer(e2e_noisy, "8.1")
+    ok &= check("error console -> advisory_note, BUKAN inconclusive_note",
+                "advisory_note" in l_noisy and "inconclusive_note" not in l_noisy)
+    ok &= check("error console TIDAK menjatuhkan ready (deterministik atas kode yang sama)",
+                mod.compute_ready({"8.1": mod.merge_version("8.1", static, None, None, e2e_noisy)},
+                                  ["static", "e2e"]) is True)
+    e2e_quiet = _e2e_ran(["builtin:smoke", "configure.json"])
+    ok &= check("toko diam vs toko berisik -> ready SAMA (0 dan 3 error console)",
+                mod.compute_ready({"8.1": mod.merge_version("8.1", static, None, None, e2e_quiet)},
+                                  ["static", "e2e"])
+                is mod.compute_ready({"8.1": mod.merge_version("8.1", static, None, None, e2e_noisy)},
+                                     ["static", "e2e"]))
+    ok &= check("advisory tetap dilaporkan (bukan sinyal yatim) & menyebut cara menegakkannya",
+                "3" in l_noisy["advisory_note"] and "expect_no_console_error" in l_noisy["advisory_note"])
+    # Celah cakupan SUNGGUHAN di browser_notes tetap menjatuhkan ready — kanal itu tak dilemahkan.
+    e2e_gap = _e2e_ran(["builtin:smoke", "configure.json"])
+    e2e_gap["versions"]["8.1"]["browser_notes"] = ["engine tak dijalankan: firefox"]
+    ok &= check("celah cakupan browser TETAP menjatuhkan ready (kanal cakupan utuh)",
+                "inconclusive_note" in mod.e2e_layer(e2e_gap, "8.1")
+                and mod.compute_ready({"8.1": mod.merge_version("8.1", static, None, None, e2e_gap)},
+                                      ["static", "e2e"]) is False)
+
     # 13d. determinism-6: versi target yang static-scan tak pernah pindai dulu pass=true &
     # exit 0 — ketiadaan bukti terbaca sebagai lolos. Lewat CLI: gerbangnya ada di main().
     def _cli_versions(static_payload, versions):

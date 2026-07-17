@@ -826,15 +826,19 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
             res["skipped_browser"] = True
             return res
 
-        # Rollup artefak visual: hitungan error console/JS (advisory, surface visibilitas) + path screenshot.
+        # Rollup artefak visual: hitungan error console/JS (advisory) + path screenshot.
+        # SENGAJA TIDAK masuk `browser_notes`. Field itu memikul CELAH CAKUPAN (engine tak
+        # jalan, binary absen) yang memang harus menjatuhkan `ready`; error console adalah
+        # OBSERVASI yang desainnya sendiri nyatakan tak memblok. Menyatukan keduanya bikin
+        # `ready` tak deterministik: modul & spec yang sama persis menghasilkan ready=true
+        # saat toko diam dan ready=false saat satu skrip pihak-ketiga kebetulan berisik
+        # (kureproduksi: console_errors 0 -> ready true, lalu 3 -> ready false, kode identik).
+        # Hitungannya sudah punya kanal sendiri di bawah; yang mau menegakkan memakai aksi
+        # `expect_no_console_error` — pilihan sadar, per-skenario, dan konklusif.
         res["console_errors"] = sum(len(sc.get("console_errors", []))
                                     for eng in driven for sc in eng.get("scenarios", []))
         res["screenshots"] = [s for eng in driven for sc in eng.get("scenarios", [])
                               for s in sc.get("screenshots", [])]
-        if res["console_errors"]:
-            res["browser_notes"].append(
-                f"{res['console_errors']} error console/JS terdeteksi di browser "
-                "(advisory; pakai aksi 'expect_no_console_error' di skenario untuk menegakkan)")
 
         findings, inconclusive = assemble_findings(full_ver, driven)
         res["findings"] = findings
