@@ -26,14 +26,20 @@ def check(name, cond):
     return cond
 
 
-def static_result(versions):
-    """versions: {full_ver: [(id, severity)]} -> bentuk output ps-static-scan."""
-    out = {"module": "m", "versions": {}}
+def static_result(versions, rules_evaluated=12, main_file_found=True):
+    """versions: {full_ver: [(id, severity)]} -> bentuk output ps-static-scan.
+
+    `rules_evaluated`/`main_file_found` ditiru dari produsen aslinya karena agregat kini
+    MEMBACA keduanya: nol aturan dinilai (atau main file tak resolve) = cakupan tak tuntas,
+    bukan lolos. Default di sini meniru run sehat; test yang menguji cabang itu menyetelnya.
+    """
+    out = {"module": "m", "main_file_found": main_file_found, "versions": {}}
     for ver, finds in versions.items():
         errs = sum(1 for _, sev in finds if sev == "error")
         out["versions"][ver] = {
             "major": ver.split(".")[0], "errors": errs,
             "warnings": len(finds) - errs, "pass": errs == 0,
+            "rules_evaluated": rules_evaluated,
             "findings": [{"id": i, "severity": s, "kind": "x", "message": i,
                           "fix": "", "occurrences": [{"file": "a.php", "line": 1}], "count": 1}
                          for i, s in finds],
@@ -543,6 +549,111 @@ def main():
                 rc == 2 and "1.7.8" in err and "9.1" in err and "Traceback" not in err)
     rc, _ = _cli_versions(static81, "8.1")
     ok &= check("versi target sepenuhnya terpindai -> jalan normal", rc == 0)
+
+    # 14. determinism-1 (analyze ronde-5, CRITICAL): static_layer dulu pin conclusive=True
+    # dengan alasan "Lapis 1 selalu jalan". Benar tentang skripnya, salah tentang aturannya —
+    # versi yang nol aturan menyentuhnya keluar 0 error lalu terbaca konklusif LOLOS.
+    # Direproduksi vs skrip nyata: module ber-eval() dapat ready=true di --versions 1.6.
+    st_zero = static_result({"8.1": []}, rules_evaluated=0)
+    lay_zero = mod.static_layer(st_zero, "8.1")
+    ok &= check("nol aturan dinilai -> inconclusive_note (0 error BUKAN lolos)",
+                "inconclusive_note" in lay_zero and "nol aturan" in lay_zero["inconclusive_note"])
+    ok &= check("nol aturan dinilai -> ready jatuh",
+                mod.compute_ready({"8.1": mod.merge_version("8.1", st_zero, None, None, None)},
+                                  ["static"]) is False)
+    ok &= check("nol aturan dinilai -> `pass` TETAP buta konklusivitas (tak memblok)",
+                mod.merge_version("8.1", st_zero, None, None, None)["pass"])
+
+    # Kontrol positif: cabang di atas tak boleh menyala di run sehat, kalau tidak ia cuma
+    # ready=false permanen dan tak membedakan apa pun.
+    st_ok = static_result({"8.1": []})
+    ok &= check("aturan benar-benar dinilai -> tak ada note, ready utuh",
+                "inconclusive_note" not in mod.static_layer(st_ok, "8.1")
+                and mod.compute_ready({"8.1": mod.merge_version("8.1", st_ok, None, None, None)},
+                                      ["static"]) is True)
+
+    # File lapis dari skrip lama tak punya angkanya sama sekali. ps-plan-layers MEMANG
+    # memakai ulang file lapis lama, jadi "tak tercatat" harus gagal ke sisi jujur —
+    # bukan diam-diam dianggap tercakup. Lapis 1 termurah; ulanginya nyaris gratis.
+    st_old = static_result({"8.1": []})
+    del st_old["versions"]["8.1"]["rules_evaluated"]
+    ok &= check("file lapis lama tanpa rules_evaluated -> tak dipastikan, bukan diklaim lolos",
+                "inconclusive_note" in mod.static_layer(st_old, "8.1")
+                and mod.compute_ready({"8.1": mod.merge_version("8.1", st_old, None, None, None)},
+                                      ["static"]) is False)
+
+    # Seam kedua det-1, bentuk yang sama: main file tak resolve -> aturan `files: __MAIN__`
+    # no-op TANPA sepatah kata, jadi lapis menilai lebih sedikit dari yang diklaimnya.
+    st_nomain = static_result({"8.1": []}, main_file_found=False)
+    ok &= check("main file tak resolve -> aturan __MAIN__ tak dinilai, disurface",
+                "__MAIN__" in mod.static_layer(st_nomain, "8.1").get("inconclusive_note", "")
+                and mod.compute_ready({"8.1": mod.merge_version("8.1", st_nomain, None, None, None)},
+                                      ["static"]) is False)
+
+    # 15. determinism-2 (ronde-5): himpunan versi KOSONG. `for m in {}.values()` tak pernah
+    # jalan -> "semua versi terbukti" secara vakum -> ready=true atas NOL versi di gerbang
+    # TERKETAT, di runner tanpa Docker. Kembaran `--require` kosong yang sudah digerbang
+    # satu tingkat di bawah; seam ini dulu tak punya coverage sama sekali.
+    ok &= check("compute_ready atas nol versi -> False (dibaca skill sibling, bukan cuma CLI)",
+                mod.compute_ready({}, list(mod.LAYERS)) is False)
+    with tempfile.TemporaryDirectory() as td:
+        sp = Path(td) / "s.json"
+        sp.write_text(json.dumps({"module": "m", "main_file_found": True,
+                                  "versions": {}, "pass": True}), encoding="utf-8")
+        r = subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp)],
+                           capture_output=True, text=True)
+    ok &= check("static tanpa satu versi pun -> exit 2 (dulu ready=true exit 0)",
+                r.returncode == 2 and "nol versi" in r.stderr and "Traceback" not in r.stderr)
+
+    # 16. Refutasi verifier atas fix ronde-5 sendiri. (a) static_layer dulu tetap pin
+    # `conclusive: True` sementara docstring-nya bilang cakupan sudah DIHITUNG — objek yang
+    # sama memuat conclusive:true dan catatan yang bilang cakupan tak diketahui, dan yang
+    # dipercaya pemanggil field-nya. Tak satu pun test menyentuh field ini, itu sebabnya
+    # literal usang itu selamat.
+    ok &= check("nol aturan dinilai -> layer.conclusive False (bukan cuma note)",
+                mod.static_layer(st_zero, "8.1")["conclusive"] is False)
+    ok &= check("aturan dinilai -> layer.conclusive True (kontrol positif)",
+                mod.static_layer(st_ok, "8.1")["conclusive"] is True)
+
+    # (b) gerbang menjaga NILAI, bukan TIPE: "0"/[]/true/-1 lolos lalu memulihkan ready=true —
+    # kelas yang validate_extra_rules ada untuk menutup, direproduksi di checker yang ditulis
+    # untuk mencegahnya. Absen & salah-bentuk sama-sama "cakupan tak diketahui".
+    for bad in ("0", [], {}, True, -1, "dua belas", 1.5):
+        st_bad = static_result({"8.1": []})
+        st_bad["versions"]["8.1"]["rules_evaluated"] = bad
+        ok &= check(f"rules_evaluated={bad!r} (salah tipe) -> tak dipastikan, bukan lolos",
+                    "inconclusive_note" in mod.static_layer(st_bad, "8.1")
+                    and mod.compute_ready({"8.1": mod.merge_version("8.1", st_bad, None, None, None)},
+                                          ["static"]) is False)
+    st_strfalse = static_result({"8.1": []}, main_file_found="false")
+    ok &= check("main_file_found='false' (string JSON) -> tak lolos identity check `is False`",
+                "__MAIN__" in mod.static_layer(st_strfalse, "8.1").get("inconclusive_note", ""))
+
+    # (c) file lapis buatan SKRIP tak punya gerbang bentuk sama sekali, jadi file terpotong
+    # meledak Traceback + exit 1 = kode "module punya error pemblokir". Alasan yang ditulis
+    # validate_adversarial tak pernah khusus file buatan model.
+    def _cli_static(payload):
+        with tempfile.TemporaryDirectory() as td:
+            sp = Path(td) / "s.json"
+            sp.write_text(json.dumps(payload), encoding="utf-8")
+            p = subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp),
+                                "--versions", "8.1", "--require", "static"],
+                               capture_output=True, text=True)
+            return p.returncode, p.stderr
+    malformed = {
+        "payload list telanjang": ["bukan", "object"],
+        "versions list": {"module": "m", "main_file_found": True, "versions": []},
+        "entri versi string": {"module": "m", "main_file_found": True, "versions": {"8.1": "rusak"}},
+        "findings string": {"module": "m", "main_file_found": True,
+                            "versions": {"8.1": {"rules_evaluated": 3, "findings": "rusak"}}},
+        "finding tanpa id": {"module": "m", "main_file_found": True,
+                             "versions": {"8.1": {"rules_evaluated": 3, "findings": [{"severity": "error"}]}}},
+    }
+    for name, payload in malformed.items():
+        rc, err = _cli_static(payload)
+        ok &= check(f"file lapis rusak ({name}) -> exit 2, BUKAN Traceback exit 1 yang "
+                    "bertabrakan dgn vonis-gagal",
+                    rc == 2 and "Traceback" not in err)
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

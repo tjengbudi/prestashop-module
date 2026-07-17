@@ -74,6 +74,14 @@ def compute_ready(versions, required):
     (browser absen, spec authored dilewati). Itu tetap "tak tuntas" — kalau tidak,
     `ready` mengklaim persis coverage yang tak diuji.
     """
+    # Nol versi = nol bukti, dan `for m in {}.values()` tak pernah jalan -> True: "semua versi
+    # terbukti" secara vakum. Bentuk yang sama sudah digerbang satu tingkat di bawah (`--require`
+    # kosong, di main()), tapi kembarannya di loop LUAR ini tak pernah ikut — dan dari sanalah
+    # ready=true keluar atas nol versi, di gerbang paling ketat, di runner tanpa Docker. main()
+    # menolaknya keras (exit 2); di sini dijaga juga karena fungsi ini dibaca skill sibling,
+    # bukan cuma jalur CLI.
+    if not versions:
+        return False
     for m in versions.values():
         if not m["pass"]:
             return False
@@ -86,14 +94,69 @@ def compute_ready(versions, required):
 
 def load_json(path, label):
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         print(f"error: gagal baca {label} ({path}): {e}", file=sys.stderr)
         sys.exit(2)
+    if not isinstance(data, dict):
+        print(f"error: {label} ({path}) bukan JSON object melainkan {type(data).__name__}",
+              file=sys.stderr)
+        sys.exit(2)
+    return data
+
+
+def validate_layer_shape(payload, finding_keys=()):
+    """Gerbang bentuk file lapis buatan SKRIP. Return list pelanggaran (kosong = lolos).
+
+    validate_adversarial menjaga seam model->skrip dengan alasan yang ditulis eksplisit: payload
+    salah-bentuk meledak AttributeError -> exit 1 = kode vonis-gagal, jadi file rusak terbaca
+    "module gagal". Alasan itu tak pernah khusus file buatan model — file lapis yang TERPOTONG
+    (run di-kill saat tulis, disk penuh) atau ditulis versi skrip lain meledak persis sama, dan
+    ps-plan-layers memang ada untuk memakai ulang file lapis lintas run. Gerbangnya sudah ada;
+    ia cuma tak pernah dipasang di tiga seam di sebelahnya.
+    """
+    notes = []
+    versions = payload.get("versions")
+    if versions is None:
+        return notes
+    if not isinstance(versions, dict):
+        return [f"'versions' bertipe {type(versions).__name__}, harus object {{versi: {{...}}}}"]
+    for ver, entry in versions.items():
+        if not isinstance(entry, dict):
+            notes.append(f"versions['{ver}'] bertipe {type(entry).__name__}, harus object")
+            continue
+        finds = entry.get("findings")
+        if finds is None:
+            continue
+        if not isinstance(finds, list):
+            notes.append(f"versions['{ver}'].findings bertipe {type(finds).__name__}, harus list")
+            continue
+        for i, f in enumerate(finds):
+            if not isinstance(f, dict):
+                notes.append(f"versions['{ver}'].findings[{i}] bertipe {type(f).__name__}, "
+                             "harus object")
+                continue
+            for k in finding_keys:
+                if k not in f:
+                    notes.append(f"versions['{ver}'].findings[{i}] tak punya '{k}'")
+    return notes
 
 
 def static_layer(static, full_ver):
-    """Lapis 1 selalu jalan & selalu konklusif — sumber kebenaran aturan pasti."""
+    """Lapis 1 selalu JALAN — tapi "jalan" bukan "menilai", dan cuma yang kedua itu bukti.
+
+    `conclusive` di sini dulu konstanta True, dengan alasan "Lapis 1 selalu jalan". Itu benar
+    tentang SKRIPnya dan salah tentang ATURANnya: versi yang major-nya tak disebut satu rule
+    pun (`--rules` KB yang cuma menyebut major lain) dilewati SETIAP aturan, keluar 0 error,
+    lalu terbaca konklusif lolos — module ber-eval() dinyatakan siap-rilis di versi yang nol
+    aturan pernah menyentuhnya. Ketiadaan aturan bukan bukti, jadi cakupan di sini fakta yang
+    DIHITUNG (`rules_evaluated`), bukan diasumsikan.
+
+    Main file yang tak resolve punya bentuk yang sama, sekali lagi diam-diam: aturan
+    ber-`files: ["__MAIN__"]` no-op tanpa sepatah kata, jadi lapis ini menilai lebih sedikit
+    dari yang diklaimnya. Keduanya lewat `inconclusive_note` — kanal yang sudah dibaca
+    compute_ready — supaya `ready` jatuh sementara `pass` tetap buta konklusivitas.
+    """
     v = static.get("versions", {}).get(full_ver)
     if v is None:
         return {"ran": False, "conclusive": False, "errors": 0, "warnings": 0,
@@ -104,8 +167,33 @@ def static_layer(static, full_ver):
          "location": _first_loc(f.get("occurrences")), "count": f.get("count", 1)}
         for f in v.get("findings", [])
     ]
-    return {"ran": True, "conclusive": True, "errors": v.get("errors", 0),
-            "warnings": v.get("warnings", 0), "findings": findings}
+    notes = []
+    evaluated = v.get("rules_evaluated")
+    # TIPE, bukan cuma nilai. `"0"`, `[]`, `true`, `-1` lolos cek nilai lalu memulihkan
+    # ready=true — persis kelas yang validate_extra_rules ada untuk menutup ("'affects': [9]
+    # (angka JSON tanpa kutip) lolos cek list lalu rule-nya DIAM-DIAM tak pernah menyala").
+    # Absen, salah tipe, dan negatif sama-sama berarti "cakupan tak diketahui", dan tak
+    # diketahui tak boleh terbaca sebagai lolos. bool lolos isinstance(int) di Python, jadi
+    # disebut terpisah: `true` bukan hitungan.
+    if isinstance(evaluated, bool) or not isinstance(evaluated, int) or evaluated < 0:
+        notes.append("hasil static tak mencatat `rules_evaluated` yang sah (file lapis dari "
+                     "skrip lama atau salah bentuk) — cakupan aturan tak bisa dipastikan; "
+                     "jalankan ulang Lapis 1")
+    elif evaluated == 0:
+        notes.append("nol aturan dinilai di versi ini — ruleset yang dipakai tak menyebut "
+                     "major-nya, jadi 0 error di sini bukan lolos")
+    # `is not True`, bukan `is False`: string "false" dan key yang absen sama-sama bukan bukti.
+    if static.get("main_file_found") is not True:
+        notes.append("main module file tak resolve — aturan ber-`files: __MAIN__` tak dinilai")
+
+    # Dihitung dari catatan di atas, BUKAN konstanta. Sebelumnya field ini pin True sementara
+    # docstring-nya bilang cakupan sudah dihitung: objek yang sama memuat `conclusive: true`
+    # dan catatan yang bilang cakupannya tak diketahui — dan yang dipercaya pemanggil field-nya.
+    layer = {"ran": True, "conclusive": not notes, "errors": v.get("errors", 0),
+             "warnings": v.get("warnings", 0), "findings": findings}
+    if notes:
+        layer["inconclusive_note"] = "; ".join(notes)
+    return layer
 
 
 def _first_loc(occ):
@@ -387,7 +475,7 @@ def merge_version(full_ver, static, flash, adversarial, e2e):
     # Lolos bila tak ada error dari lapis KONKLUSIF manapun.
     passed = len(blocking) == 0
     # Vonis konklusif hanya bila setidaknya static teruji; catat flashlight/e2e tak konklusif.
-    conclusive = s["conclusive"]  # static selalu konklusif; jadi versi selalu punya vonis dasar
+    conclusive = s["conclusive"]  # vonis dasar ADA hanya bila aturan benar-benar dinilai
     return {
         "pass": passed,
         "conclusive": conclusive,
@@ -420,10 +508,38 @@ def main():
     adversarial = load_json(args.adversarial, "adversarial") if args.adversarial else None
     e2e = load_json(args.e2e, "e2e") if args.e2e else None
 
+    # Bentuk file lapis buatan skrip digerbang SEBELUM dibaca — kalau tidak, file terpotong
+    # meledak jadi Traceback + exit 1 dan CI tak bisa membedakannya dari "module punya error
+    # pemblokir". static_layer membaca f["id"]/f["severity"]/f["message"] langsung, jadi khusus
+    # static kunci itu diwajibkan; lapis lain memakai .get() dan cukup dijaga bentuk containernya.
+    for payload, label, keys in ((static, "static-scan", ("id", "severity", "message")),
+                                 (flash, "flashlight", ()), (e2e, "e2e", ())):
+        if payload is None:
+            continue
+        shape_notes = validate_layer_shape(payload, keys)
+        if shape_notes:
+            print(f"error: file lapis {label} tak lolos gerbang bentuk:", file=sys.stderr)
+            for n in shape_notes:
+                print(f"  - {n}", file=sys.stderr)
+            print("file lapis rusak = input rusak (exit 2), bukan vonis gagal (exit 1) — "
+                  "jalankan ulang lapis itu lalu ulangi", file=sys.stderr)
+            return 2
+
     if args.versions:
         target_versions = [v.strip() for v in args.versions.split(",")]
     else:
         target_versions = list(static.get("versions", {}).keys())
+
+    # Gerbang himpunan kosong, kembaran `--require` kosong di bawah. Nol versi target bikin
+    # tiap loop cakupan lolos secara vakum -> ready=true atas NOL versi terbukti. Harus
+    # mendahului gerbang skema adversarial: dengan target kosong, `known` juga kosong, jadi
+    # tiap token versi reviewer gagal resolve dan exit 2-nya menyalahkan file yang benar.
+    if not target_versions:
+        print("error: tak ada versi target — hasil static-scan tak memuat satu versi pun",
+              file=sys.stderr)
+        print("jalankan ps-static-scan.py dengan --versions lalu ulangi, atau sebut "
+              "--versions di sini (vonis atas nol versi bukan vonis)", file=sys.stderr)
+        return 2
 
     # Gerbang skema di satu-satunya seam model->skrip: tolak KERAS (exit 2, bukan
     # exit 1 vonis-gagal) supaya pelanggaran tak diam-diam tak-memblok / ter-drop.

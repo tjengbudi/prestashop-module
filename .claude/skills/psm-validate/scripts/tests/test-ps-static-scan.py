@@ -385,6 +385,65 @@ def main():
                     res.get("main_file_reason") == "ambiguous_main_file"
                     and res.get("main_file_candidates") == ["a.php", "b.php"])
 
+    # determinism-1 (analyze ronde-5, CRITICAL): cakupan aturan itu fakta yang DIHITUNG.
+    # Dulu versi di luar domain ruleset dilewati SETIAP aturan lalu keluar pass=true, dan
+    # agregat membacanya sbg konklusif lolos -> module ber-eval() siap-rilis di --versions 1.6.
+    with tempfile.TemporaryDirectory() as td6:
+        t6 = Path(td6)
+        evil = make_module(t6, "evilmod", GOOD_MAIN + "<?php eval($x); ?>\n")
+        rc_p = subprocess.run(["uv", "run", str(SCAN), str(evil), "--versions", "8.1,1.6"],
+                              capture_output=True, text=True)
+        ok &= check("versi target di luar domain ruleset -> exit 2 (dulu: pass=true konklusif)",
+                    rc_p.returncode == 2 and "1.6" in rc_p.stderr
+                    and "domain ruleset" in rc_p.stderr and "Traceback" not in rc_p.stderr)
+        # Cerminan gerbang `affects` di sisi aturan: sah di satu arah, sah di arah sebaliknya.
+        rc_ok = subprocess.run(["uv", "run", str(SCAN), str(evil), "--versions", "1.7.8,8.1,9.1"],
+                               capture_output=True, text=True)
+        ok &= check("versi target di dalam domain -> jalan normal (gerbang tak kelebihan sapu)",
+                    rc_ok.returncode in (0, 1) and "domain ruleset" not in rc_ok.stderr)
+
+        res, _ = run_scan(evil, "1.7.8,8.1,9.1")
+        ok &= check("tiap versi mencatat rules_evaluated > 0 supaya agregat bisa membedakan "
+                    "'bersih' dari 'tak dinilai'",
+                    all(m.get("rules_evaluated", 0) > 0 for m in res["versions"].values()))
+
+        # Seam yang gerbang domain TAK bisa lihat: --rules MENGGANTI ruleset. File KB yang cuma
+        # menyebut major lain membuat target sah lolos gerbang lalu dinilai nol aturan — persis
+        # kondisi yang sama, satu seam di sebelah. Angkanya yang menangkapnya, bukan gerbangnya.
+        only9 = t6 / "only9.json"
+        only9.write_text(json.dumps({"forbidden_functions": [
+            {"id": "kb-only9", "severity": "error", "kind": "function", "affects": ["9"],
+             "pattern": r"\bmysql_query\b", "message": "kb", "fix": "kb"}]}), encoding="utf-8")
+        res9, _ = run_scan(evil, "8.1", extra_args=["--rules", str(only9)])
+        ok &= check("--rules yang tak menyebut major target -> rules_evaluated 0 (bukan 'lolos')",
+                    res9["versions"]["8.1"]["rules_evaluated"] == 0
+                    and res9["versions"]["8.1"]["pass"] is True)
+
+        # Refutasi verifier: gerbang skema dipasang HANYA di kanal MENAMBAH (--extra-rules),
+        # sementara --rules MENGGANTI dimuat mentah — jadi rule yang tak akan pernah menyala
+        # lolos lewat flag di sebelahnya & module ber-eval() dinyatakan lolos konklusif.
+        # rules_evaluated tak menangkapnya: satu rule yang selamat menjaga hitungannya positif.
+        dead = t6 / "dead.json"
+        dead.write_text(json.dumps({"forbidden_functions": [
+            {"id": "kb-idx", "severity": "error", "kind": "function", "affects": ["9"],
+             "pattern": r"\bnever_matches_xyz\b", "message": "hidup", "fix": "-"},
+            {"id": "kb-eval", "severity": "error", "kind": "function", "affects": [9],
+             "pattern": r"\beval\s*\(", "message": "mati: affects angka", "fix": "-"}]}),
+            encoding="utf-8")
+        rc_dead = subprocess.run(["uv", "run", str(SCAN), str(evil), "--versions", "9.1",
+                                  "--rules", str(dead)], capture_output=True, text=True)
+        ok &= check("--rules ber-rule mati (affects angka) -> exit 2 seperti --extra-rules "
+                    "(dulu: eval() lolos, ready=true)",
+                    rc_dead.returncode == 2 and "kb-eval" in rc_dead.stderr
+                    and "Traceback" not in rc_dead.stderr)
+        rc_live = subprocess.run(["uv", "run", str(SCAN), str(evil), "--versions", "9.1",
+                                  "--rules", str(only9)], capture_output=True, text=True)
+        ok &= check("--rules yang sah tetap jalan (gerbang tak kelebihan sapu)",
+                    rc_live.returncode in (0, 1) and "validasi skema" not in rc_live.stderr)
+        ok &= check("ruleset bawaan patuh gerbang yang kini dipasang ke --rules",
+                    _scan_mod.validate_extra_rules(
+                        json.loads(_scan_mod.DEFAULT_RULES.read_text()), label="ruleset") == [])
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

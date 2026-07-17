@@ -212,6 +212,30 @@ def main():
                     len(plan.get("e2e_scenario_notes") or []) == 1
                     and "typo.json" in plan["e2e_scenario_notes"][0])
 
+    # Refutasi verifier atas fix ronde-5: gerbang himpunan kosong ditutup di ps-aggregate,
+    # lalu kelasnya selamat SATU SEAM di sini — di skrip yang justru bertugas MENOLAK bukti
+    # basi. `set() - covered` kosong = "cakupan cocok" secara vakum, jadi file lapis yang
+    # meninjau versi yang sama sekali lain dinyatakan boleh dipakai ulang, dengan alasan
+    # tertulis "cakupan versi cocok".
+    with tempfile.TemporaryDirectory() as td7:
+        root7 = Path(td7)
+        m7 = root7 / "mymod"
+        _touch(m7 / "mymod.php", 1000)
+        rep7 = root7 / "reports"
+        _layer(rep7 / "mymod-adversarial.json", ["9.9"], 5000)  # meninjau versi LAIN
+        p = mod.plan_layer(rep7 / "mymod-adversarial.json", [], 1000, "mymod.php")
+        ok &= check("nol versi diminta -> file lapis versi lain TAK boleh dipakai ulang "
+                    "(dulu: reuse=True 'cakupan versi cocok')",
+                    p["reuse"] is False and "nol versi" in p["reason"])
+        p_ok = mod.plan_layer(rep7 / "mymod-adversarial.json", ["9.9"], 1000, "mymod.php")
+        ok &= check("cakupan diminta & tercakup -> reuse tetap jalan (gerbang tak kelebihan sapu)",
+                    p_ok["reuse"] is True)
+        r7 = subprocess.run(["uv", "run", str(MOD_PATH), str(m7), "--reports-dir", str(rep7),
+                             "--versions", " , "], capture_output=True, text=True)
+        ok &= check("CLI: --versions yang menyusut jadi kosong -> exit 2, bukan pra-pass vakum",
+                    r7.returncode == 2 and "nol versi" in r7.stderr
+                    and "Traceback" not in r7.stderr)
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

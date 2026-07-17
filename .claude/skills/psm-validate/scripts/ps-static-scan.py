@@ -234,8 +234,15 @@ def _check_regex(notes, rid, field, value):
         notes.append(f"{rid}: '{field}' bukan regex valid ({e})")
 
 
-def validate_extra_rules(extra):
-    """Validasi ruleset tambahan buatan model. Return list pelanggaran (kosong = lolos).
+def validate_extra_rules(extra, label="extra-rules"):
+    """Validasi ruleset buatan model. Return list pelanggaran (kosong = lolos).
+
+    Dipakai KEDUA kanal ruleset, bukan cuma `--extra-rules`. Dulu hanya kanal MENAMBAH yang
+    digerbang sementara `--rules` (MENGGANTI) dimuat mentah — jadi rule yang tak akan pernah
+    menyala (affects [9] angka, affects absen/kosong, severity di luar enum) lolos diam-diam
+    lewat flag di sebelahnya, dan module ber-eval() dinyatakan `ready` atas ruleset yang tak
+    pernah menyentuhnya. Gerbangnya sudah menangkap semua bentuk itu; ia cuma tak dipasang
+    di seam yang satunya — bentuk kelalaian yang sama dengan yang dijaga fungsi ini.
 
     Menjaga TIPE tiap field yang benar-benar disentuh kode pindai — bukan sekadar
     keberadaannya. Tanpa itu aturan tambahan gagal DIAM-DIAM (grup salah-nama -> 0
@@ -245,7 +252,7 @@ def validate_extra_rules(extra):
     """
     notes = []
     if not isinstance(extra, dict):
-        return ["extra-rules bukan JSON object — bentuk: {\"<grup>\": [ {rule}, ... ]}"]
+        return [f"{label} bukan JSON object — bentuk: {{\"<grup>\": [ {{rule}}, ... ]}}"]
     unknown = [g for g in extra if g not in RULE_GROUPS and g != "_meta"]
     if unknown:
         notes.append(f"grup tak dikenal (rule-nya TAK akan dipakai): {', '.join(sorted(unknown))}"
@@ -328,6 +335,14 @@ def main():
     except (OSError, json.JSONDecodeError) as e:
         print(f"error: gagal baca ruleset: {e}", file=sys.stderr)
         return 2
+    violations = validate_extra_rules(rules, label="ruleset")
+    if violations:
+        print("error: ruleset tak lolos validasi skema:", file=sys.stderr)
+        for n in violations:
+            print(f"  - {n}", file=sys.stderr)
+        print("perbaiki ruleset lalu jalankan ulang "
+              f"(skema: {DEFAULT_RULES.name} _meta.schema)", file=sys.stderr)
+        return 2
     if args.extra_rules:
         try:
             extra = json.loads(Path(args.extra_rules).read_text(encoding="utf-8"))
@@ -354,6 +369,21 @@ def main():
         all_rules.extend(rules.get(grp, []))
 
     versions = norm_versions(args.versions.split(","))
+
+    # Gerbang domain di sisi TARGET — cerminan gerbang `affects` di sisi ATURAN.
+    # validate_extra_rules sudah menolak rule ber-affects di luar MAJOR_KEYS dengan alasan
+    # "rule tak akan pernah menyala"; versi target yang major-nya di luar domain itu kondisi
+    # yang SAMA dilihat dari arah sebaliknya — SETIAP aturan dilewati, hasilnya 0 error, lalu
+    # terbaca konklusif lolos. Module ber-eval() pernah dinyatakan siap-rilis di `--versions 1.6`
+    # begitu. Ketiadaan aturan bukan bukti, jadi ini kekeliruan pemanggil (exit 2), bukan vonis.
+    off_domain = [full for full, major in versions if major not in MAJOR_KEYS]
+    if off_domain:
+        print(f"error: versi target di luar domain ruleset: {', '.join(off_domain)}", file=sys.stderr)
+        print(f"  ruleset ini hanya menilai major: {', '.join(MAJOR_KEYS)}", file=sys.stderr)
+        print("nol aturan akan dinilai untuk versi itu — dan 0 error di sana bukan lolos",
+              file=sys.stderr)
+        return 2
+
     result = {"module": module_dir.name, "module_path": str(module_dir),
               "main_file_found": main_file is not None,
               "ruleset": ruleset_provenance([args.rules, args.extra_rules]),
@@ -365,10 +395,13 @@ def main():
     overall_errors = 0
 
     for full_ver, major in versions:
+        # Berapa aturan yang BENAR-BENAR dinilai di versi ini. Gerbang domain di atas menjaga
+        # major yang tak dikenal ruleset bawaan, tapi `--rules` MENGGANTI ruleset: file KB yang
+        # cuma menyebut major "9" membuat target 8.1 lolos gerbang lalu dinilai nol aturan.
+        # Agregat butuh angkanya untuk membedakan "bersih" dari "tak dinilai".
+        applicable = [r for r in all_rules if major in r.get("affects", [])]
         v_findings = []
-        for rule in all_rules:
-            if major not in rule.get("affects", []):
-                continue
+        for rule in applicable:
             if rule["kind"] in ("structure", "compliancy"):
                 hits = scan_structure_rule(rule, module_dir, main_file, full_ver)
             else:
@@ -384,6 +417,7 @@ def main():
         overall_errors += errs
         result["versions"][full_ver] = {
             "major": major, "errors": errs, "warnings": warns,
+            "rules_evaluated": len(applicable),
             "pass": errs == 0, "findings": v_findings,
         }
 

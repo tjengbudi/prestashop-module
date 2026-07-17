@@ -124,6 +124,13 @@ def plan_layer(path, requested, src_mtime, src_path, ruleset=None):
     covered = layer_versions(payload)
     if covered is None:
         return {"reuse": False, "reason": "cakupan versi file lapis tak bisa dipastikan", "path": str(p)}
+    # Nol versi diminta = `set() - covered` kosong = "cakupan cocok" secara vakum, dan justru
+    # skrip yang tugasnya MENOLAK bukti basi yang mengucapkannya. File lapis yang meninjau versi
+    # yang sama sekali lain pun lolos. Kembaran gerbang himpunan kosong di ps-aggregate; dijaga
+    # di sini juga karena plan_layer bisa diimpor, bukan cuma dipanggil lewat main().
+    if not requested:
+        return {"reuse": False, "path": str(p),
+                "reason": "cakupan tak bisa dinilai atas nol versi diminta"}
     missing = sorted(set(requested) - covered)
     if missing:
         return {"reuse": False, "reason": f"cakupan kurang: {', '.join(missing)}", "path": str(p)}
@@ -169,6 +176,11 @@ def main():
         print(f"error: bukan folder: {module_dir}", file=sys.stderr)
         return 2
     requested = [v.strip() for v in args.versions.split(",") if v.strip()]
+    if not requested:
+        print("error: tak ada versi target — pra-pass atas nol versi memakai-ulang file lapis "
+              "apa pun, termasuk yang meninjau versi lain", file=sys.stderr)
+        print("sebut --versions (mis. dari psm_target_versions) lalu ulangi", file=sys.stderr)
+        return 2
     src_mtime, src_path = newest_source_mtime(module_dir)
     rel = str(src_path.relative_to(module_dir)) if src_path else None
 
