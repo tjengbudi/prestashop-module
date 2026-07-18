@@ -91,6 +91,16 @@ SUPPORTED_ACTIONS = ("goto", "expect_no_fatal", "expect_visible", "expect_text",
 # hasilnya benar. Diturunkan dari SUPPORTED_ACTIONS supaya aksi expect_* yang ditambahkan nanti
 # ikut terhitung tanpa daftar kedua yang bisa melenceng.
 ASSERT_ACTIONS = tuple(a for a in SUPPORTED_ACTIONS if a.startswith("expect_"))
+# Aksi yang menilai RESPONS server (status + fatal) di URL yang dituju: konklusif tanpa login
+# BO. Dulu konklusivitas dikunci per-AREA, jadi BO yang 500-fatal → login gagal → bo_authed
+# False → SETIAP assertion BO tak konklusif, TERMASUK expect_no_fatal yang ada persis untuk
+# menangkap fatal itu → pass palsu atas BO mati. BO PS sehat me-redirect request tanpa-auth ke
+# AdminLogin (200/302, tanpa fatal), jadi goto/expect_no_fatal tak false-block tanpa login.
+# SENGAJA TAK memuat expect_no_console_error: ia menilai console HALAMAN YANG TERMUAT — saat
+# login gagal itu halaman login, bukan halaman BO module → memblok atas derau console login =
+# misattribusi. Ia konklusif hanya lewat bo_authed (halaman authed benar-benar tercapai).
+# Sisanya (expect_visible/expect_text/click/fill) butuh sesi & tetap tak konklusif tanpa auth.
+SESSION_INDEPENDENT_ACTIONS = ("goto", "expect_no_fatal")
 CONTAINER_HTTP_PORT = 80          # nginx/apache flashlight mendengarkan di 80
 DEFAULT_HOST_PORT = 8000
 # Default admin flashlight (BO folder `admin-dev`); override lewat flag. Login BO
@@ -227,9 +237,11 @@ def substitute(text, ctx):
 def universal_smoke():
     """Skenario built-in yang berlaku ke SEMUA module: shop tak rusak dgn module aktif.
 
-    FO home (no-auth, selalu konklusif) + BO module manager (konklusif hanya bila
-    login admin berhasil). Assertion inti: tak ada fatal/500 & halaman benar-benar
-    ter-render. Placeholder {mod} tersedia untuk skenario authored, bukan smoke ini.
+    FO home (no-auth, selalu konklusif) + BO module manager. Di BO, goto/expect_no_fatal
+    menilai RESPONS server (status + fatal) → konklusif tanpa login: BO PS sehat me-redirect
+    request tanpa-auth ke AdminLogin (200, tanpa fatal), jadi hanya BO yang benar-benar 500/
+    fatal yang memblok. Assertion isi ber-auth (expect_visible/expect_text) butuh login berhasil.
+    Placeholder {mod} tersedia untuk skenario authored, bukan smoke ini.
     """
     return {
         "name": "psm-universal-smoke",
@@ -411,7 +423,8 @@ def run_steps(page, steps, ctx):
         action = step.get("action")
         if action == "goto":
             area = step.get("area", area)
-        conclusive = (area != "bo") or ctx.get("bo_authed", False)
+        conclusive = ((area != "bo") or ctx.get("bo_authed", False)
+                      or action in SESSION_INDEPENDENT_ACTIONS)
         try:
             if action == "goto":
                 url = _resolve_url(step, ctx, area)
@@ -587,21 +600,31 @@ def browser_available(engine):
 
 
 def wait_http(url, timeout, poll=2.0):
-    """Poll GET url sampai respons < 500 (200/redirect) / timeout. Return (ok, status)."""
+    """Poll GET url sampai respons < 500 (200/redirect) / timeout. Return (ok, status, responded).
+
+    `responded` True begitu server membalas HTTP apa pun — TERMASUK 5xx: nginx+kernel PS
+    menjawab, jadi port jelas terpublish & boot berhasil. 5xx yang BERTAHAN sepanjang timeout
+    (500 saat cold-start akan resolve jadi 200 lewat poll) adalah bukti MODULE merusak toko,
+    bukan infra — pemanggil harus membiarkan browser + expect_no_fatal memvonisnya, jangan
+    menyapunya ke kanal infra. `responded` False hanya bila TAK ada respons TCP sama sekali
+    (connection refused / timeout tanpa HTTP) = port publish / boot memang gagal.
+    """
     deadline = time.monotonic() + timeout
     last = "no-response"
+    responded = False
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(url, timeout=10) as r:  # noqa: S310 (localhost)
-                return True, r.status
+                return True, r.status, True
         except urllib.error.HTTPError as e:
+            responded = True
             if e.code < 500:
-                return True, e.code
+                return True, e.code, True
             last = f"HTTP {e.code}"
         except (urllib.error.URLError, OSError) as e:
             last = str(e)[:80]
         time.sleep(poll)
-    return False, last
+    return False, last, responded
 
 
 def install_module(session, mod_name, timeout):
@@ -615,7 +638,8 @@ def install_module(session, mod_name, timeout):
     if inst.get("copy_fail"):
         return {"ok": False}, "gagal menyalin module ke dalam container"
     return {"ok": inst["ok"], "no_console": inst.get("no_console", False),
-            "no_psroot": inst.get("no_psroot", False)}, None
+            "no_psroot": inst.get("no_psroot", False),
+            "no_verdict": inst.get("no_verdict", False)}, None
 
 
 def _bo_login(page, ctx):
@@ -804,24 +828,33 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
 
         install, ierr = install_module(session, mod_name, op_timeout)
         res["install"] = {"ok": install["ok"], "no_console": install.get("no_console", False),
-                          "no_psroot": install.get("no_psroot", False)}
+                          "no_psroot": install.get("no_psroot", False),
+                          "no_verdict": install.get("no_verdict", False)}
         if ierr or not install["ok"]:
             # Install adalah wilayah vonis Lapis 2; di sini cuma prasyarat E2E → tak konklusif.
-            # Bedakan infra (image tanpa bin/console / PS root) dari module ditolak core:
-            # keduanya tak memblok di sini, tapi alasannya harus jujur, bukan disamarkan.
+            # Bedakan infra (image tanpa bin/console / PS root, atau installer tak mencapai
+            # vonisnya) dari module ditolak core: keduanya tak memblok di sini, tapi alasannya
+            # harus jujur, bukan disamarkan.
             if install.get("no_console") or install.get("no_psroot"):
                 res["errors"].append(
                     "image tak punya bin/console / PS root — module tak bisa di-install, E2E tak bisa menilai perilaku")
+            elif install.get("no_verdict"):
+                res["errors"].append(
+                    "installer tak mencapai vonis di container (exec/output gagal) — E2E tak bisa menilai perilaku")
             else:
                 res["errors"].append(
                     ierr or "module gagal install — E2E tak bisa menilai perilaku (Lapis 2 flashlight yang memvonis install)")
             return res
 
         fo, bo = base_urls(ps_domain, admin_path)
-        reach_ok, rstatus = wait_http(fo + "/", startup_timeout)
-        if not reach_ok:
+        reach_ok, rstatus, responded = wait_http(fo + "/", startup_timeout)
+        if not reach_ok and not responded:
+            # Tak ada respons TCP sama sekali → port publish / boot memang gagal (infra jujur).
             res["errors"].append(f"PS tak terjangkau di {fo} ({rstatus}) — port publish/boot gagal")
             return res
+        # reach_ok False TAPI responded True (mis. 5xx bertahan): nginx+kernel menjawab, port
+        # terpublish → JANGAN return. Biarkan smoke universal (goto '/' + expect_no_fatal)
+        # men-drive & memvonis toko yang rusak — itu justru yang Lapis 4 ada untuk menangkap.
 
         # Warm-up BO sebelum browser men-drive (verified: login cold-container 1.7/8
         # flaky karena kompilasi halaman login lambat) — best-effort, gagal tak memvonis:
@@ -902,7 +935,7 @@ def main():
                     help=f"Engine Playwright dipisah koma (default: {DEFAULT_BROWSERS}; didukung: {','.join(SUPPORTED_ENGINES)})")
     ap.add_argument("--tag-map", default="", help="Peta LENGKAP versi=tag dipisah koma (MENGGANTI default)")
     ap.add_argument("--extra-tag-map", default="", help="Tag TAMBAHAN versi=tag (MENAMBAH di atas peta)")
-    ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default="auto",
+    ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default=fl.DEFAULT_ORCHESTRATOR,
                     help="Cara menghidupkan DB+flashlight (default: auto)")
     ap.add_argument("--db-image", default=fl.DEFAULT_DB_IMAGE, help=f"Image server DB (default: {fl.DEFAULT_DB_IMAGE})")
     ap.add_argument("--ps-domain", default=fl.DEFAULT_PS_DOMAIN,

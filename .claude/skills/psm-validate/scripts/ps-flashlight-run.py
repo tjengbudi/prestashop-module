@@ -58,6 +58,7 @@ IMAGE = "prestashop/prestashop-flashlight"
 DEFAULT_DB_IMAGE = "mariadb:lts"
 DEFAULT_PS_DOMAIN = "localhost:8000"
 DEFAULT_STARTUP_TIMEOUT = 180  # detik menunggu container jadi healthy
+DEFAULT_ORCHESTRATOR = "auto"   # auto = compose bila ada, else manual
 # Kredensial DB — harus cocok di sisi flashlight & DB; nilai internal, bukan setelan.
 DB_USER = "prestashop"
 DB_PASSWORD = "prestashop"
@@ -196,11 +197,20 @@ def parse_install(out):
     tak ada): pemanggil memperlakukannya tak konklusif, bukan module gagal install.
     Keduanya benar-benar diemit inner-script — sentinel yang dibaca tapi tak pernah
     ditulis = jalur degrade mati, dan infra jatuh jadi vonis memblok palsu.
+
+    `no_verdict` = installer TAK PERNAH mencapai vonisnya: baik PSM_INSTALL_OK maupun
+    PSM_INSTALL_FAIL absen (docker exec mati sesudah healthy / output terpotong / sh gagal).
+    Dulu PSM_INSTALL_FAIL DITULIS tapi tak pernah DIBACA — jadi 'exec mati' dan 'installer
+    menolak module' jatuh ke ok=False yang sama, dan infra murni dijual sbg vonis memblok
+    'modul gagal install di core asli'. Membaca PSM_INSTALL_FAIL memisahkan keduanya: hanya
+    ia bukti installer BENAR-BENAR menjalankan lalu menolak (satu-satunya yang boleh memblok).
     """
     if "PSM_COPY_FAIL" in out:
-        return {"ok": False, "no_console": False, "no_psroot": False, "copy_fail": True}
+        return {"ok": False, "no_console": False, "no_psroot": False,
+                "copy_fail": True, "no_verdict": False}
+    ran = ("PSM_INSTALL_OK" in out) or ("PSM_INSTALL_FAIL" in out)
     return {"ok": "PSM_INSTALL_OK" in out, "no_console": "PSM_NO_CONSOLE" in out,
-            "no_psroot": "PSM_NO_PSROOT" in out, "copy_fail": False}
+            "no_psroot": "PSM_NO_PSROOT" in out, "copy_fail": False, "no_verdict": not ran}
 
 
 def parse_phpstan(out):
@@ -494,6 +504,7 @@ def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_ima
             return res
         res["install"] = {"ok": inst["ok"], "no_console": inst.get("no_console", False),
                           "no_psroot": inst.get("no_psroot", False),
+                          "no_verdict": inst.get("no_verdict", False),
                           "log": out.split(PHPSTAN_SENTINEL_PREFIX, 1)[0][-2000:]}
         res["coding_standard"] = parse_phpstan(out)
         cs = res["coding_standard"]
@@ -514,7 +525,7 @@ def main():
                                                   "mis. '1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx'")
     ap.add_argument("--extra-tag-map", default="", help="Tag TAMBAHAN versi=tag (MENAMBAH di atas peta), "
                                                         "mis. '9.2=9.2.0-nginx' — versi lain tak terpengaruh")
-    ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default="auto",
+    ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default=DEFAULT_ORCHESTRATOR,
                     help="Cara menghidupkan DB+flashlight (default: auto = compose bila ada, else manual)")
     ap.add_argument("--db-image", default=DEFAULT_DB_IMAGE, help=f"Image server DB (default: {DEFAULT_DB_IMAGE})")
     ap.add_argument("--ps-domain", default=DEFAULT_PS_DOMAIN, help=f"PS_DOMAIN flashlight (default: {DEFAULT_PS_DOMAIN})")

@@ -313,6 +313,19 @@ def validate_extra_rules(extra, label="extra-rules"):
     return notes
 
 
+def unresolved_path_args(named_paths):
+    """Argumen path yang masih memuat token `{project-root}` (mestinya diekspansi pemanggil).
+
+    Token itu hanya bermakna di dalam nilai config; argumen path filesystem harus sudah
+    diresolve. Gagal keras mencegah ps-plan-layers exit 0 sambil melihat folder harfiah
+    `{project-root}/...` lalu melaporkan 'file lapis belum ada' dengan percaya diri (rerun
+    semua lapis mahal). Satu pemilik di ps-static-scan; ps-plan-layers memanggilnya via sibling
+    (dulu reject_unresolved_paths ada 3x di psm-setup, 0x di psm-validate — konsumen terberat).
+    Mengembalikan daftar (nama, nilai) yang melanggar; pemanggil cetak + return 2 (error input).
+    """
+    return [(name, val) for name, val in named_paths if val and "{project-root}" in val]
+
+
 def main():
     ap = argparse.ArgumentParser(description="Pindai module PrestaShop terhadap aturan kompatibilitas lintas versi.",
                                  epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -325,6 +338,14 @@ def main():
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
+
+    bad = unresolved_path_args([("--rules", args.rules), ("--extra-rules", args.extra_rules),
+                                ("-o", args.output)])
+    if bad:
+        for name, val in bad:
+            print(f"error: token '{{project-root}}' belum diresolve di {name}: {val!r} — resolve "
+                  "ke root project dulu; ini path filesystem, bukan nilai config.", file=sys.stderr)
+        return 2
 
     module_dir = Path(args.module_path).resolve()
     if not module_dir.is_dir():

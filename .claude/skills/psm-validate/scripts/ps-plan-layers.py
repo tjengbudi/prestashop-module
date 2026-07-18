@@ -27,6 +27,13 @@ from pathlib import Path
 
 LAYERS = ("static", "flashlight", "adversarial", "e2e")
 
+# Default kanonik psm_reports_dir, bentuk TANPA token (relatif cwd project). SKILL.md
+# menjanjikan "resolver absen -> lanjut dengan default kanonik skrip", tapi --reports-dir
+# dulu required=True tanpa default -> janji itu tak bisa ditepati & satu-satunya bentuk
+# tertulis yang dilihat model ber-token ({project-root}/...). Nilai TANPA token supaya tak
+# jadi bahan token tak-terekspansi; dikunci ke PSM_DEFAULTS['psm_reports_dir'] via test drift.
+DEFAULT_REPORTS_DIR = "_bmad-output/psm-validate"
+
 # "Folder mana yang bukan source module" hanya boleh punya SATU definisi — dua
 # implementasi berbeda (substring vs komponen path) pernah sama-sama salah &
 # gagal ke arah tak aman. Pakai-ulang dari ps-static-scan (impor by-path karena
@@ -164,23 +171,25 @@ def plan_layer(path, requested, src_mtime, src_path, provenance=None):
     return {"reuse": True, "reason": "lebih baru dari module & cakupan versi cocok", "path": str(p)}
 
 
-def _e2e_scenarios(module_dir):
-    """(sumber spec authored, catatan spec yang dilewati) — aturannya milik ps-e2e-run.
+def _e2e_scenario_notes(module_dir):
+    """Catatan spec authored yang DILEWATI (JSON rusak / tanpa expect_*) — milik ps-e2e-run.
 
     Diimpor malas & by-path: aturan "spec mana yang sah" hanya boleh punya satu pemilik,
     dan menyalinnya ke sini akan jadi implementasi kedua yang mendrift diam-diam. Impor
     di dalam fungsi supaya pemanggil lain (ps-aggregate -> modul ini) tak ikut menyeretnya.
+    Daftar sumber (dulu juga dikembalikan) DIHAPUS: e2e_scenarios cuma echo nama file, nol
+    pembaca — cakupan authored sudah dipikul e2e_smoke_only di agregat.
     """
     e2e_path = Path(__file__).resolve().parent / "ps-e2e-run.py"
     if not e2e_path.is_file():
-        return [], []
+        return []
     spec = importlib.util.spec_from_file_location("ps_e2e_run", e2e_path)
     if not (spec and spec.loader):
-        return [], []
+        return []
     e2e = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(e2e)
-    found, notes = e2e.discover_scenarios(module_dir)
-    return [s["source"] for s in found], notes
+    _found, notes = e2e.discover_scenarios(module_dir)
+    return notes
 
 
 def main():
@@ -188,7 +197,8 @@ def main():
         description="Pra-pass: tentukan file lapis mana yang masih sah dipakai ulang.",
         epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module_path", help="Path folder module PrestaShop")
-    ap.add_argument("--reports-dir", required=True, help="Folder laporan (psm_reports_dir)")
+    ap.add_argument("--reports-dir", default=DEFAULT_REPORTS_DIR,
+                    help=f"Folder laporan (psm_reports_dir; default kanonik: {DEFAULT_REPORTS_DIR})")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
     ap.add_argument("--rules", default=str(ss.DEFAULT_RULES),
                     help="Path ps-rules.json yang akan dipakai Lapis 1 (default: assets/ps-rules.json)")
@@ -203,6 +213,18 @@ def main():
                                             "bukan mengganti. Teruskan yang sama seperti ke Lapis 2/4.")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     args = ap.parse_args()
+
+    # customization-3: token {project-root} yang tak terekspansi sampai titik pakai = folder
+    # harfiah -> "file lapis belum ada" percaya diri -> rerun semua lapis mahal. Gerbang di
+    # konsumen terberat (satu pemilik di ps-static-scan). --reports-dir yang mengonstruksi
+    # path lapis adalah leak yang direproduksi; --rules/--extra-rules mirror nilai config juga.
+    bad = ss.unresolved_path_args([("--reports-dir", args.reports_dir), ("-o", args.output),
+                                   ("--rules", args.rules), ("--extra-rules", args.extra_rules)])
+    if bad:
+        for name, val in bad:
+            print(f"error: token '{{project-root}}' belum diresolve di {name}: {val!r} — resolve "
+                  "ke root project dulu; ini path filesystem, bukan nilai config.", file=sys.stderr)
+        return 2
 
     module_dir = Path(args.module_path).resolve()
     if not module_dir.is_dir():
@@ -244,8 +266,7 @@ def main():
     # jadi satu typo baru ketahuan setelah run mahal selesai. Di sini penulisnya sempat
     # memperbaiki lebih dulu. Sengaja TAK memblok: smoke universal tetap berguna walau
     # spec authored rusak (kejujurannya sudah dipikul e2e_smoke_only).
-    scen, notes = _e2e_scenarios(module_dir)
-    result["e2e_scenarios"] = scen
+    notes = _e2e_scenario_notes(module_dir)
     if notes:
         result["e2e_scenario_notes"] = notes
     out = json.dumps(result, indent=2, ensure_ascii=False)

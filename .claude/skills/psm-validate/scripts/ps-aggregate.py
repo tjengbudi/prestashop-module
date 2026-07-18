@@ -161,6 +161,32 @@ def validate_layer_shape(payload, finding_keys=()):
     return notes
 
 
+def _int_fact(container, key):
+    """Baca hitungan cakupan bertipe KETAT dari container; None bila absen/salah-tipe/negatif.
+
+    Satu pemilik untuk kelas gerbang-tipe cakupan (dipakai rules_evaluated & authored_assertions).
+    `"0"`/`[]`/`true`/`-1` lolos cek nilai lalu memulihkan `ready` — persis kelas yang
+    validate_extra_rules ada untuk menutup. bool lolos isinstance(int) di Python, jadi dibuang
+    eksplisit: `true` bukan hitungan. None = "tak diketahui", dan tak diketahui ≠ teruji.
+    """
+    val = (container or {}).get(key)
+    if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+        return None
+    return val
+
+
+def _bool_fact(container, key):
+    """Baca fakta cakupan boolean bertipe KETAT; None bila absen/salah-tipe.
+
+    Pasangan `_int_fact` untuk seam boolean (coverage_ok, no_verdict). `"false"`/`0`/`[]`
+    BUKAN False — truthiness telanjang dulu menelan `"false"` ke satu arah & `[]`/`{}` ke
+    arah lain. Hanya bool asli yang fakta; sisanya None = tak bisa dipastikan. Seam kelima
+    yang lahir nanti memanggil salah satu helper ini, tak bisa lupa menggerbang tipe.
+    """
+    val = (container or {}).get(key)
+    return val if isinstance(val, bool) else None
+
+
 def static_layer(static, full_ver):
     """Lapis 1 selalu JALAN — tapi "jalan" bukan "menilai", dan cuma yang kedua itu bukti.
 
@@ -187,14 +213,8 @@ def static_layer(static, full_ver):
         for f in v.get("findings", [])
     ]
     notes = []
-    evaluated = v.get("rules_evaluated")
-    # TIPE, bukan cuma nilai. `"0"`, `[]`, `true`, `-1` lolos cek nilai lalu memulihkan
-    # ready=true — persis kelas yang validate_extra_rules ada untuk menutup ("'affects': [9]
-    # (angka JSON tanpa kutip) lolos cek list lalu rule-nya DIAM-DIAM tak pernah menyala").
-    # Absen, salah tipe, dan negatif sama-sama berarti "cakupan tak diketahui", dan tak
-    # diketahui tak boleh terbaca sebagai lolos. bool lolos isinstance(int) di Python, jadi
-    # disebut terpisah: `true` bukan hitungan.
-    if isinstance(evaluated, bool) or not isinstance(evaluated, int) or evaluated < 0:
+    evaluated = _int_fact(v, "rules_evaluated")  # None = absen/salah-tipe/negatif (tak diketahui)
+    if evaluated is None:
         notes.append("hasil static tak mencatat `rules_evaluated` yang sah (file lapis dari "
                      "skrip lama atau salah bentuk) — cakupan aturan tak bisa dipastikan; "
                      "jalankan ulang Lapis 1")
@@ -264,6 +284,31 @@ def flashlight_layer(flash, full_ver):
         infra.append("PrestaShop console tak ada di image — install tak bisa diuji")
     if install.get("no_psroot"):
         infra.append("PS root tak ada di image — install tak bisa diuji")
+    # Install gagal TAPI installer tak TERBUKTI mencapai vonis tolak → infra, bukan vonis
+    # memblok atas module. Vonis memblok 'modul gagal install' HANYA sah bila PSM_INSTALL_FAIL
+    # benar-benar diemit, yaitu no_verdict IS False (bool). Gerbang identity-strict, sekelas
+    # coverage_ok/rules_evaluated: `not False` menangkap True (exec mati), None (file lapis
+    # lama tak mencatat), dan salah-tipe ("false"/[]/{}) — semuanya "tak bisa dipastikan",
+    # bukan module ditolak. Dulu truthiness telanjang: "false" ditelan ke infra & []/{} jatuh
+    # jadi vonis memblok. `no_console`/`no_psroot` punya pesannya sendiri di atas — jangan dobel.
+    # `ok` digerbang IDENTITY-STRICT sekelas coverage_ok/no_verdict (sibling di dict install
+    # yang sama): dulu truthiness telanjang -> `ok="false"`/0/1 (truthy/falsy non-bool) bikin
+    # install GAGAL terbaca SUKSES (ready UP palsu) atau sukses terbaca gagal. Hanya bool asli
+    # fakta; None = file lapis lama/salah bentuk = tak bisa dipastikan.
+    iok = _bool_fact(install, "ok")          # True=sukses; False=gagal; None=lama/salah
+    nv = _bool_fact(install, "no_verdict")   # True=exec mati; False=installer memvonis; None=lama/salah
+    if not (install.get("no_console") or install.get("no_psroot")):
+        if iok is None:
+            infra.append("hasil flashlight tak mencatat status install yang sah (file lapis dari "
+                         "skrip lama atau salah bentuk) — install tak bisa diuji")
+        elif iok is False and nv is not False:
+            # Gagal TAPI installer tak TERBUKTI menolak: vonis memblok 'modul gagal install'
+            # HANYA sah bila PSM_INSTALL_FAIL diemit (nv is False). nv True = exec mati; nv
+            # None = file lapis lama tak mencatat. Keduanya "tak bisa dipastikan", bukan ditolak.
+            infra.append("inner-script tak mencapai vonis install (exec/container gagal) — "
+                         "install tak bisa diuji" if nv is True else
+                         "hasil flashlight tak mencatat vonis install (file lapis dari skrip "
+                         "lama atau salah bentuk) — jalankan ulang Lapis 2")
     if infra:
         # Ekor log container ikut: kegagalan boot adalah kegagalan yang PALING sulit
         # didiagnosis, dan tanpa ini vonisnya cuma "flashlight tak jadi healthy (timeout)".
@@ -275,7 +320,7 @@ def flashlight_layer(flash, full_ver):
 
     # Konklusif: kumpulkan temuan error nyata (install ditolak / phpcs error).
     findings = []
-    if not install.get("ok"):
+    if iok is False:  # sampai sini hanya bila nv is False = PSM_INSTALL_FAIL benar-benar diemit
         # Ekor log install ikut ke temuan. Ini temuan pemblokir yang PALING sering, `install.log`
         # menangkap sebabnya, dan tak ada yang membacanya — sementara fix-nya menyuruh operator
         # "periksa log install flashlight" yang tak pernah dibawa vonis, padahal SKILL.md
@@ -321,7 +366,7 @@ def flashlight_layer(flash, full_ver):
     elif cs.get("parse_ok") is False:
         layer["inconclusive_note"] = (cs.get("note", "laporan phpstan tak terparse")
                                       + " — coding standard tak diuji; tak memblok")
-    elif cs.get("coverage_ok") is False:
+    elif _bool_fact(cs, "coverage_ok") is False:
         # Canary tak terdeteksi: phpstan jalan & laporannya terparse, tapi TAK menganalisis satu
         # file pun dari module (mis. neon module meng-excludePaths dirinya sendiri). Laporan JSON
         # phpstan tak bisa membedakan ini dari "bersih" — map `files` cuma memuat file YANG
@@ -330,10 +375,12 @@ def flashlight_layer(flash, full_ver):
         layer["inconclusive_note"] = ("phpstan tak menganalisis satu file pun dari module "
                                       "(neon module mengecualikannya — canary tak terdeteksi) "
                                       "— coding standard tak diuji; tak memblok")
-    elif "coverage_ok" not in cs:
-        layer["inconclusive_note"] = ("hasil flashlight tak mencatat `coverage_ok` (file lapis dari "
-                                      "skrip lama) — cakupan phpstan tak bisa dipastikan; "
-                                      "jalankan ulang Lapis 2")
+    elif _bool_fact(cs, "coverage_ok") is None:
+        # Absen ATAU salah-tipe (`"false"`/`0`/`1.5`/`[]`): dulu `is False`+`not in` meloloskan
+        # non-bool non-False sbg cakupan teruji (leak determinism-2). Tak bisa dipastikan.
+        layer["inconclusive_note"] = ("hasil flashlight tak mencatat `coverage_ok` yang sah (file "
+                                      "lapis dari skrip lama atau salah bentuk) — cakupan phpstan "
+                                      "tak bisa dipastikan; jalankan ulang Lapis 2")
     # OBSERVASI, bukan celah cakupan — kanal yang sama dengan error console di e2e_layer:
     # disurface supaya tak jadi sinyal yatim, tapi TAK menggerbang, dan jalan keluarnya
     # (kirim neon sendiri) disebut supaya "advisory" bukan jalan buntu.
@@ -352,10 +399,7 @@ def authored_assertions(e2e, full_ver):
     dan tak diketahui tak pernah boleh terbaca sebagai teruji.
     """
     v = ((e2e or {}).get("versions") or {}).get(full_ver) or {}
-    n = v.get("authored_assertions")
-    if isinstance(n, bool) or not isinstance(n, int) or n < 0:
-        return None
-    return n
+    return _int_fact(v, "authored_assertions")
 
 
 def is_smoke_only(e2e, full_ver):
@@ -395,7 +439,9 @@ def e2e_layer(e2e, full_ver):
     infra = list(v.get("errors", []))
     if v.get("skipped_browser"):
         infra.append("tak ada browser yang bisa diluncurkan (jalankan 'playwright install')")
-    if not (v.get("install") or {}).get("ok"):
+    if _bool_fact(v.get("install") or {}, "ok") is not True:
+        # Identity-strict (seam kembar flashlight): `ok="false"`/0/1 truthiness dulu bisa
+        # meloloskan install tak-terkonfirmasi jadi "ter-install" -> e2e lanjut ke konklusif.
         infra.append("module tak ter-install — perilaku browser tak bisa dinilai (Lapis 2 memvonis install)")
     if not v.get("browsers"):
         infra.append("tak ada browser dijalankan")
@@ -747,17 +793,22 @@ def main():
     e2e_scenario_notes = (e2e or {}).get("scenario_notes") or []
     if e2e_scenario_notes:
         result["e2e_scenario_notes"] = e2e_scenario_notes
-    # Cakupan E2E: tanpa spec authored, Lapis 4 hanya membuktikan "shop tak rusak" —
-    # BUKAN perilaku module. Tanpa penanda ini vonisnya identik dgn module yang punya
-    # skenario use-case lengkap, jadi "E2E konklusif lolos" terbaca lebih dari faktanya.
-    e2e_sources = (e2e or {}).get("scenario_sources") or []
+    # Cakupan E2E: tanpa spec authored, Lapis 4 hanya membuktikan "shop tak rusak" — BUKAN
+    # perilaku module. e2e_smoke_only MENJATUHKAN ready & DIRUTEKAN SKILL.md; ia sudah memikul
+    # kejujuran ini, jadi echo scenario_sources (daftar nama file, nol pembaca) DIHAPUS —
+    # ia justru menawarkan ulang premis STRUKTURAL nama-file yang count_authored_assertions
+    # sudah didiskreditkan (spec 2 screenshot = nol assertion tapi "punya source").
     if e2e_ran:
-        result["e2e_scenario_sources"] = e2e_sources
         # Field top-level = "tiap versi yang benar-benar jalan cuma smoke". Versi yang tak jalan
         # tak dihitung: ia sudah tak konklusif lewat kanal infra, dan menyebutnya "smoke only"
         # akan menyalahkan spec atas container yang gagal boot.
         ran_vers = [v for v in target_versions if v in ((e2e or {}).get("versions") or {})]
         result["e2e_smoke_only"] = bool(ran_vers) and all(is_smoke_only(e2e, v) for v in ran_vers)
+        # Cakupan browser yang dipersempit (menu On Activation / --browsers) DIREKAM di laporan,
+        # bukan cuma diingat model dari percakapan — pemanggil headless (psm-scaffold/develop/
+        # cross-version) tak bisa melihat penyempitan tanpa field. Diminta vs yang bisa jalan.
+        result["e2e_browsers"] = (e2e or {}).get("browsers") or []
+        result["e2e_browsers_run"] = (e2e or {}).get("browsers_available") or []
     # Folder screenshot E2E di-echo agar path artefak visual ('cek web asli') sampai ke laporan
     # gabungan — supaya render bisa ditinjau, bukan cuma diproduksi lalu terlupakan.
     e2e_shot_dir = (e2e or {}).get("screenshot_dir")

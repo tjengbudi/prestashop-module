@@ -118,7 +118,8 @@ def main():
     # 6. Flashlight KONKLUSIF + install ditolak -> MEMBLOK (uji nyata gagal)
     flash_fail = {"module": "m", "docker_available": True, "status": "ran",
                   "versions": {"8.1": {"version": "8.1", "image": "img",
-                                       "install": {"ok": False, "no_console": False, "log": "boom"},
+                                       "install": {"ok": False, "no_console": False,
+                                                   "no_verdict": False, "log": "boom"},
                                        "coding_standard": {"available": False},
                                        "errors": [], "pass": False}}}
     r = mod.merge_version("8.1", static, flash_fail, None, None)
@@ -404,7 +405,7 @@ def main():
         if assertions is None:
             assertions = 3 if any(not s.startswith("builtin:") for s in sources) else 0
         return {"module": "m", "e2e_available": True, "status": "ran",
-                "scenario_sources": sources,
+                "scenario_sources": sources, "browsers": ["chromium"], "browsers_available": ["chromium"],
                 "versions": {"8.1": {"version": "8.1", "install": {"ok": True},
                                      "browsers": ["chromium"], "findings": [], "inconclusive": [],
                                      "browser_notes": [], "errors": [], "pass": True,
@@ -414,9 +415,16 @@ def main():
     ok &= check("E2E hanya smoke -> e2e_smoke_only True (cakupan jujur, walau lolos)",
                 smoke["pass"] is True and smoke.get("e2e_smoke_only") is True)
     authored = _aggregate(_e2e_ran(["builtin:psm-universal-smoke", "configure.json"]))
-    ok &= check("E2E dgn spec authored -> e2e_smoke_only False",
-                authored.get("e2e_smoke_only") is False
-                and "configure.json" in authored.get("e2e_scenario_sources", []))
+    ok &= check("E2E dgn spec authored -> e2e_smoke_only False", authored.get("e2e_smoke_only") is False)
+    # enh-4 (ronde-6): e2e_scenario_sources DIHAPUS (echo nama file nol pembaca, tawarkan ulang
+    # premis struktural yang didiskreditkan). Cakupan authored dipikul e2e_smoke_only.
+    ok &= check("e2e_scenario_sources TAK lagi diemit (echo yatim dihapus)",
+                "e2e_scenario_sources" not in authored)
+    # det-4 (ronde-6): cakupan browser dipersempit DIREKAM di laporan (dulu model lapor dari
+    # ingatan percakapan; pemanggil headless buta). browsers diminta vs browsers_available jalan.
+    ok &= check("e2e_browsers/e2e_browsers_run di-echo top-level (penyempitan terekam, bukan diingat)",
+                authored.get("e2e_browsers") == ["chromium"]
+                and authored.get("e2e_browsers_run") == ["chromium"])
     noe2e = _aggregate(e2e_skip)
     ok &= check("E2E tak jalan -> tak ada klaim cakupan sama sekali",
                 "e2e_smoke_only" not in noe2e)
@@ -619,6 +627,15 @@ def main():
     ok &= check("file lapis lama tanpa coverage_ok -> tak bisa dipastikan, bukan bersih",
                 "tak bisa dipastikan"
                 in mod.flashlight_layer(fl_old, "8.1").get("inconclusive_note", ""))
+    # determinism-2 (ronde-6): coverage_ok salah-tipe. Dulu `is False`+`not in` MELOLOSKAN
+    # non-bool non-False (`"false"`/`0`/`1.5`/`[]`) sbg cakupan TERUJI (leak: ready=true palsu).
+    # Kini _bool_fact identity-strict: hanya True yang fakta bersih; sisanya tak bisa dipastikan.
+    for bad in ("false", 0, 1.5, [], 1):
+        fl_bad = _flash_cs({"available": True, "parse_ok": True, "generated_config": False,
+                            "coverage_ok": bad, "errors": 0, "warnings": 0, "error_messages": []})
+        ok &= check(f"coverage_ok salah-tipe {bad!r} -> inconclusive_note (bukan cakupan teruji)",
+                    "tak bisa dipastikan"
+                    in mod.flashlight_layer(fl_bad, "8.1").get("inconclusive_note", ""))
     # Urutan cabang: parse_ok False tak pernah punya coverage_ok, jadi cabang "skrip lama"
     # akan menyalip pesan parse-gagal & menyalahkan file lapis atas laporan yang rusak.
     # determinism-3 (analyze ronde-5): auto-neon = OBSERVASI (phpstan BENAR-BENAR jalan, tapi
@@ -818,11 +835,65 @@ def main():
                 "php-fpm: gagal start" in mod.e2e_layer(e2e_boot, "8.1")["reason"])
     fl_ifail = _flash_cs({"available": False})
     fl_ifail["versions"]["8.1"]["install"] = {"ok": False, "no_console": False, "no_psroot": False,
+                                              "no_verdict": False,
                                               "log": "CRITICAL Error thrown while running command"}
     f_inst = [f for f in mod.flashlight_layer(fl_ifail, "8.1")["findings"]
               if f["id"] == "flashlight-install"]
     ok &= check("install.log ikut ke temuan install-fail (vonis membawa buktinya, bukan menyuruh cari)",
                 len(f_inst) == 1 and "Error thrown while running command" in f_inst[0]["fix"])
+    # enh-3 (ronde-6): no_verdict memisahkan "installer MENOLAK module" (memblok) dari
+    # "installer tak pernah mencapai vonisnya: exec mati / output terpotong" (infra). Dulu
+    # keduanya jatuh ke ok=False -> temuan memblok "modul gagal install" = infra dijual sbg vonis.
+    fl_nv = _flash_cs({"available": False})
+    fl_nv["versions"]["8.1"]["install"] = {"ok": False, "no_console": False, "no_psroot": False,
+                                           "no_verdict": True, "log": "Container is not running"}
+    l_nv = mod.flashlight_layer(fl_nv, "8.1")
+    ok &= check("install no_verdict (exec mati) -> infra tak-konklusif TANPA temuan memblok",
+                l_nv["conclusive"] is False and l_nv["findings"] == []
+                and "tak mencapai vonis" in l_nv["reason"])
+    fl_rej = _flash_cs({"available": False})
+    fl_rej["versions"]["8.1"]["install"] = {"ok": False, "no_console": False, "no_psroot": False,
+                                            "no_verdict": False, "log": "module rejected by core"}
+    l_rej = mod.flashlight_layer(fl_rej, "8.1")
+    ok &= check("install ditolak (no_verdict False = PSM_INSTALL_FAIL diemit) -> temuan konklusif memblok",
+                any(f["id"] == "flashlight-install" for f in l_rej["findings"]))
+    # verifier ronde-6 (seam KELIMA install.ok): sibling `no_verdict` dijaga _bool_fact, tapi
+    # `ok` (sinyal install PRIMER) dulu truthiness telanjang -> ok="false"/0/1 (truthy/falsy
+    # non-bool) bikin install GAGAL terbaca SUKSES (ready UP palsu) atau sukses -> gagal. Kelas
+    # yang sama dgn coverage_ok. Kini _bool_fact: hanya bool asli fakta; sisanya tak dipastikan.
+    for bad in ("false", 0, 1, 1.5, [], None):
+        fl_ok = _flash_cs({"available": False})
+        fl_ok["versions"]["8.1"]["install"] = {"ok": bad, "no_console": False, "no_psroot": False,
+                                               "no_verdict": False, "log": "x"}
+        l_ok = mod.flashlight_layer(fl_ok, "8.1")
+        ok &= check(f"install.ok salah-tipe {bad!r} -> infra tak-konklusif, BUKAN pass/memblok",
+                    l_ok["conclusive"] is False and l_ok["findings"] == [])
+        e2_ok = {"module": "m", "e2e_available": True, "status": "ran",
+                 "versions": {"8.1": {"version": "8.1", "install": {"ok": bad}, "browsers": ["chromium"],
+                                      "findings": [], "inconclusive": [], "browser_notes": []}}}
+        ok &= check(f"e2e install.ok salah-tipe {bad!r} -> not_conclusive (seam kembar flashlight)",
+                    mod.e2e_layer(e2_ok, "8.1")["conclusive"] is False)
+    # REFUTASI verifier (backward-compat): file lapis LAMA (ps-plan-layers reuse) mencatat
+    # exec-mati sbg install {ok:False} TANPA no_verdict. Truthiness telanjang dulu -> None
+    # falsy -> vonis MEMBLOK "modul gagal install" tanpa note = persis bug enh-3 yang tak
+    # termitigasi utk seam reuse. Kini identity-strict (is not False) + cabang skrip-lama.
+    fl_old = _flash_cs({"available": False})
+    fl_old["versions"]["8.1"]["install"] = {"ok": False, "no_console": False, "no_psroot": False,
+                                            "log": "boom"}  # sengaja TANPA no_verdict
+    l_old = mod.flashlight_layer(fl_old, "8.1")
+    ok &= check("file lapis lama (no_verdict absen) + ok False -> infra tak-konklusif, BUKAN memblok",
+                l_old["conclusive"] is False and l_old["findings"] == []
+                and "skrip lama" in l_old["reason"])
+    # REFUTASI verifier (gerbang NILAI vs TIPE, kelas yang membunuh penulis di ronde-5):
+    # no_verdict salah-tipe harus "tak bisa dipastikan", konsisten dgn coverage_ok/
+    # rules_evaluated/authored_assertions — bukan truthiness ("false" ditelan, []/{} memblok).
+    for bad in ("false", [], {}, 1, -1):
+        fl_bad = _flash_cs({"available": False})
+        fl_bad["versions"]["8.1"]["install"] = {"ok": False, "no_console": False,
+                                                "no_psroot": False, "no_verdict": bad, "log": "x"}
+        l_bad = mod.flashlight_layer(fl_bad, "8.1")
+        ok &= check(f"no_verdict salah-tipe {bad!r} -> infra tak-konklusif, BUKAN memblok (identity-strict)",
+                    l_bad["conclusive"] is False and l_bad["findings"] == [])
     fl_loc = _flash_cs({"available": True, "parse_ok": True, "generated_config": False,
                         "coverage_ok": True, "errors": 1,
                         "error_messages": [{"line": 42, "message": "boom",

@@ -78,6 +78,23 @@ def main():
     ci = mod.parse_install("PSM_COPY_FAIL")
     ok &= check("copy fail -> copy_fail True & ok False", ci["copy_fail"] is True and ci["ok"] is False)
 
+    # --- enh-3 (ronde-6): PSM_INSTALL_FAIL DIBACA (dulu ditulis, nol pembaca). Membedakan
+    #     "installer menjalankan lalu MENOLAK module" (no_verdict False, boleh memblok) dari
+    #     "installer tak pernah mencapai vonisnya: exec mati / output terpotong" (no_verdict
+    #     True, infra). Dulu keduanya jatuh ke ok=False -> infra murni dijual sbg vonis memblok.
+    ok &= check("PSM_INSTALL_FAIL -> ok False & no_verdict False (installer memvonis: ditolak)",
+                mod.parse_install("...PSM_INSTALL_FAIL...")["no_verdict"] is False)
+    ok &= check("PSM_INSTALL_OK -> no_verdict False (installer memvonis: diterima)",
+                mod.parse_install("...PSM_INSTALL_OK...")["no_verdict"] is False)
+    ok &= check("output tanpa sentinel vonis (exec mati) -> no_verdict True (bukan module ditolak)",
+                mod.parse_install("Error response from daemon: Container is not running")["no_verdict"] is True)
+    ok &= check("output kosong -> no_verdict True", mod.parse_install("")["no_verdict"] is True)
+    # Writer: PSM_INSTALL_FAIL benar-benar diemit blok install (produsen==konsumen). Mutasi
+    # 'echo PSM_INSTALL_FAIL' -> 'echo PSM_BANANA' dulu bikin SEMUA suite tetap hijau (assert
+    # lama lolos krn PSM_INSTALL_OK absen, bukan krn PSM_INSTALL_FAIL ada) — kini merah.
+    ok &= check("INSTALL_BLOCK_SH benar-benar mengemit PSM_INSTALL_FAIL (writer utk no_verdict)",
+                "PSM_INSTALL_FAIL" in mod.INSTALL_BLOCK_SH)
+
     # --- sentinel infra: dibaca aggregate HARUS benar-benar diemit inner-script ---
     # (dulu no_console dibaca tapi tak pernah ditulis -> jalur degrade mati -> image
     #  tanpa bin/console jatuh ke PSM_INSTALL_FAIL = vonis memblok palsu)
@@ -162,7 +179,8 @@ def main():
     # writer/reader dikunci di sini, bukan dianggap benar.
     ok &= check("tiap sentinel yang dibaca parse_install ditulis blok install",
                 all(s in mod.INSTALL_BLOCK_SH
-                    for s in ("PSM_COPY_FAIL", "PSM_NO_PSROOT", "PSM_NO_CONSOLE", "PSM_INSTALL_OK")))
+                    for s in ("PSM_COPY_FAIL", "PSM_NO_PSROOT", "PSM_NO_CONSOLE",
+                              "PSM_INSTALL_OK", "PSM_INSTALL_FAIL")))
     # Perintah pembersih port-leak di SKILL.md menyebut prefix container sebagai LITERAL —
     # tak bisa disatukan lewat konstanta (itu dokumen), jadi dikunci di sini. Rename
     # CONTAINER_PREFIX akan membuat perintah itu diam-diam tak cocok apa pun, dan gunanya
@@ -253,9 +271,44 @@ def main():
     # keduanya ke konstanta yang sama supaya prosa tak bisa mendrift dari kode diam-diam.
     skill_root = MOD_PATH.parent.parent
     cleanup = f"--filter name={mod.CONTAINER_PREFIX}"
+    # Prefix DAN AKSI remediasi: gerbang lama cuma cek prefix, jadi SKILL.md sempat menjatuhkan
+    # `docker network rm` diam-diam (bukti Docker nyata: network psm-fl-net-* menggantung ->
+    # run compose berikut gagal bind). Verifier ronde-6: cek `docker network ls` VAKUM — hapus
+    # `docker network rm` (sisakan `ls`) tetap lolos. Kunci ke aksi rm-nya, bukan sekadar ls.
+    network_rm = f"docker network ls --filter name={mod.CONTAINER_PREFIX} -q | xargs -r docker network rm"
     for doc in ("SKILL.md", "references/e2e-quickstart.md"):
+        dtext = (skill_root / doc).read_text(encoding="utf-8")
         ok &= check(f"perintah cleanup di {doc} memakai prefix yang benar-benar dipakai skrip",
-                    cleanup in (skill_root / doc).read_text(encoding="utf-8"))
+                    cleanup in dtext)
+        ok &= check(f"perintah cleanup di {doc} benar-benar MENGHAPUS network (aksi rm, bukan cuma ls)",
+                    network_rm in dtext)
+
+    # customization-4: salinan KEEMPAT tag map hidup di PROSA e2e-quickstart (perintah
+    # `docker pull` operator + baris "Verified vs flashlight"). Tiga salinan lain dijaga;
+    # yang keempat tidak -> tag stale = image yang ditarik BUKAN yang diuji Lapis 2/4. Gerbang
+    # doc-vs-konstanta yang sama, kini diterapkan ke NILAI tag: tiap tag kanonik WAJIB muncul,
+    # dan tak boleh ada tag <ver>-nginx / 1.7.x.y di luar himpunan yang tercecer (drift ter-ship
+    # sekali: 9.0=nightly & 8.1 usang, ditemukan user bukan CI).
+    qs_text = (skill_root / "references" / "e2e-quickstart.md").read_text(encoding="utf-8")
+    canonical_tags = set(mod.DEFAULT_TAG_MAP.values())
+    for tag in canonical_tags:
+        ok &= check(f"tag kanonik {tag} muncul di e2e-quickstart (docker pull operator tak stale)",
+                    tag in qs_text)
+    # PENARIKAN: tiap tag di loop `docker pull` (for t in <tags>; do) WAJIB kanonik — ini yang
+    # menentukan image mana ditarik operator. Regex `-nginx` lama meloloskan `nightly`/`-fpm`/
+    # `-apache` (verifier ronde-6; `nightly` justru contoh drift historis 9.0=nightly). Parse
+    # daftar langsung menangkap SEMBARANG token stale, bukan cuma pola -nginx.
+    pull_tags = [t for lst in re.findall(r"for t in (.+?);\s*do", qs_text) for t in lst.split()]
+    ok &= check(f"loop docker pull quickstart tak kosong (guard punya subjek): {pull_tags}",
+                pull_tags != [])
+    stray_pull = [t for t in pull_tags if t not in canonical_tags]
+    ok &= check(f"tiap tag di loop docker pull kanonik ({stray_pull or 'bersih'} — nightly/-fpm/-apache tertangkap)",
+                stray_pull == [])
+    # Literal prestashop-flashlight:<tag> (bukan variabel $t) juga wajib kanonik.
+    stray_ref = [t for t in re.findall(r"prestashop-flashlight:([A-Za-z0-9._-]+)", qs_text)
+                 if t not in canonical_tags]
+    ok &= check(f"tiap image ref prestashop-flashlight:<tag> kanonik ({stray_ref or 'bersih'})",
+                stray_ref == [])
 
     # --- customization-2 (analyze 2026-07-17-1024): default kanonik punya DUA salinan —
     # PSM_DEFAULTS di resolver dan konstanta di skrip lapis — dan SKILL.md merestui salinan
@@ -274,16 +327,31 @@ def main():
         e2e_browsers = _literal_const(
             Path(__file__).resolve().parent.parent / "ps-e2e-run.py", "DEFAULT_BROWSERS")
 
-        ok &= check("drift: DEFAULT_TAG_MAP skrip == psm_flashlight_tag_map resolver",
-                    mod.parse_tag_map("") == mod.parse_tag_map(D["psm_flashlight_tag_map"]))
-        ok &= check("drift: DEFAULT_DB_IMAGE == psm_flashlight_db_image",
-                    mod.DEFAULT_DB_IMAGE == D["psm_flashlight_db_image"])
-        ok &= check("drift: DEFAULT_PS_DOMAIN == psm_flashlight_ps_domain",
-                    mod.DEFAULT_PS_DOMAIN == D["psm_flashlight_ps_domain"])
-        ok &= check("drift: DEFAULT_STARTUP_TIMEOUT == psm_flashlight_startup_timeout",
-                    str(mod.DEFAULT_STARTUP_TIMEOUT) == D["psm_flashlight_startup_timeout"])
+        # ENUMERASI, bukan daftar hardcode (customization-1): tiap key psm_flashlight_* di
+        # PSM_DEFAULTS WAJIB punya konstanta DEFAULT_<SUFFIX> padanan di ps-flashlight-run &
+        # nilainya cocok. Dulu per-key hardcode -> psm_flashlight_orchestrator (dan key ke-N
+        # mana pun) lahir tanpa penjaga: nilainya literal telanjang default="auto" yang bisa
+        # mendrift dari resolver diam-diam. tag_map bentuknya dict vs string, jadi dicek via
+        # parse_tag_map; sisanya str()== (startup_timeout int vs "180", dll).
+        for k in [k for k in D if k.startswith("psm_flashlight_")]:
+            cname = "DEFAULT_" + k[len("psm_flashlight_"):].upper()
+            has = hasattr(mod, cname)
+            ok &= check(f"drift: {k} punya konstanta {cname} di skrip (key baru tak boleh tak berpenjaga)", has)
+            if not has:
+                continue
+            cval = getattr(mod, cname)
+            match = (mod.parse_tag_map("") == mod.parse_tag_map(D[k])
+                     if k == "psm_flashlight_tag_map" else str(cval) == str(D[k]))
+            ok &= check(f"drift: {cname} == {k} ({cval!r} vs {D[k]!r})", match)
         ok &= check("drift: DEFAULT_BROWSERS ps-e2e-run == psm_e2e_browsers",
                     e2e_browsers == D["psm_e2e_browsers"])
+        # customization-2: psm_reports_dir dulu required=True tanpa default kanonik skrip,
+        # jadi janji SKILL "resolver absen -> default skrip" tak bisa ditepati. Default skrip
+        # bentuk TANPA token; resolver ber-token {project-root}/... -> bandingkan sesudah strip.
+        reports_default = _literal_const(
+            Path(__file__).resolve().parent.parent / "ps-plan-layers.py", "DEFAULT_REPORTS_DIR")
+        ok &= check("drift: DEFAULT_REPORTS_DIR ps-plan-layers == psm_reports_dir (tanpa {project-root}/)",
+                    reports_default == D["psm_reports_dir"].replace("{project-root}/", ""))
         # --versions default: satu sumber kebenaran, empat salinan literal di argparse.
         scripts_dir = Path(__file__).resolve().parent.parent
         drifted = [name for name in ("ps-flashlight-run.py", "ps-e2e-run.py",

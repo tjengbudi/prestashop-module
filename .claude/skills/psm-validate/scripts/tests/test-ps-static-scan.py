@@ -444,6 +444,18 @@ def main():
                     _scan_mod.validate_extra_rules(
                         json.loads(_scan_mod.DEFAULT_RULES.read_text()), label="ruleset") == [])
 
+        # customization-3: token {project-root} tak terekspansi = path filesystem harfiah.
+        # unresolved_path_args satu pemilik (dulu reject_unresolved_paths 3x psm-setup, 0x sini).
+        ok &= check("unresolved_path_args tangkap token, lewati path bersih & None",
+                    _scan_mod.unresolved_path_args(
+                        [("-o", "{project-root}/x"), ("--rules", "/abs/ok.json"),
+                         ("--extra-rules", None)]) == [("-o", "{project-root}/x")])
+        rc_tok = subprocess.run(["uv", "run", str(SCAN), str(evil), "--versions", "9.1",
+                                 "-o", "{project-root}/out.json"], capture_output=True, text=True)
+        ok &= check("CLI: -o ber-token {project-root} -> exit 2 error input (bukan tulis junk dir)",
+                    rc_tok.returncode == 2 and "belum diresolve di -o" in rc_tok.stderr
+                    and "Traceback" not in rc_tok.stderr)
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

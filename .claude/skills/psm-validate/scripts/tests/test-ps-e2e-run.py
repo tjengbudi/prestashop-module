@@ -267,11 +267,53 @@ def main():
     ok &= check("smoke bersih -> semua langkah ok", all(r["ok"] for r in res))
     fo_nofatal = _by_action(res, "expect_no_fatal")
     ok &= check("FO expect_no_fatal konklusif", fo_nofatal[0]["conclusive"] is True)
-    ok &= check("BO expect_no_fatal TAK konklusif tanpa login", fo_nofatal[-1]["conclusive"] is False)
-    # dengan login BO -> BO jadi konklusif
-    pg_auth = FakePage()
-    res_auth = mod.run_steps(pg_auth, sm["steps"], _wired(pg_auth, bo_authed=True))
-    ok &= check("BO konklusif bila bo_authed True", _by_action(res_auth, "expect_no_fatal")[-1]["conclusive"] is True)
+    # enh-2 (ronde-6): konklusivitas per-AKSI, bukan per-AREA. expect_no_fatal menilai RESPONS
+    # server, sah tanpa auth → BO expect_no_fatal KONKLUSIF walau tak login. Dulu dikunci per-area
+    # (tak konklusif tanpa login) sehingga BO 500-fatal → login gagal → assertion yang harusnya
+    # menangkap fatal itu dilucuti → pass palsu. Assert lama ("TAK konklusif") membekukan cacat.
+    ok &= check("BO expect_no_fatal KONKLUSIF tanpa login (aksi menilai respons server)",
+                fo_nofatal[-1]["conclusive"] is True)
+    # Aksi yang butuh SESI tetap tak konklusif tanpa auth (isi ber-auth tak bisa diverifikasi):
+    bo_vis = mod.run_steps(FakePage(), [{"action": "goto", "area": "bo", "path": "/x"},
+                                        {"action": "expect_visible", "selector": "#panel"}],
+                           _wired(FakePage()))
+    ok &= check("BO expect_visible (butuh auth) TAK konklusif tanpa login",
+                _by_action(bo_vis, "expect_visible")[0]["conclusive"] is False)
+    # Keanggotaan SESSION_INDEPENDENT_ACTIONS dijaga per-elemen (verifier ronde-6: mutasi
+    # membuang 'goto' dari tuple LOLOS senyap = regresi menelanjangi BO tanpa-auth bisa masuk).
+    bo_goto = mod.run_steps(FakePage(status=500),
+                            [{"action": "goto", "area": "bo", "path": "/x"}], _wired(FakePage(status=500)))
+    ok &= check("BO goto KONKLUSIF tanpa login (menilai status server) — jaga keanggotaan tuple",
+                _by_action(bo_goto, "goto")[0]["conclusive"] is True)
+    # expect_no_console_error SENGAJA di LUAR set: tanpa login halaman termuat = login page,
+    # bukan BO module -> memblok atas derau console login = misattribusi. Konklusif hanya
+    # lewat bo_authed. (verifier: keanggotaannya di set dulu tak dijaga & memang tak diinginkan.)
+    bo_ce = mod.run_steps(FakePage(), [{"action": "goto", "area": "bo", "path": "/x"},
+                                       {"action": "expect_no_console_error"}],
+                          {**_wired(FakePage()), "console_sink": [], "console_base": 0})
+    ok &= check("BO expect_no_console_error TAK konklusif tanpa login (bukan session-independent)",
+                _by_action(bo_ce, "expect_no_console_error")[0]["conclusive"] is False)
+    # enh-2 inti — BO yang 500-fatal tanpa login: expect_no_fatal konklusif & GAGAL → temuan
+    # MEMBLOK lewat assemble_findings (bukan inconclusive). Sebelum fix: conclusive False →
+    # temuan jatuh ke inconclusive → pass=true atas BO mati. Diuji lewat assemble_findings,
+    # bukan cuma run_steps, karena di situ kanal konklusif→memblok ditentukan.
+    pg_bo500 = FakePage(status=500, raw_body="<html><body>Fatal error: Call to undefined Psm::x()</body></html>")
+    bo500 = mod.run_steps(pg_bo500, [{"action": "goto", "area": "bo", "path": "/index.php?controller=AdminModules"},
+                                     {"action": "expect_no_fatal"}], _wired(pg_bo500))
+    bo500_nf = _by_action(bo500, "expect_no_fatal")[0]
+    ok &= check("BO 500-fatal tanpa login: expect_no_fatal konklusif & gagal",
+                bo500_nf["conclusive"] is True and bo500_nf["ok"] is False)
+    f_bo, inc_bo = mod.assemble_findings("9.1", [{"browser": "chromium", "scenarios": [
+        {"name": "psm-universal-smoke", "source": "builtin", "results": bo500}]}])
+    ok &= check("BO 500-fatal -> temuan konklusif MEMBLOK (bukan inconclusive; anti false-pass)",
+                len(f_bo) >= 1 and any(f["severity"] == "error" for f in f_bo))
+    # Kontrol positif: BO SEHAT tanpa login (redirect AdminLogin 200, tak ada fatal) → tak ada
+    # false-block walau expect_no_fatal kini konklusif.
+    bo_ok = mod.run_steps(FakePage(), sm["steps"], _wired(FakePage()))
+    f_ok, _ = mod.assemble_findings("9.1", [{"browser": "chromium", "scenarios": [
+        {"name": "psm-universal-smoke", "source": "builtin", "results": bo_ok}]}])
+    ok &= check("BO sehat tanpa login -> nol temuan memblok (konklusif tak berarti false-block)",
+                f_ok == [])
 
     # --- run_steps: fatal terdeteksi (status 500 & tanda fatal) ---
     r500 = mod.run_steps(FakePage(status=500), [{"action": "goto", "area": "fo", "path": "/"},
@@ -597,7 +639,7 @@ def main():
         mod.fl._logs = lambda c: ""
         mod.install_module = lambda s, m, t: ({"ok": True, "no_console": False}, None)
         warm_urls = []
-        mod.wait_http = lambda u, t: (warm_urls.append(u) or True, 200)
+        mod.wait_http = lambda u, t: (warm_urls.append(u) or True, 200, True)
 
         captured = {}
 
@@ -685,11 +727,61 @@ def main():
             ok &= check("headed=True diteruskan ke drive_engine", captured["headed"] is True)
             ok &= check("screenshot_dir -> per-versi subdir '9.1' diteruskan ke ctx",
                         bool(captured["sdir"]) and captured["sdir"].endswith("9.1") and Path(captured["sdir"]).is_dir())
+
+        # det-1/enh-1 (ronde-6, CRITICAL): FO 5xx yang BERTAHAN = server menjawab (port jelas
+        # terpublish) → module merusak toko, BUKAN infra. run_one_version harus LANJUT drive
+        # browser supaya expect_no_fatal memvonis, bukan menyapu ke errors sbg "port gagal".
+        # Jalur ini dulu NOL coverage: mutasi copot gerbang reachability = suite tetap hijau.
+        mod.wait_http = lambda u, t: (False, "HTTP 500", True)
+        r5 = mod.run_one_version(Path("/tmp"), "m", "9.1", "9.1.4-nginx", ["chromium"],
+                                 [mod.universal_smoke()], requested_browsers=["chromium"],
+                                 orchestrator="auto", db_image="mariadb:lts", ps_domain="localhost:8000",
+                                 admin_path="admin-dev", admin_email="a", admin_password="b",
+                                 startup_timeout=1, op_timeout=1, nav_timeout=1000, allow_pull=False)
+        ok &= check("FO 5xx bertahan (responded) -> browser di-drive, temuan konklusif memblok (BUKAN infra)",
+                    not any("port publish" in e for e in r5["errors"])
+                    and len(r5["findings"]) == 1 and r5["pass"] is False)
+
+        # Sebaliknya: TAK ada respons TCP sama sekali -> infra jujur (port/boot gagal), browser
+        # TAK di-drive. Ini kondisi SEBELUM prasyarat vonis lengkap → kanal infra memang sah.
+        drove = []
+        _fd = mod.drive_engine
+        mod.drive_engine = lambda *a, **k: (drove.append(1) or _fd(*a, **k))
+        mod.wait_http = lambda u, t: (False, "connection refused", False)
+        rnr = mod.run_one_version(Path("/tmp"), "m", "9.1", "9.1.4-nginx", ["chromium"],
+                                  [mod.universal_smoke()], requested_browsers=["chromium"],
+                                  orchestrator="auto", db_image="mariadb:lts", ps_domain="localhost:8000",
+                                  admin_path="admin-dev", admin_email="a", admin_password="b",
+                                  startup_timeout=1, op_timeout=1, nav_timeout=1000, allow_pull=False)
+        ok &= check("FO tanpa respons TCP -> errors 'port publish/boot gagal' & browser TAK di-drive",
+                    any("port publish" in e for e in rnr["errors"]) and drove == [])
+        mod.drive_engine = _fd
     finally:
         for n, v in saved.items():
             setattr(mod, n, v)
         for n, v in saved_fl.items():
             setattr(mod.fl, n, v)
+
+    # det-1/enh-1: wait_http langsung — membedakan "server menjawab 5xx" (responded True →
+    # module rusak, browser yang memvonis) dari "tak ada respons TCP" (responded False → infra).
+    import urllib.error as _uerr
+    _saved_urlopen = mod.urllib.request.urlopen
+    try:
+        def _raise_500(url, timeout=10):
+            raise _uerr.HTTPError(url, 500, "Server Error", {}, None)
+        mod.urllib.request.urlopen = _raise_500
+        w500 = mod.wait_http("http://x/", 0.05, poll=0.01)
+        ok &= check("wait_http 5xx bertahan -> (False, ~'HTTP 500', responded=True)",
+                    w500[0] is False and w500[2] is True and "500" in str(w500[1]))
+
+        def _raise_conn(url, timeout=10):
+            raise _uerr.URLError("connection refused")
+        mod.urllib.request.urlopen = _raise_conn
+        wcr = mod.wait_http("http://x/", 0.05, poll=0.01)
+        ok &= check("wait_http tanpa respons TCP -> responded=False (infra sejati)",
+                    wcr[0] is False and wcr[2] is False)
+    finally:
+        mod.urllib.request.urlopen = _saved_urlopen
 
     # --- det-4 residual (keputusan user 2026-07-17): menghapus spec yang MERAH dulu
     # menaikkan `ready` — catatan "spec dilewati" mati bersama filenya, jadi vonis membaik

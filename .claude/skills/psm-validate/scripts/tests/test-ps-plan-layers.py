@@ -198,17 +198,18 @@ def main():
         ok &= check("CLI: --extra-rules diteruskan -> static rerun (wiring main() teruji)",
                     _plan_cli("--extra-rules", str(extra))["layers"]["static"]["reuse"] is False)
 
-        sources, notes = mod._e2e_scenarios(mod_dir)
-        ok &= check("pra-pass menemukan spec authored yang sah", sources == ["ok.json"])
+        notes = mod._e2e_scenario_notes(mod_dir)
         ok &= check("pra-pass menandai spec rusak SEBELUM container boot",
                     len(notes) == 1 and "typo.json" in notes[0])
         ok &= check("catatan menyebut kosakata yang SAH, bukan cuma yang salah",
                     "expect_visible" in notes[0] and "goto" in notes[0])
-        # Emisi main() (verifier adversarial): fungsinya teruji, tapi penulisan kedua field
-        # ke JSON dulu NOL coverage — seluruh output pra-pass bisa dihapus tanpa satu test
-        # pun merah. Diuji lewat proses nyata, seperti wiring ruleset di main() yang sama.
+        # enh-5 (ronde-6): e2e_scenarios (daftar sumber) DIHAPUS — echo nama file nol pembaca,
+        # cakupan authored dipikul e2e_smoke_only. Hanya e2e_scenario_notes (spec DILEWATI, ada
+        # penerima: rutekan SKILL.md + gerbang) yang tersisa. Emisi main() diuji proses nyata —
+        # wiring ke JSON dulu NOL coverage (seluruh output pra-pass bisa dihapus tanpa test merah).
         plan = _plan_cli()
-        ok &= check("CLI: e2e_scenarios sampai ke JSON pra-pass", plan.get("e2e_scenarios") == ["ok.json"])
+        ok &= check("CLI: e2e_scenarios TAK lagi diemit (echo yatim dihapus)",
+                    "e2e_scenarios" not in plan)
         ok &= check("CLI: e2e_scenario_notes sampai ke JSON pra-pass",
                     len(plan.get("e2e_scenario_notes") or []) == 1
                     and "typo.json" in plan["e2e_scenario_notes"][0])
@@ -219,8 +220,7 @@ def main():
         plan2 = _plan_cli()
         ok &= check("CLI pra-pass menandai spec tanpa expect_* SEBELUM container boot",
                     any("hampa.json" in n and "tak menegakkan apa pun" in n
-                        for n in (plan2.get("e2e_scenario_notes") or []))
-                    and "hampa.json" in (plan2.get("e2e_scenarios") or []))
+                        for n in (plan2.get("e2e_scenario_notes") or [])))
 
     # --- enhancement-1 (analyze ronde-5): vonis Lapis 2/4 juga punya DUA input — module DAN
     # image core-nya. Keduanya SUDAH mencatat tag yang memproduksinya; gerbang kesegaran tak
@@ -293,6 +293,19 @@ def main():
         ok &= check("CLI: --versions yang menyusut jadi kosong -> exit 2, bukan pra-pass vakum",
                     r7.returncode == 2 and "nol versi" in r7.stderr
                     and "Traceback" not in r7.stderr)
+        # customization-3: --reports-dir ber-token {project-root} = leak yang direproduksi
+        # (dulu exit 0, path lapis harfiah, 'file belum ada' percaya diri -> rerun semua).
+        r_tok = subprocess.run(["uv", "run", str(MOD_PATH), str(m7),
+                                "--reports-dir", "{project-root}/_bmad-output/psm-validate",
+                                "--versions", "9.1"], capture_output=True, text=True)
+        ok &= check("CLI: --reports-dir ber-token {project-root} -> exit 2 (bukan exit 0 path harfiah)",
+                    r_tok.returncode == 2 and "belum diresolve di --reports-dir" in r_tok.stderr
+                    and "Traceback" not in r_tok.stderr)
+        # kontrol positif: --reports-dir bersih (belum ada) -> pra-pass jalan, rerun semua
+        r_clean = subprocess.run(["uv", "run", str(MOD_PATH), str(m7), "--reports-dir", str(rep7 / "fresh"),
+                                  "--versions", "9.1"], capture_output=True, text=True)
+        ok &= check("CLI: --reports-dir bersih tetap jalan (gerbang token tak kelebihan sapu)",
+                    r_clean.returncode == 0)
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
