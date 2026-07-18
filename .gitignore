@@ -1,3 +1,8 @@
 # Python bytecode cache — regenerated from .py on every run, platform/version-specific
 __pycache__/
 *.pyc
+
+# psm-validate analyze artefak: simpan hanya findings.json (audit terstruktur, ~57K/ronde);
+# abaikan report HTML/md + dump scanner (lint-*/prepass-*) yang jadi bulk distribusi (~6.4M).
+.claude/skills/psm-validate/.analysis/*/*
+!.claude/skills/psm-validate/.analysis/*/findings.json
