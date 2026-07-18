@@ -380,10 +380,17 @@ def main():
         f, reason = _scan_mod.find_main_file(amb)
         ok &= check("dua kandidat extends Module -> ambiguous_main_file, bukan 'bukan module'",
                     f is None and reason == "ambiguous_main_file")
+        (amb / "helper.php").write_text("<?php class Helper {}")  # bukan Module
         res, _ = run_scan(amb, "9.1")
-        ok &= check("CLI: main_file_reason + kandidat disurface supaya model bisa memilih",
+        # det-3 (ronde-6): kandidat memuat extends_module (find_main_file sudah menghitungnya
+        # lalu membuangnya). Model membaca fakta, tak meng-grep source ulang; ia membedakan
+        # >=2-extends (rename) dari 0-extends (bukan module) dari field ini.
+        cands = res.get("main_file_candidates")
+        ok &= check("CLI: main_file_reason + kandidat ber-extends_module disurface",
                     res.get("main_file_reason") == "ambiguous_main_file"
-                    and res.get("main_file_candidates") == ["a.php", "b.php"])
+                    and cands == [{"file": "a.php", "extends_module": True},
+                                  {"file": "b.php", "extends_module": True},
+                                  {"file": "helper.php", "extends_module": False}])
 
     # determinism-1 (analyze ronde-5, CRITICAL): cakupan aturan itu fakta yang DIHITUNG.
     # Dulu versi di luar domain ruleset dilewati SETIAP aturan lalu keluar pass=true, dan

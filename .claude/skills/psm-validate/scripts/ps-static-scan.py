@@ -411,8 +411,14 @@ def main():
               "versions": {}}
     if main_reason:
         result["main_file_reason"] = main_reason
-        result["main_file_candidates"] = sorted(
-            p.name for p in module_dir.glob("*.php") if p.name != "index.php")
+        # extends_module DIHITUNG di sini (find_main_file sudah menjalankannya lalu membuangnya) —
+        # emit faktanya, jangan suruh model meng-grep source ulang. ambiguous_main_file muncul
+        # HANYA saat len(extends) != 1, jadi model membedakan 0-extends (bukan module PrestaShop)
+        # dari >=2-extends (butuh rename) dari fakta ini, bukan dari menebak.
+        result["main_file_candidates"] = [
+            {"file": p.name, "extends_module": _extends_module(p)}
+            for p in sorted(module_dir.glob("*.php"), key=lambda x: x.name)
+            if p.name != "index.php"]
     overall_errors = 0
 
     for full_ver, major in versions:

@@ -162,7 +162,7 @@ melihat gambar. Cacat visual yang kamu yakini, tulis ke situ SEBELUM agregat jal
 - `severity: "error"` supaya memblok (`warning` tak pernah memblok).
 - Pastikan `versions` top-level **memuat versi yang kamu lihat sendiri**. Agregat menandai
   versi di luar cakupan itu tak konklusif dan membuang temuannya — termasuk temuanmu.
-- Bentuk lengkap + aturan yang ditegakkan (pelanggaran = exit 2): `adversarial-lens.md`.
+- Bentuk esensial ada di poin di atas; `ps-aggregate.py` menegakkan skemanya (pelanggaran = exit 2 berpesan spesifik yang menyebut field yang salah).
 
 ## 4. Gotchas
 
