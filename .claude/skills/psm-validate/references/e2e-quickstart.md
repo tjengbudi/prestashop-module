@@ -166,10 +166,13 @@ melihat gambar. Cacat visual yang kamu yakini, tulis ke situ SEBELUM agregat jal
 
 ## 4. Gotchas
 
-- **Port bocor.** Run yang di-kill paksa bisa meninggalkan container yang memegang port
-  `psm_flashlight_ps_domain` (default `localhost:8000`) → run berikut gagal bind. Bersihkan
-  (satu prefix `psm-fl` menangkap kedua orkestrator — compose & manual):
-  `docker ps -aq --filter name=psm-fl | xargs -r docker rm -f && docker network ls --filter name=psm-fl -q | xargs -r docker network rm`.
+- **Port host dinamis.** `ps-e2e-run.py` memilih port host bebas **per versi, sebelum boot**
+  (basis `psm_flashlight_ps_domain`, jatuh ke port ephemeral OS bila terpakai) lalu memakainya
+  untuk `PS_DOMAIN` **dan** publish — jadi dua run paralel (atau dua versi serentak lewat
+  subagent) tak rebutan bind. Port terpilih dicatat di hasil per-versi (`ps_domain`). Karena
+  itu tabrakan port sudah jarang; tapi run yang di-kill paksa tetap bisa meninggalkan
+  container/network yatim. Bersihkan (satu prefix `psm-fl` menangkap kedua orkestrator —
+  compose & manual): `docker ps -aq --filter name=psm-fl | xargs -r docker rm -f && docker network ls --filter name=psm-fl -q | xargs -r docker network rm`.
 - **Headless / CI.** Jalankan **tanpa** `--allow-image-pull` (tak akan auto-tarik image) →
   pra-tarik dulu; browser juga wajib sudah di-`install` (tak auto-download di headless).
 - **Login BO.** Default flashlight `admin@prestashop.com` / `prestashop`, folder `admin-dev`
@@ -187,8 +190,9 @@ melihat gambar. Cacat visual yang kamu yakini, tulis ke situ SEBELUM agregat jal
   rusak — `ps-plan-layers.py` menandainya sebelum container boot); (3) pisahkan `findings`
   konklusif vs `inconclusive` (login BO gagal → langkah BO inconclusive, bukan lolos).
 - **Config keys.** `psm_e2e_enabled` (false → lewati Lapis 4) & `psm_e2e_browsers` di section
-  `psm` `{project-root}/_bmad/config.yaml`; default kanonik dari resolver. Base URL memakai ulang
-  `psm_flashlight_ps_domain`.
+  `psm` `{project-root}/_bmad/config.yaml`; default kanonik dari resolver. Base URL memakai
+  `psm_flashlight_ps_domain` sebagai **preferensi port** — port host final dipilih dinamis
+  per sesi (bebas-bind); `PS_DOMAIN` & publish memakai port yang sama.
 - **Dependensi psm-setup.** Resolver config dijalankan saat aktivasi dari
   `.claude/skills/psm-setup/scripts/resolve-psm-config.py` — saat menyalin ke mesin lain, sertakan
   skill `psm-setup`, bukan hanya folder `psm-validate`. Resolver absen → skill lanjut dengan

@@ -66,6 +66,7 @@ import argparse
 import importlib.util
 import json
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -209,6 +210,52 @@ def host_port_from_domain(ps_domain, default=DEFAULT_HOST_PORT):
 def publish_spec(ps_domain):
     """Spesifikasi publish port docker: '<host>:80' agar PS terjangkau dari host."""
     return f"{host_port_from_domain(ps_domain)}:{CONTAINER_HTTP_PORT}"
+
+
+def pick_free_host_port(preferred=0):
+    """Port host yang BEBAS: pakai `preferred` bila kosong, else port ephemeral OS.
+
+    Dua sesi validasi paralel dulu sama-sama menurunkan port dari
+    psm_flashlight_ps_domain (default 8000) → keduanya publish `:8000` → sesi kedua
+    gagal `docker` bind. Port harus dipilih SEBELUM boot karena PrestaShop membangun
+    URL absolut dari PS_DOMAIN saat container dibuat, dan Playwright mengikuti link
+    nyata: host:port publish HARUS sama dengan PS_DOMAIN. Port ephemeral yang baru
+    diketahui SESUDAH boot (docker `-p :80`) tak bisa dipakai — PS sudah memancarkan
+    link ke port yang salah. Jadi kita bind socket di muka untuk menemukan port bebas.
+
+    `preferred=0` (atau port yang sedang terpakai) → OS memilih port ephemeral bebas
+    lewat bind(('', 0)). Socket ditutup sebelum return; ada jendela race kecil (TOCTOU)
+    antara tutup socket & docker bind — pemanggil menutupnya dengan satu retry.
+    """
+    if preferred:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("", preferred))
+            return s.getsockname()[1]
+        except OSError:
+            pass  # preferred terpakai → jatuh ke ephemeral di bawah
+        finally:
+            s.close()
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+# Tanda docker gagal bind port host — sesi lain menyambar port di jendela race (TOCTOU)
+# antara kita menutup socket probe dan docker mem-bind. Pemanggil mundur ke port ephemeral.
+_PORT_CONFLICT_SIGNS = ("already allocated", "address already in use",
+                        "ports are not available", "failed to bind host port",
+                        "bind: address already in use")
+
+
+def _is_port_conflict(err):
+    """True bila pesan error bring-up menandakan tabrakan port host (bukan kegagalan lain)."""
+    low = (err or "").lower()
+    return any(sign in low for sign in _PORT_CONFLICT_SIGNS)
 
 
 def base_urls(ps_domain, admin_path):
@@ -807,13 +854,28 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
                 res["errors"].append(f"gagal pull {i}: {p.stderr.strip()[-200:]}")
                 return res
 
-    publish = publish_spec(ps_domain)
-    if mode == "compose":
-        session, err = fl._bring_up_compose(module_dir, full_ver, image_ref, db_image,
-                                            ps_domain, op_timeout, publish)
-    else:
-        session, err = fl._bring_up_manual(module_dir, image_ref, db_image, ps_domain,
-                                           startup_timeout, publish)
+    # Port host dipilih dinamis SEBELUM boot: PS_DOMAIN & publish memakai port yang SAMA
+    # (PrestaShop membangun URL absolut dari PS_DOMAIN; Playwright mengikuti link nyata).
+    # Basis dari ps_domain config, jatuh ke port ephemeral bila terpakai → dua sesi paralel
+    # tak rebutan bind. Satu retry menutup jendela race (TOCTOU): bila docker gagal bind
+    # karena tabrakan port, pilih port ephemeral baru lalu ulang sekali.
+    preferred_port = host_port_from_domain(ps_domain)
+    session, err, ps_domain_eff = None, None, None
+    for attempt in range(2):
+        host_port = pick_free_host_port(preferred_port if attempt == 0 else 0)
+        ps_domain_eff = f"localhost:{host_port}"
+        publish = f"{host_port}:{CONTAINER_HTTP_PORT}"
+        if mode == "compose":
+            session, err = fl._bring_up_compose(module_dir, full_ver, image_ref, db_image,
+                                                ps_domain_eff, op_timeout, publish)
+        else:
+            session, err = fl._bring_up_manual(module_dir, image_ref, db_image, ps_domain_eff,
+                                               startup_timeout, publish)
+        if err and _is_port_conflict(err) and attempt == 0:
+            fl._teardown(session)  # port disambar sesi lain di jendela race → coba port lain
+            continue
+        break
+    res["ps_domain"] = ps_domain_eff
     if err:
         res["errors"].append(err)
         fl._teardown(session)
@@ -846,7 +908,7 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
                     ierr or "module gagal install — E2E tak bisa menilai perilaku (Lapis 2 flashlight yang memvonis install)")
             return res
 
-        fo, bo = base_urls(ps_domain, admin_path)
+        fo, bo = base_urls(ps_domain_eff, admin_path)
         reach_ok, rstatus, responded = wait_http(fo + "/", startup_timeout)
         if not reach_ok and not responded:
             # Tak ada respons TCP sama sekali → port publish / boot memang gagal (infra jujur).

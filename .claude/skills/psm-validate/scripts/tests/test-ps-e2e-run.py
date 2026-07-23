@@ -238,6 +238,37 @@ def main():
     ok &= check("port host lain -> 9999", mod.host_port_from_domain("example.com:9999") == 9999)
     ok &= check("publish_spec -> '8000:80'", mod.publish_spec("localhost:8000") == "8000:80")
 
+    # --- pick_free_host_port (port dinamis: dua sesi paralel tak rebutan bind) ---
+    import socket as _sock
+    p_free = mod.pick_free_host_port(0)
+    ok &= check("port 0 -> ephemeral bebas (>0)", isinstance(p_free, int) and p_free > 0)
+    # preferred yang BEBAS dikembalikan apa adanya
+    probe = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+    probe.bind(("", 0))
+    free_pref = probe.getsockname()[1]
+    probe.close()
+    ok &= check("preferred bebas -> dipakai apa adanya",
+                mod.pick_free_host_port(free_pref) == free_pref)
+    # preferred yang TERPAKAI -> jatuh ke port lain yang bebas
+    held = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+    held.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
+    held.bind(("", 0))
+    held.listen(1)
+    taken = held.getsockname()[1]
+    alt = mod.pick_free_host_port(taken)
+    ok &= check("preferred terpakai -> port berbeda & bebas", isinstance(alt, int) and alt > 0)
+    held.close()
+    # base_urls konsisten dengan port yang dipilih dinamis
+    fo_dyn, _ = mod.base_urls(f"localhost:{p_free}", "admin-dev")
+    ok &= check("base_urls memakai port dinamis", fo_dyn == f"http://localhost:{p_free}")
+    # deteksi tabrakan port utk jalur retry
+    ok &= check("_is_port_conflict kenal 'address already in use'",
+                mod._is_port_conflict("docker: Error ... address already in use."))
+    ok &= check("_is_port_conflict kenal 'already allocated'",
+                mod._is_port_conflict("Bind for 0.0.0.0:8000 failed: port is already allocated"))
+    ok &= check("_is_port_conflict tolak error lain",
+                not mod._is_port_conflict("no such image"))
+
     # --- base_urls ---
     fo, bo = mod.base_urls("localhost:8000", "admin-dev")
     ok &= check("base fo", fo == "http://localhost:8000")
