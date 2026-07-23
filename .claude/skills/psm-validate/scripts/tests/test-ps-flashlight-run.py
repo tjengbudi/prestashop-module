@@ -8,9 +8,21 @@ Menguji parsing (tag-map, install, phpstan), pembuatan compose, gerbang kesiapan
 dan degrade jujur — semua tanpa menjalankan container nyata (image besar). Docker
 di-monkeypatch. Jalankan: uv run scripts/tests/test-ps-flashlight-run.py
 """
+import ast
 import importlib.util
+import re
 import sys
 from pathlib import Path
+
+
+def _literal_const(path, name):
+    """Baca konstanta literal top-level dari file Python TANPA mengimpornya."""
+    for node in ast.parse(Path(path).read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == name for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"konstanta {name} tak ditemukan di {path}")
+
 
 MOD_PATH = Path(__file__).resolve().parent.parent / "ps-flashlight-run.py"
 spec = importlib.util.spec_from_file_location("ps_flashlight_run", MOD_PATH)
@@ -23,9 +35,18 @@ def check(name, cond):
     return cond
 
 
-PHPSTAN_JSON = ('{"totals":{"errors":0,"file_errors":2},'
+# Laporan phpstan yang REALISTIS: produsen selalu menulis canary ke pohon module, jadi laporan
+# yang benar-benar menganalisis module SELALU memuat temuannya. file_errors=3 = 2 milik module
+# + 1 canary; yang boleh sampai ke vonis cuma yang 2.
+PHPSTAN_JSON = ('{"totals":{"errors":0,"file_errors":3},'
                 '"files":{"a.php":{"errors":2,"messages":['
-                '{"message":"bad","line":3},{"message":"worse","line":9}]}},"errors":[]}')
+                '{"message":"bad","line":3},{"message":"worse","line":9}]},'
+                '"/var/www/html/modules/m/psm-coverage-canary.php":{"errors":1,"messages":['
+                '{"message":"Function psm_canary_undefined_fn_xyz not found.","line":2}]}},'
+                '"errors":[]}')
+# Canary TAK muncul = phpstan tak menyentuh pohon module. Bentuknya identik dgn module bersih —
+# itulah sebabnya laporan JSON saja tak pernah cukup.
+PHPSTAN_JSON_NOCOVER = '{"totals":{"errors":0,"file_errors":0},"files":{},"errors":[]}'
 
 
 def main():
@@ -40,11 +61,50 @@ def main():
     ok &= check("default tag-map punya 1.7.8/8.1/9.1",
                 all(k in mod.DEFAULT_TAG_MAP for k in ("1.7.8", "8.1", "9.1")))
 
+    # --- extra tag-map MENAMBAH (kanal terpisah dari --tag-map yang MENGGANTI) ---
+    # Dulu satu-satunya kanal mengganti peta: satu tag "tambahan" menjatuhkan tag versi
+    # lain -> tag telanjang -> image tak ada -> SELURUH Lapis 2 void diam-diam.
+    ok &= check("extra tag-map: versi baru masuk, default lain UTUH",
+                mod.parse_tag_map("", "9.2=9.2.0-nginx") == {**mod.DEFAULT_TAG_MAP, "9.2": "9.2.0-nginx"})
+    ok &= check("extra tag-map menimpa base utk versi sama",
+                mod.parse_tag_map("9.1=a", "9.1=b") == {"9.1": "b"})
+    ok &= check("extra tag-map di atas peta pengganti (base tetap yang diganti)",
+                mod.parse_tag_map("9.1=a", "9.2=c") == {"9.1": "a", "9.2": "c"})
+    ok &= check("extra kosong -> peta tak berubah", mod.parse_tag_map("", "") == mod.DEFAULT_TAG_MAP)
+
     # --- parse_install ---
     ok &= check("install OK", mod.parse_install("...PSM_INSTALL_OK...")["ok"] is True)
     ok &= check("install FAIL", mod.parse_install("...PSM_INSTALL_FAIL...")["ok"] is False)
     ci = mod.parse_install("PSM_COPY_FAIL")
     ok &= check("copy fail -> copy_fail True & ok False", ci["copy_fail"] is True and ci["ok"] is False)
+
+    # --- enh-3 (ronde-6): PSM_INSTALL_FAIL DIBACA (dulu ditulis, nol pembaca). Membedakan
+    #     "installer menjalankan lalu MENOLAK module" (no_verdict False, boleh memblok) dari
+    #     "installer tak pernah mencapai vonisnya: exec mati / output terpotong" (no_verdict
+    #     True, infra). Dulu keduanya jatuh ke ok=False -> infra murni dijual sbg vonis memblok.
+    ok &= check("PSM_INSTALL_FAIL -> ok False & no_verdict False (installer memvonis: ditolak)",
+                mod.parse_install("...PSM_INSTALL_FAIL...")["no_verdict"] is False)
+    ok &= check("PSM_INSTALL_OK -> no_verdict False (installer memvonis: diterima)",
+                mod.parse_install("...PSM_INSTALL_OK...")["no_verdict"] is False)
+    ok &= check("output tanpa sentinel vonis (exec mati) -> no_verdict True (bukan module ditolak)",
+                mod.parse_install("Error response from daemon: Container is not running")["no_verdict"] is True)
+    ok &= check("output kosong -> no_verdict True", mod.parse_install("")["no_verdict"] is True)
+    # Writer: PSM_INSTALL_FAIL benar-benar diemit blok install (produsen==konsumen). Mutasi
+    # 'echo PSM_INSTALL_FAIL' -> 'echo PSM_BANANA' dulu bikin SEMUA suite tetap hijau (assert
+    # lama lolos krn PSM_INSTALL_OK absen, bukan krn PSM_INSTALL_FAIL ada) — kini merah.
+    ok &= check("INSTALL_BLOCK_SH benar-benar mengemit PSM_INSTALL_FAIL (writer utk no_verdict)",
+                "PSM_INSTALL_FAIL" in mod.INSTALL_BLOCK_SH)
+
+    # --- sentinel infra: dibaca aggregate HARUS benar-benar diemit inner-script ---
+    # (dulu no_console dibaca tapi tak pernah ditulis -> jalur degrade mati -> image
+    #  tanpa bin/console jatuh ke PSM_INSTALL_FAIL = vonis memblok palsu)
+    ok &= check("no_console terbaca dari sentinel", mod.parse_install("PSM_NO_CONSOLE")["no_console"] is True)
+    ok &= check("no_psroot terbaca dari sentinel", mod.parse_install("PSM_NO_PSROOT")["no_psroot"] is True)
+    ok &= check("install OK -> bukan infra", mod.parse_install("PSM_INSTALL_OK")["no_console"] is False)
+    ok &= check("INNER_SH benar-benar mengemit PSM_NO_CONSOLE (produsen == konsumen)",
+                "echo PSM_NO_CONSOLE" in mod.INNER_SH)
+    ok &= check("INNER_SH menggerbang install pada bin/console (bukan install-fail palsu)",
+                "[ ! -f bin/console ]" in mod.INNER_SH)
 
     # --- parse_phpstan: neon MILIK MODULE (GEN=0) -> konklusif (errors nyata) ---
     conc = mod.parse_phpstan(f"PSM_PHPSTAN_GEN=0\nPSM_PHPSTAN_JSON_START {PHPSTAN_JSON} PSM_PHPSTAN_JSON_END")
@@ -57,6 +117,86 @@ def main():
     ok &= check("phpstan auto-neon -> advisory: errors=0 (tak memblok)", adv.get("errors") == 0)
     ok &= check("phpstan auto-neon -> temuan jadi warnings & generated_config True",
                 adv.get("warnings") == 2 and adv.get("generated_config") is True)
+
+    # --- CANARY: kontrol positif cakupan phpstan (keputusan user 2026-07-17, opsi 1) ---
+    # Laporan JSON phpstan TAK bisa membedakan "bersih" dari "tak menganalisis apa-apa": map
+    # `files` cuma memuat file YANG BER-ERROR, jadi module bersih & module yang neon-nya
+    # mengecualikan dirinya sama-sama menghasilkan files:{} + file_errors:0. Tanpa kontrol
+    # positif, yang kedua dulu diklaim "coding standard bersih, konklusif".
+    ok &= check("canary terdeteksi -> coverage_ok True (phpstan benar-benar menyentuh module)",
+                conc.get("coverage_ok") is True and adv.get("coverage_ok") is True)
+    ok &= check("temuan canary TAK bocor ke vonis (2 pesan module, bukan 3)",
+                conc.get("errors") == 2 and len(conc.get("error_messages", [])) == 2
+                and not any("canary" in (m.get("file") or "")
+                            for m in conc.get("error_messages", [])))
+    nocov = mod.parse_phpstan(
+        f"PSM_PHPSTAN_GEN=0\nPSM_PHPSTAN_JSON_START {PHPSTAN_JSON_NOCOVER} PSM_PHPSTAN_JSON_END")
+    ok &= check("canary tak muncul -> coverage_ok False (0 error = tak diukur, bukan bersih)",
+                nocov.get("parse_ok") is True and nocov.get("errors") == 0
+                and nocov.get("coverage_ok") is False)
+    # Nama canary dipakai DUA sisi: INNER_SH menulis filenya, parse_phpstan mengenalinya di
+    # laporan. Dua string terpisah bisa mendrift diam-diam & mematikan kontrol positifnya
+    # tanpa satu test pun merah — sama seperti rename CONTAINER_PREFIX dulu.
+    # Assert ke perintah TULIS-nya, bukan sekadar "nama canary muncul di INNER_SH": baris `rm -f`
+    # juga memuat nama itu, jadi cek keberadaan saja tetap hijau walau penulisannya dimatikan
+    # atau namanya mendrift (kubuktikan: 2 mutasi lolos senyap sebelum assert ini diperketat).
+    ok &= check("INNER_SH MENULIS canary dgn nama yang SAMA dgn yang dikenali parse_phpstan",
+                f'> "modules/$MOD_NAME/{mod.CANARY_BASENAME}"' in mod.INNER_SH)
+    ok &= check("INNER_SH menghapus canary lagi sesudah phpstan",
+                f'rm -f "modules/$MOD_NAME/{mod.CANARY_BASENAME}"' in mod.INNER_SH)
+    # Nama itu DITURUNKAN dari konstanta, bukan diketik ulang di INNER_SH. Bedanya nyata:
+    # diketik ulang -> rename konstanta memalsukan error yang memblok (temuan canary tak
+    # dikenali lalu dihitung sbg milik module) SEKALIGUS memvoidkan cakupan. Di-sulih ->
+    # drift-nya mustahil, bukan sekadar terjaga test.
+    # Hitung nama TELANJANG, bukan yang berkutip: mutasi yang mengetik ulang literalnya dgn
+    # kutip tunggal lolos dari hitungan berkutip-ganda (kubuktikan). Tepat SATU kemunculan di
+    # seluruh source = definisi konstanta; lebih dari itu berarti ada yang mengetik ulang.
+    ok &= check("nama canary disulih dari konstanta (token habis, literal tak diketik ulang)",
+                mod._CANARY_TOKEN not in mod.INNER_SH
+                and MOD_PATH.read_text().count(mod.CANARY_BASENAME) == 1)
+    ok &= check("canary dijamin ber-error di level phpstan berapa pun (fungsi tak dikenal)",
+                "psm_canary_undefined_fn_xyz();" in mod.INNER_SH)
+
+    # --- Seam sentinel: WRITER dibagi, bukan cuma reader ---
+    # Sentinel install berpasangan dgn parse_install. Reader-nya sudah dibagi lewat impor sejak
+    # awal; writer-nya disalin ke INSTALL_SH milik Lapis 4 — jadi rename satu sentinel di satu
+    # sisi membuat install dilaporkan GAGAL untuk module yang sukses, lalu jatuh jadi
+    # tak-konklusif berbentuk infra & `ready` turun tanpa ada yang menyebut sebabnya.
+    _e2e_path = MOD_PATH.parent / "ps-e2e-run.py"
+    _spec_e = importlib.util.spec_from_file_location("ps_e2e_run_x", _e2e_path)
+    _e2e = importlib.util.module_from_spec(_spec_e)
+    _spec_e.loader.exec_module(_e2e)
+    # Kesamaan ISI + bukti tak diketik ulang di bawah = derivasi. (Identitas objek tak bisa
+    # dipakai: test ini memuat ps-e2e-run segar, yang memuat instance ps-flashlight-run-nya
+    # sendiri, jadi objeknya memang beda meski sumbernya satu.)
+    ok &= check("Lapis 4 memakai blok install dari PEMILIKNYA (isi sama persis)",
+                _e2e.INSTALL_SH == mod.INSTALL_BLOCK_SH)
+    ok &= check("INNER_SH (Lapis 2) dibangun dari blok yang sama",
+                mod.INNER_SH.startswith(mod.INSTALL_BLOCK_SH))
+    ok &= check("blok install tak diketik ulang di ps-e2e-run",
+                "PSM_INSTALL_OK" not in _e2e_path.read_text())
+    # Tiap sentinel yang dibaca parse_install benar-benar ditulis blok itu — pasangan
+    # writer/reader dikunci di sini, bukan dianggap benar.
+    ok &= check("tiap sentinel yang dibaca parse_install ditulis blok install",
+                all(s in mod.INSTALL_BLOCK_SH
+                    for s in ("PSM_COPY_FAIL", "PSM_NO_PSROOT", "PSM_NO_CONSOLE",
+                              "PSM_INSTALL_OK", "PSM_INSTALL_FAIL")))
+    # Perintah pembersih port-leak di SKILL.md menyebut prefix container sebagai LITERAL —
+    # tak bisa disatukan lewat konstanta (itu dokumen), jadi dikunci di sini. Rename
+    # CONTAINER_PREFIX akan membuat perintah itu diam-diam tak cocok apa pun, dan gunanya
+    # justru melepas container pemegang port sesudah run di-kill: ia gagal tepat saat dibutuhkan.
+    _skill = (MOD_PATH.parent.parent / "SKILL.md").read_text(encoding="utf-8")
+    ok &= check("perintah pembersih di SKILL.md memakai CONTAINER_PREFIX yang berlaku",
+                f"name={mod.CONTAINER_PREFIX}" in _skill)
+
+    # Pemotong log kopel ke AWALAN sentinel fase phpstan; kunci awalannya benar-benar awalan
+    # SEMUA sentinel itu, kalau tidak split() mengembalikan seluruh output & log install
+    # menelan laporan phpstan.
+    ok &= check("tiap sentinel fase phpstan berawalan PHPSTAN_SENTINEL_PREFIX",
+                all(s.startswith(mod.PHPSTAN_SENTINEL_PREFIX)
+                    for s in ("PSM_PHPSTAN_GEN=", "PSM_PHPSTAN_JSON_START",
+                              "PSM_PHPSTAN_JSON_END", "PSM_PHPSTAN_ABSENT"))
+                and mod.PHPSTAN_SENTINEL_PREFIX in mod.INNER_SH)
 
     # --- parse_phpstan: degrade jujur ---
     ok &= check("phpstan absent -> available False", mod.parse_phpstan("PSM_PHPSTAN_ABSENT").get("available") is False)
@@ -110,6 +250,116 @@ def main():
                     r["orchestrator"] == "compose" and r["pass"] is False and r["install"] is None)
     finally:
         mod.image_present, mod.compose_available = orig_present, orig_compose
+
+    # --- Port-leak (verifier adversarial, ronde 2026-07-17-1024): "container mana milik
+    # skrip ini" sempat punya DUA konvensi — compose `psmfl<ver><uid>` vs manual
+    # `psm-fl-ps-<uid>` — jadi perintah pembersihan `--filter name=psmfl` TAK cocok dgn
+    # jalur manual, justru jalur yang dipakai saat compose absen & yang memegang port host.
+    proj = mod._project_name("9.1")
+    ok &= check("nama project compose ber-prefix CONTAINER_PREFIX (satu konvensi)",
+                proj.startswith(mod.CONTAINER_PREFIX + "-") and "9" in proj)
+    ok &= check("nama project compose tetap sah utk docker compose (lowercase/angka/hyphen)",
+                re.fullmatch(r"[a-z0-9][a-z0-9_-]*", proj) is not None)
+    # Jalur manual menamai container di dalam _bring_up_manual (butuh Docker), jadi yang
+    # dijaga di sini: namanya DITURUNKAN dari konstanta yang sama, bukan hardcode terpisah.
+    fl_src = MOD_PATH.read_text(encoding="utf-8")
+    ok &= check("nama container jalur manual diturunkan dari CONTAINER_PREFIX yang sama",
+                all(f'f"{{CONTAINER_PREFIX}}-{part}-{{uid}}"' in fl_src
+                    for part in ("net", "db", "ps")))
+    # Perintah cleanup hidup di PROSA (SKILL.md gotcha Lapis 2 + quickstart) sementara nama
+    # container hidup di KODE. Verifier menemukan keduanya sudah berpisah sekali; kunci
+    # keduanya ke konstanta yang sama supaya prosa tak bisa mendrift dari kode diam-diam.
+    skill_root = MOD_PATH.parent.parent
+    cleanup = f"--filter name={mod.CONTAINER_PREFIX}"
+    # Prefix DAN AKSI remediasi: gerbang lama cuma cek prefix, jadi SKILL.md sempat menjatuhkan
+    # `docker network rm` diam-diam (bukti Docker nyata: network psm-fl-net-* menggantung ->
+    # run compose berikut gagal bind). Verifier ronde-6: cek `docker network ls` VAKUM — hapus
+    # `docker network rm` (sisakan `ls`) tetap lolos. Kunci ke aksi rm-nya, bukan sekadar ls.
+    network_rm = f"docker network ls --filter name={mod.CONTAINER_PREFIX} -q | xargs -r docker network rm"
+    for doc in ("SKILL.md", "references/e2e-quickstart.md"):
+        dtext = (skill_root / doc).read_text(encoding="utf-8")
+        ok &= check(f"perintah cleanup di {doc} memakai prefix yang benar-benar dipakai skrip",
+                    cleanup in dtext)
+        ok &= check(f"perintah cleanup di {doc} benar-benar MENGHAPUS network (aksi rm, bukan cuma ls)",
+                    network_rm in dtext)
+
+    # customization-4: salinan KEEMPAT tag map hidup di PROSA e2e-quickstart (perintah
+    # `docker pull` operator + baris "Verified vs flashlight"). Tiga salinan lain dijaga;
+    # yang keempat tidak -> tag stale = image yang ditarik BUKAN yang diuji Lapis 2/4. Gerbang
+    # doc-vs-konstanta yang sama, kini diterapkan ke NILAI tag: tiap tag kanonik WAJIB muncul,
+    # dan tak boleh ada tag <ver>-nginx / 1.7.x.y di luar himpunan yang tercecer (drift ter-ship
+    # sekali: 9.0=nightly & 8.1 usang, ditemukan user bukan CI).
+    qs_text = (skill_root / "references" / "e2e-quickstart.md").read_text(encoding="utf-8")
+    canonical_tags = set(mod.DEFAULT_TAG_MAP.values())
+    for tag in canonical_tags:
+        ok &= check(f"tag kanonik {tag} muncul di e2e-quickstart (docker pull operator tak stale)",
+                    tag in qs_text)
+    # PENARIKAN: tiap tag di loop `docker pull` (for t in <tags>; do) WAJIB kanonik — ini yang
+    # menentukan image mana ditarik operator. Regex `-nginx` lama meloloskan `nightly`/`-fpm`/
+    # `-apache` (verifier ronde-6; `nightly` justru contoh drift historis 9.0=nightly). Parse
+    # daftar langsung menangkap SEMBARANG token stale, bukan cuma pola -nginx.
+    pull_tags = [t for lst in re.findall(r"for t in (.+?);\s*do", qs_text) for t in lst.split()]
+    ok &= check(f"loop docker pull quickstart tak kosong (guard punya subjek): {pull_tags}",
+                pull_tags != [])
+    stray_pull = [t for t in pull_tags if t not in canonical_tags]
+    ok &= check(f"tiap tag di loop docker pull kanonik ({stray_pull or 'bersih'} — nightly/-fpm/-apache tertangkap)",
+                stray_pull == [])
+    # Literal prestashop-flashlight:<tag> (bukan variabel $t) juga wajib kanonik.
+    stray_ref = [t for t in re.findall(r"prestashop-flashlight:([A-Za-z0-9._-]+)", qs_text)
+                 if t not in canonical_tags]
+    ok &= check(f"tiap image ref prestashop-flashlight:<tag> kanonik ({stray_ref or 'bersih'})",
+                stray_ref == [])
+
+    # --- customization-2 (analyze 2026-07-17-1024): default kanonik punya DUA salinan —
+    # PSM_DEFAULTS di resolver dan konstanta di skrip lapis — dan SKILL.md merestui salinan
+    # skrip sbg jalur sah ("resolver absen? lanjut dengan default kanonik skrip"). Jadi
+    # keduanya WAJIB identik, tapi tak ada test yang membandingkannya: drift ini pernah
+    # ter-ship (tag 9.0=nightly & 8.1=8.1 usang) dan ditemukan user, bukan CI.
+    resolver_path = (Path(__file__).resolve().parents[3]
+                     / "psm-setup" / "scripts" / "resolve-psm-config.py")
+    if not resolver_path.is_file():
+        ok &= check(f"resolver ditemukan utk cek drift ({resolver_path})", False)
+    else:
+        # Konstanta dibaca lewat ast, bukan impor: resolver memikul dep pyyaml dan
+        # sys.exit(2) bila absen (mematikan proses test), sedangkan ps-e2e-run memikul
+        # playwright. Yang diperiksa cuma literal, jadi jangan seret runtime-nya.
+        D = _literal_const(resolver_path, "PSM_DEFAULTS")
+        e2e_browsers = _literal_const(
+            Path(__file__).resolve().parent.parent / "ps-e2e-run.py", "DEFAULT_BROWSERS")
+
+        # ENUMERASI, bukan daftar hardcode (customization-1): tiap key psm_flashlight_* di
+        # PSM_DEFAULTS WAJIB punya konstanta DEFAULT_<SUFFIX> padanan di ps-flashlight-run &
+        # nilainya cocok. Dulu per-key hardcode -> psm_flashlight_orchestrator (dan key ke-N
+        # mana pun) lahir tanpa penjaga: nilainya literal telanjang default="auto" yang bisa
+        # mendrift dari resolver diam-diam. tag_map bentuknya dict vs string, jadi dicek via
+        # parse_tag_map; sisanya str()== (startup_timeout int vs "180", dll).
+        for k in [k for k in D if k.startswith("psm_flashlight_")]:
+            cname = "DEFAULT_" + k[len("psm_flashlight_"):].upper()
+            has = hasattr(mod, cname)
+            ok &= check(f"drift: {k} punya konstanta {cname} di skrip (key baru tak boleh tak berpenjaga)", has)
+            if not has:
+                continue
+            cval = getattr(mod, cname)
+            match = (mod.parse_tag_map("") == mod.parse_tag_map(D[k])
+                     if k == "psm_flashlight_tag_map" else str(cval) == str(D[k]))
+            ok &= check(f"drift: {cname} == {k} ({cval!r} vs {D[k]!r})", match)
+        ok &= check("drift: DEFAULT_BROWSERS ps-e2e-run == psm_e2e_browsers",
+                    e2e_browsers == D["psm_e2e_browsers"])
+        # customization-2: psm_reports_dir dulu required=True tanpa default kanonik skrip,
+        # jadi janji SKILL "resolver absen -> default skrip" tak bisa ditepati. Default skrip
+        # bentuk TANPA token; resolver ber-token {project-root}/... -> bandingkan sesudah strip.
+        reports_default = _literal_const(
+            Path(__file__).resolve().parent.parent / "ps-plan-layers.py", "DEFAULT_REPORTS_DIR")
+        ok &= check("drift: DEFAULT_REPORTS_DIR ps-plan-layers == psm_reports_dir (tanpa {project-root}/)",
+                    reports_default == D["psm_reports_dir"].replace("{project-root}/", ""))
+        # --versions default: satu sumber kebenaran, empat salinan literal di argparse.
+        scripts_dir = Path(__file__).resolve().parent.parent
+        drifted = [name for name in ("ps-flashlight-run.py", "ps-e2e-run.py",
+                                     "ps-static-scan.py", "ps-plan-layers.py")
+                   if f'"--versions", default="{D["psm_target_versions"]}"'
+                   not in (scripts_dir / name).read_text(encoding="utf-8")]
+        ok &= check(f"drift: --versions default tiap skrip == psm_target_versions ({drifted or 'selaras'})",
+                    drifted == [])
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

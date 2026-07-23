@@ -43,7 +43,7 @@ Setelah disetujui, terapkan perubahan sesuai rencana pada module di tempat. Seti
 
 ## Verifikasi (gerbang wajib)
 
-Panggil psm-validate atas module hasil terhadap ketiga versi target (lihat `<skills-dir>/psm-validate/SKILL.md`). Module dinyatakan cross-version-safe **hanya bila lolos psm-validate di 1.7.x, 8.x, dan 9.x**. Bila ada error tersisa, tulis temuan per versi itu kembali ke `.psm-cross-plan.md` sebagai perubahan baru/diperbarui dan rancang ulang dari artefak itu — jangan menyatakan selesai, dan jangan analisis ulang dari nol.
+Panggil psm-validate atas module hasil terhadap ketiga versi target (lihat `<skills-dir>/psm-validate/SKILL.md`). Module dinyatakan cross-version-safe **hanya bila `ready` true di 1.7.x, 8.x, dan 9.x** — baca `ready`, bukan `pass`: `pass` sengaja tak diblok oleh lapis yang tak pernah jalan, jadi ia hijau juga di runner tanpa Docker yang cuma menguji 2 dari 4 lapis. Bila ada error tersisa, tulis temuan per versi itu kembali ke `.psm-cross-plan.md` sebagai perubahan baru/diperbarui dan rancang ulang dari artefak itu — jangan menyatakan selesai, dan jangan analisis ulang dari nol.
 
 **Batasi loop rancang-ulang → terapkan → validate ke 2-3 percobaan.** Simpan `verify_attempts: N` di `.psm-cross-plan.md` agar cap bertahan lintas sesi. Bila batas tercapai: berhenti, tulis diagnosis error yang bertahan ke plan, dan serahkan ke Budi (headless: `butuh intervensi`) — jangan berputar tanpa henti.
 

@@ -56,7 +56,7 @@ Setelah disetujui, terapkan sesuai rencana pada module di tempat. Tambah, jangan
 
 ## Verifikasi (gerbang wajib)
 
-Panggil psm-validate atas module hasil terhadap ketiga versi target (lihat `<skills-dir>/psm-validate/SKILL.md`). Status lolos per versi adalah vonis JSON dari psm-validate — baca apa adanya, jangan menilai sendiri. Module dinyatakan siap **hanya bila lolos di 1.7.x, 8.x, dan 9.x**.
+Panggil psm-validate atas module hasil terhadap ketiga versi target (lihat `<skills-dir>/psm-validate/SKILL.md`). Status lolos per versi adalah vonis JSON dari psm-validate — baca apa adanya, jangan menilai sendiri. Module dinyatakan siap **hanya bila `ready` true di 1.7.x, 8.x, dan 9.x** — `ready`, bukan `pass`: `pass` sengaja tak diblok oleh lapis yang tak pernah jalan, jadi ia hijau juga saat cuma 2 dari 4 lapis teruji.
 
 Bila ada error tersisa, **pisahkan dulu terhadap baseline** `ps-static-scan` dari langkah Pahami: error yang sudah ada di baseline = pra-eksisting, bukan salah fungsi baru — angkat ke Budi sebagai keputusan cakupan (port dulu via psm-cross-version?) **tanpa** mengurangi `verify_attempts` (headless: `butuh intervensi`). Error yang belum ada di baseline = kamu yang memperkenalkan — tulis temuan per versi itu kembali ke `.psm-develop-plan.md` dan rancang ulang dari artefak; jangan menyatakan selesai.
 

@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.10"
+# ///
+"""Unit test untuk ps-plan-layers.py — keputusan reuse/rerun deterministik.
+
+Kontrak: file lapis dipakai ulang HANYA bila ada + terbaca + lebih baru dari source
+module + cakupan versinya memuat yang diminta. Basi/kurang/rusak -> rerun (jangan
+pernah memvonis atas bukti basi). Jalankan: uv run scripts/tests/test-ps-plan-layers.py
+"""
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+MOD_PATH = Path(__file__).resolve().parent.parent / "ps-plan-layers.py"
+spec = importlib.util.spec_from_file_location("ps_plan_layers", MOD_PATH)
+assert spec and spec.loader
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+TV = ["1.7.8", "8.1", "9.1"]
+
+
+def check(name, cond):
+    print(f"  {'PASS' if cond else 'FAIL'}: {name}")
+    return cond
+
+
+def _touch(path, mtime):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("x", encoding="utf-8")
+    os.utime(path, (mtime, mtime))
+
+
+def _layer(path, versions, mtime):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"versions": {v: {"pass": True} for v in versions}}), encoding="utf-8")
+    os.utime(path, (mtime, mtime))
+
+
+def main():
+    ok = True
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        mdir = root / "mymod"
+        reports = root / "reports"
+
+        # source module: file termuda pada t=1000
+        _touch(mdir / "mymod.php", 1000)
+        _touch(mdir / "index.php", 900)
+        # vendor/ diabaikan walau jauh lebih baru (bukan source yang kita vonis)
+        _touch(mdir / "vendor" / "lib" / "big.php", 9000)
+
+        # REGRESI: match path ABSOLUT dulu membuang seluruh module yang kebetulan
+        # berada di bawah ancestor bernama vendor/ -> mtime 0.0 -> file lapis 1970
+        # dianggap SEGAR = vonis atas bukti basi (bencana yang skrip ini cegah).
+        under = root / "vendor" / "acme" / "shop" / "mymod"
+        _touch(under / "mymod.php", 1000)
+        nm_under, _ = mod.newest_source_mtime(under)
+        ok &= check("module di bawah ancestor vendor/ -> mtime NYATA, bukan 0.0", nm_under == 1000)
+
+        newest, where = mod.newest_source_mtime(mdir)
+        ok &= check("newest_source_mtime abaikan vendor/ (1000, bukan 9000)", newest == 1000)
+        ok &= check("newest_source_mtime sebut file-nya", where is not None and where.name == "mymod.php")
+
+        # lapis LEBIH BARU + cakupan penuh -> reuse
+        _layer(reports / "mymod-static.json", TV, 2000)
+        p = mod.plan_layer(reports / "mymod-static.json", TV, newest, "mymod.php")
+        ok &= check("lapis lebih baru + cakupan cocok -> reuse", p["reuse"] is True)
+
+        # lapis BASI (module berubah setelahnya) -> rerun (anti vonis atas bukti basi)
+        _layer(reports / "mymod-flashlight.json", TV, 500)
+        p = mod.plan_layer(reports / "mymod-flashlight.json", TV, newest, "mymod.php")
+        ok &= check("lapis lebih tua dari module -> rerun", p["reuse"] is False and "lebih baru" in p["reason"])
+        ok &= check("alasan basi sebut file source pemicunya", "mymod.php" in p["reason"])
+
+        # cakupan KURANG -> rerun
+        _layer(reports / "mymod-e2e.json", ["9.1"], 2000)
+        p = mod.plan_layer(reports / "mymod-e2e.json", TV, newest, None)
+        ok &= check("cakupan versi kurang -> rerun", p["reuse"] is False and "cakupan kurang" in p["reason"])
+        ok &= check("alasan cakupan sebut versi yang hilang", "1.7.8" in p["reason"] and "8.1" in p["reason"])
+        # cakupan LEBIH luas tetap boleh (superset memuat yang diminta)
+        _layer(reports / "mymod-wide.json", TV + ["9.2"], 2000)
+        p = mod.plan_layer(reports / "mymod-wide.json", TV, newest, None)
+        ok &= check("cakupan superset -> tetap reuse", p["reuse"] is True)
+
+        # ABSEN / RUSAK -> rerun
+        p = mod.plan_layer(reports / "tak-ada.json", TV, newest, None)
+        ok &= check("file lapis absen -> rerun", p["reuse"] is False and "belum ada" in p["reason"])
+        broken = reports / "mymod-broken.json"
+        broken.write_text("{bukan json", encoding="utf-8")
+        os.utime(broken, (2000, 2000))
+        p = mod.plan_layer(broken, TV, newest, None)
+        ok &= check("file lapis rusak -> rerun (tak crash)", p["reuse"] is False and "tak terbaca" in p["reason"])
+
+        # cakupan tak bisa dipastikan (bentuk adversarial) -> rerun, bukan tebakan
+        adv = reports / "mymod-adversarial.json"
+        adv.write_text(json.dumps({"findings": []}), encoding="utf-8")
+        os.utime(adv, (2000, 2000))
+        p = mod.plan_layer(adv, TV, newest, None)
+        ok &= check("cakupan tak bisa dipastikan -> rerun", p["reuse"] is False and "tak bisa dipastikan" in p["reason"])
+        ok &= check("layer_versions bentuk tak dikenal -> None", mod.layer_versions({"x": 1}) is None)
+        ok &= check("layer_versions dari dict versions -> set", mod.layer_versions(
+            {"versions": {"9.1": {}}}) == {"9.1"})
+        # Lapis adversarial menyatakan cakupan yang DITINJAU di top-level `versions`
+        ok &= check("layer_versions dari list versions (adversarial) -> set",
+                    mod.layer_versions({"versions": ["1.7.8", "8.1"], "findings": []}) == {"1.7.8", "8.1"})
+        ok &= check("cakupan TAK diturunkan dari findings (versi terpengaruh != yang ditinjau)",
+                    mod.layer_versions({"findings": [{"versions": ["8.1"]}]}) is None)
+        adv_fresh = reports / "mymod-adversarial.json"
+        adv_fresh.write_text(json.dumps({"versions": TV, "findings": []}), encoding="utf-8")
+        os.utime(adv_fresh, (2000, 2000))
+        pa = mod.plan_layer(adv_fresh, TV, newest, None)
+        ok &= check("lapis adversarial segar + cakupan dinyatakan -> reuse (lapis termahal tak diulang)",
+                    pa["reuse"] is True)
+
+    # --- determinism-3 (analyze 2026-07-17-1024): vonis Lapis 1 punya DUA input (module
+    # DAN ruleset) tapi kesegaran cuma men-stat yang pertama. Aturan KB yang baru
+    # ditambahkan lalu tak pernah menyala: file lapis basi dipakai ulang & melapor pass,
+    # sementara SKILL.md melarang model membackstop-nya.
+    with tempfile.TemporaryDirectory() as td:
+        t = Path(td)
+        mod_dir = t / "mymod"
+        mod_dir.mkdir()
+        (mod_dir / "mymod.php").write_text("<?php class MyMod extends Module {}")
+        rules = t / "ps-rules.json"
+        rules.write_text('{"removed_hooks": []}')
+        extra = t / "extra.json"
+        extra.write_text('{"removed_hooks": []}')
+        layer = t / "mymod-static.json"
+
+        def _write_layer(ruleset_files, ruleset_mtime):
+            layer.write_text(json.dumps({
+                "module": "mymod", "versions": {v: {"pass": True} for v in TV},
+                "ruleset": {"files": [str(p.resolve()) for p in ruleset_files],
+                            "mtime": ruleset_mtime}}))
+            os.utime(layer, (9e9, 9e9))  # jauh lebih baru dari source: isolasi cek ruleset
+
+        base_state = mod.ss.ruleset_provenance([str(rules)])
+        _write_layer([rules], base_state["mtime"])
+        r = mod.plan_layer(layer, TV, 0.0, None, provenance={"kind": "ruleset", **base_state})
+        ok &= check("ruleset sama & tak berubah -> reuse", r["reuse"] is True)
+
+        with_extra = mod.ss.ruleset_provenance([str(rules), str(extra)])
+        r = mod.plan_layer(layer, TV, 0.0, None, provenance={"kind": "ruleset", **with_extra})
+        ok &= check("aturan KB BARU ditambahkan -> rerun (dulu: reuse, aturan tak pernah menyala)",
+                    r["reuse"] is False and "ruleset berbeda" in r["reason"])
+
+        os.utime(rules, (9e9 + 100, 9e9 + 100))  # ruleset inti disunting sesudah file lapis
+        r = mod.plan_layer(layer, TV, 0.0, None, provenance={"kind": "ruleset", **mod.ss.ruleset_provenance([str(rules)])})
+        ok &= check("ruleset inti lebih baru dari file lapis -> rerun",
+                    r["reuse"] is False and "lebih baru" in r["reason"])
+
+        _write_layer([rules], base_state["mtime"])
+        stale = json.loads(layer.read_text())
+        del stale["ruleset"]
+        layer.write_text(json.dumps(stale))
+        os.utime(layer, (9e9, 9e9))
+        r = mod.plan_layer(layer, TV, 0.0, None, provenance={"kind": "ruleset", **base_state})
+        ok &= check("file lapis tanpa jejak ruleset -> rerun (tak bisa dipastikan, jangan tebak)",
+                    r["reuse"] is False and "tak mencatat ruleset" in r["reason"])
+        r = mod.plan_layer(layer, TV, 0.0, None, provenance=None)
+        ok &= check("lapis non-static tak dinilai atas ruleset (ruleset tak memproduksinya)",
+                    r["reuse"] is True)
+
+        # --- enhancement-1: spec E2E authored — satu-satunya input tulisan tangan —
+        # divalidasi di pra-pass, sebelum satu container pun boot.
+        e2e_dir = mod_dir / "tests" / "e2e"
+        e2e_dir.mkdir(parents=True)
+        (e2e_dir / "ok.json").write_text(json.dumps(
+            {"name": "ok", "steps": [{"action": "goto", "area": "fo", "path": "/"},
+                                     {"action": "expect_visible", "selector": "#blk"}]}))
+        (e2e_dir / "typo.json").write_text(json.dumps(
+            {"name": "bad", "steps": [{"action": "expect_visable", "selector": "#x"}]}))
+        # Jalur CLI: unit test memanggil plan_layer LANGSUNG, jadi wiring main() ->
+        # plan_layer(ruleset=...) tak tersentuh — persis mode "jalur CLI tanpa coverage"
+        # yang bikin test hijau di atas kode salah. Diuji lewat proses nyata.
+        reports = t / "reports"
+        reports.mkdir()
+        real_static = Path(mod.ss.DEFAULT_RULES)
+        subprocess.run(["uv", "run", str(Path(MOD_PATH).parent / "ps-static-scan.py"),
+                        str(mod_dir), "--versions", "9.1",
+                        "-o", str(reports / "mymod-static.json")],
+                       capture_output=True, text=True)
+
+        def _plan_cli(*extra):
+            r = subprocess.run(["uv", "run", str(MOD_PATH), str(mod_dir),
+                                "--reports-dir", str(reports), "--versions", "9.1", *extra],
+                               capture_output=True, text=True)
+            return json.loads(r.stdout)
+
+        ok &= check("CLI: ruleset sama -> static boleh reuse",
+                    _plan_cli()["layers"]["static"]["reuse"] is True and real_static.is_file())
+        ok &= check("CLI: --extra-rules diteruskan -> static rerun (wiring main() teruji)",
+                    _plan_cli("--extra-rules", str(extra))["layers"]["static"]["reuse"] is False)
+
+        notes = mod._e2e_scenario_notes(mod_dir)
+        ok &= check("pra-pass menandai spec rusak SEBELUM container boot",
+                    len(notes) == 1 and "typo.json" in notes[0])
+        ok &= check("catatan menyebut kosakata yang SAH, bukan cuma yang salah",
+                    "expect_visible" in notes[0] and "goto" in notes[0])
+        # enh-5 (ronde-6): e2e_scenarios (daftar sumber) DIHAPUS — echo nama file nol pembaca,
+        # cakupan authored dipikul e2e_smoke_only. Hanya e2e_scenario_notes (spec DILEWATI, ada
+        # penerima: rutekan SKILL.md + gerbang) yang tersisa. Emisi main() diuji proses nyata —
+        # wiring ke JSON dulu NOL coverage (seluruh output pra-pass bisa dihapus tanpa test merah).
+        plan = _plan_cli()
+        ok &= check("CLI: e2e_scenarios TAK lagi diemit (echo yatim dihapus)",
+                    "e2e_scenarios" not in plan)
+        ok &= check("CLI: e2e_scenario_notes sampai ke JSON pra-pass",
+                    len(plan.get("e2e_scenario_notes") or []) == 1
+                    and "typo.json" in plan["e2e_scenario_notes"][0])
+        # Spec yang tak menegakkan apa pun ketahuan di PRA-PASS — sebelum flashlight boot
+        # x N versi x M browser. Dulu penulisnya baru tahu sesudah run termahal selesai.
+        (e2e_dir / "hampa.json").write_text(json.dumps(
+            {"name": "hampa", "steps": [{"action": "screenshot"}]}))
+        plan2 = _plan_cli()
+        ok &= check("CLI pra-pass menandai spec tanpa expect_* SEBELUM container boot",
+                    any("hampa.json" in n and "tak menegakkan apa pun" in n
+                        for n in (plan2.get("e2e_scenario_notes") or [])))
+
+    # --- enhancement-1 (analyze ronde-5): vonis Lapis 2/4 juga punya DUA input — module DAN
+    # image core-nya. Keduanya SUDAH mencatat tag yang memproduksinya; gerbang kesegaran tak
+    # pernah membacanya, jadi tag-map yang di-bump (9.0->9.1, nightly->9.1.4-nginx: pernah
+    # terjadi sungguhan) membuat file lapis lama dipakai ulang & dinyatakan "cakupan cocok"
+    # padahal ia memvonis core yang BERBEDA. Fix ruleset-provenance ronde lalu berhenti di
+    # Lapis 1 padahal docstring-nya sendiri menalar untuk kedua lapis ini.
+    with tempfile.TemporaryDirectory() as td8:
+        t8 = Path(td8)
+        m8 = t8 / "mymod"
+        _touch(m8 / "mymod.php", 1000)
+        lay = t8 / "mymod-flashlight.json"
+        lay.write_text(json.dumps({"module": "mymod", "versions": {
+            "9.1": {"version": "9.1", "tag": "9.1.4-nginx", "image": "x:9.1.4-nginx",
+                    "pass": True}}}))
+        os.utime(lay, (9e9, 9e9))
+        same = {"kind": "image", "expect": {"9.1": "9.1.4-nginx"}}
+        bumped = {"kind": "image", "expect": {"9.1": "9.1.5-nginx"}}
+        ok &= check("image sama -> reuse (gerbang tak kelebihan sapu)",
+                    mod.plan_layer(lay, ["9.1"], 1000, None, provenance=same)["reuse"] is True)
+        r_bump = mod.plan_layer(lay, ["9.1"], 1000, None, provenance=bumped)
+        ok &= check("tag-map di-bump -> rerun (dulu: reuse 'cakupan versi cocok' atas core LAIN)",
+                    r_bump["reuse"] is False and "image berbeda" in r_bump["reason"])
+        ok &= check("alasan sebut tag lama & baru supaya operator paham",
+                    "9.1.4-nginx" in r_bump["reason"] and "9.1.5-nginx" in r_bump["reason"])
+        lay_notag = t8 / "mymod-e2e.json"
+        lay_notag.write_text(json.dumps({"versions": {"9.1": {"pass": True}}}))
+        os.utime(lay_notag, (9e9, 9e9))
+        # Assert ke ALASANnya, bukan cuma reuse=False: tanpa gerbang ini hasilnya tetap False
+        # lewat cabang "image berbeda" (None != tag), jadi cek reuse saja lolos senyap —
+        # dan pesannya jadi salah ("image berbeda (9.1: None vs ...)") padahal file lapisnya
+        # cuma tak mencatat apa-apa. Kubuktikan lewat mutasi.
+        r_notag = mod.plan_layer(lay_notag, ["9.1"], 1000, None, provenance=same)
+        ok &= check("file lapis tak mencatat tag -> rerun beralasan BENAR (bukan 'image berbeda')",
+                    r_notag["reuse"] is False and "tak mencatat tag" in r_notag["reason"])
+        # Satu pemilik: tag yang diharapkan diresolve lewat ps-flashlight-run, bukan disalin.
+        # Ekspresinya sempat ada di DUA main(); implementasi ketiga di sini akan mendrift.
+        ok &= check("resolve_tag dipakai dari pemiliknya (bentuk penuh & dipendekkan)",
+                    mod.fl.resolve_tag({"9.1": "9.1.4-nginx"}, "9.1") == "9.1.4-nginx"
+                    and mod.fl.resolve_tag({"8.1": "8.1.6-nginx"}, "8.1.6") == "8.1.6-nginx")
+        # CLI: wiring main() -> plan_layer(provenance=image) — jalur yang unit test lewati.
+        r_cli = subprocess.run(["uv", "run", str(MOD_PATH), str(m8), "--reports-dir", str(t8),
+                                "--versions", "9.1", "--extra-tag-map", "9.1=9.1.5-nginx"],
+                               capture_output=True, text=True)
+        plan_cli = json.loads(r_cli.stdout)
+        ok &= check("CLI: --extra-tag-map sampai ke gerbang reuse Lapis 2 (wiring, bukan cuma fungsi)",
+                    "flashlight" in (plan_cli.get("rerun") or [])
+                    and "image berbeda" in plan_cli["layers"]["flashlight"]["reason"])
+
+    # Refutasi verifier atas fix ronde-5: gerbang himpunan kosong ditutup di ps-aggregate,
+    # lalu kelasnya selamat SATU SEAM di sini — di skrip yang justru bertugas MENOLAK bukti
+    # basi. `set() - covered` kosong = "cakupan cocok" secara vakum, jadi file lapis yang
+    # meninjau versi yang sama sekali lain dinyatakan boleh dipakai ulang, dengan alasan
+    # tertulis "cakupan versi cocok".
+    with tempfile.TemporaryDirectory() as td7:
+        root7 = Path(td7)
+        m7 = root7 / "mymod"
+        _touch(m7 / "mymod.php", 1000)
+        rep7 = root7 / "reports"
+        _layer(rep7 / "mymod-adversarial.json", ["9.9"], 5000)  # meninjau versi LAIN
+        p = mod.plan_layer(rep7 / "mymod-adversarial.json", [], 1000, "mymod.php")
+        ok &= check("nol versi diminta -> file lapis versi lain TAK boleh dipakai ulang "
+                    "(dulu: reuse=True 'cakupan versi cocok')",
+                    p["reuse"] is False and "nol versi" in p["reason"])
+        p_ok = mod.plan_layer(rep7 / "mymod-adversarial.json", ["9.9"], 1000, "mymod.php")
+        ok &= check("cakupan diminta & tercakup -> reuse tetap jalan (gerbang tak kelebihan sapu)",
+                    p_ok["reuse"] is True)
+        r7 = subprocess.run(["uv", "run", str(MOD_PATH), str(m7), "--reports-dir", str(rep7),
+                             "--versions", " , "], capture_output=True, text=True)
+        ok &= check("CLI: --versions yang menyusut jadi kosong -> exit 2, bukan pra-pass vakum",
+                    r7.returncode == 2 and "nol versi" in r7.stderr
+                    and "Traceback" not in r7.stderr)
+        # customization-3: --reports-dir ber-token {project-root} = leak yang direproduksi
+        # (dulu exit 0, path lapis harfiah, 'file belum ada' percaya diri -> rerun semua).
+        r_tok = subprocess.run(["uv", "run", str(MOD_PATH), str(m7),
+                                "--reports-dir", "{project-root}/_bmad-output/psm-validate",
+                                "--versions", "9.1"], capture_output=True, text=True)
+        ok &= check("CLI: --reports-dir ber-token {project-root} -> exit 2 (bukan exit 0 path harfiah)",
+                    r_tok.returncode == 2 and "belum diresolve di --reports-dir" in r_tok.stderr
+                    and "Traceback" not in r_tok.stderr)
+        # kontrol positif: --reports-dir bersih (belum ada) -> pra-pass jalan, rerun semua
+        r_clean = subprocess.run(["uv", "run", str(MOD_PATH), str(m7), "--reports-dir", str(rep7 / "fresh"),
+                                  "--versions", "9.1"], capture_output=True, text=True)
+        ok &= check("CLI: --reports-dir bersih tetap jalan (gerbang token tak kelebihan sapu)",
+                    r_clean.returncode == 0)
+
+    print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

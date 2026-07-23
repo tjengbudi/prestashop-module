@@ -32,6 +32,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from skill_files import is_build_artifact  # noqa: E402  (sibling module, resolved above)
+
 # Reuse the single length metric rather than reimplementing token counting.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
@@ -176,7 +179,11 @@ def scan(skill_path: Path) -> dict:
         files_data.append(d)
 
     for f in sorted(skill_path.iterdir()):
-        if f.is_file() and f.suffix == ".md" and f.name != "SKILL.md":
+        # `.memlog.md` is this builder's process memory, not skill content: counting it
+        # put 16,957 tokens of build history into the metrics the lenses read, dwarfing
+        # the 2,987-token SKILL.md it is supposed to characterise.
+        if (f.is_file() and f.suffix == ".md" and f.name != "SKILL.md"
+                and not is_build_artifact(f, skill_path)):
             d = scan_file(f, f.name)
             d["is_skill_md"] = False
             files_data.append(d)

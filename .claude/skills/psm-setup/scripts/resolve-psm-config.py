@@ -84,6 +84,23 @@ def load_yaml_file(path: Path, required: bool = False, graceful: bool = False) -
     return content if isinstance(content, dict) else {}
 
 
+def expand_project_root(resolved: dict, project_root: Path) -> dict:
+    """Ekspansi `{project-root}` SEBELUM nilai meninggalkan resolver.
+
+    config.yaml menyimpan bentuk ber-token (portabel antar-mesin), tapi yang keluar dari
+    sini dipakai LANGSUNG sebagai argumen CLI (--reports-dir, -o, --screenshot-dir), dan
+    token yang lolos ke titik pakai tak pernah ditolak siapa pun: ps-plan-layers exit 0
+    sambil melihat folder harfiah `{project-root}/...`, melaporkan "file lapis belum ada"
+    dengan percaya diri, lalu setiap lapis mahal dijalankan ulang; mkdir(parents=True)
+    bahkan membuat pohon sampah. Keluarga sudah menilai kegagalan ini nyata (3 skrip
+    psm-setup memikul reject_unresolved_paths) — mengekspansi di sini menghapus KELASNYA
+    alih-alih menambah penangkap keempat, dan membuat "baca apa adanya" benar-benar benar.
+    """
+    root = str(project_root)
+    return {k: (v.replace("{project-root}", root) if isinstance(v, str) else v)
+            for k, v in resolved.items()}
+
+
 def resolve(project_root: Path, graceful: bool = False) -> dict:
     """Baca config.yaml (+ overlay user), terapkan default, kembalikan objek resolved.
 
@@ -112,6 +129,8 @@ def resolve(project_root: Path, graceful: bool = False) -> dict:
             resolved[key] = base[key]
         else:
             resolved[key] = CORE_DEFAULTS[key]
+
+    resolved = expand_project_root(resolved, project_root)
 
     if graceful:
         resolved["config_missing"] = config_missing

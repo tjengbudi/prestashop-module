@@ -1,46 +1,338 @@
 {
   "_meta": {
     "description": "Aturan kompatibilitas module PrestaShop lintas versi, di-embed agar psm-validate akurat tanpa knowledge base. Sumber: devdocs.prestashop-project.org (core-updates 8.0/9.0), validator.prestashop.com/changelog, flashlight README.",
-    "schema": "Setiap rule: id, severity (error|warning|info), affects (daftar versi yang TERPENGARUH), kind (dependency|class|method|hook|constant|function|structure|smarty|compliancy), message, fix, files (glob filter, opsional; __MAIN__ = main module file). Rule pola: pattern (regex dicocokkan ke isi file; negate_pattern opsional) — wajib untuk kind selain structure|compliancy. Rule struktural (kind structure|compliancy dirutekan ke scan_structure_rule): expect salah satu dari present (juga butuh pattern) | index_php_each_dir | composer_prepend_autoloader_false | compliancy_covers_target."
+    "schema": "Setiap rule: id, severity (error|warning — HANYA dua ini; ps-aggregate memblok pada error, menghitung warning, dan menolak token lain), affects (daftar MAJOR KEY versi terpengaruh: 1.7 | 8 | 9 — bentuk versi penuh spt '9.1' TAK pernah cocok), kind (dependency|class|method|hook|constant|function|structure|smarty|compliancy), message, fix, files (daftar glob, opsional; __MAIN__ = main module file). Rule pola: pattern (regex dicocokkan ke isi file; negate_pattern opsional) — wajib untuk kind selain structure|compliancy. Rule struktural (kind structure|compliancy dirutekan ke scan_structure_rule): expect salah satu dari present (juga butuh pattern) | index_php_each_dir | composer_prepend_autoloader_false | compliancy_covers_target. Aturan tambahan dari knowledge base diteruskan lewat --extra-rules (MENAMBAH); ps-static-scan menolak pelanggaran skema dgn exit 2."
   },
   "forbidden_dependencies_ps9": [
-    {"id": "dep-guzzle", "severity": "error", "affects": ["9"], "kind": "dependency", "pattern": "guzzlehttp/guzzle|GuzzleHttp\\\\", "message": "GuzzleHttp dihapus dari core PrestaShop 9.", "fix": "Pakai Symfony HTTP Client, atau bundle guzzle sendiri di vendor module."},
-    {"id": "dep-swiftmailer", "severity": "error", "affects": ["9"], "kind": "dependency", "pattern": "swiftmailer/swiftmailer|Swift_Mailer|Swift_Message", "message": "SwiftMailer dihapus dari core PrestaShop 9.", "fix": "Pakai Symfony Mailer."},
-    {"id": "dep-tactician", "severity": "error", "affects": ["9"], "kind": "dependency", "pattern": "league/tactician-bundle|League\\\\Tactician", "message": "league/tactician-bundle dihapus dari core PrestaShop 9.", "fix": "Pakai Symfony Messenger."},
-    {"id": "dep-framework-extra", "severity": "error", "affects": ["9"], "kind": "dependency", "pattern": "sensio/framework-extra-bundle|Sensio\\\\Bundle\\\\FrameworkExtraBundle", "message": "Symfony FrameworkExtraBundle tidak lagi tersedia di PrestaShop 9.", "fix": "Pakai atribut/anotasi Symfony 6.4 native."},
-    {"id": "dep-psbundle-annotation", "severity": "warning", "affects": ["9"], "kind": "dependency", "pattern": "use\\s+PrestaShopBundle\\\\Security\\\\Annotation", "message": "Anotasi PrestaShopBundle\\Security ditandai warning oleh Validator untuk PS9.", "fix": "Migrasi ke atribut keamanan PrestaShopAdminController."}
+    {
+      "id": "dep-guzzle",
+      "severity": "error",
+      "affects": [
+        "9"
+      ],
+      "kind": "dependency",
+      "pattern": "guzzlehttp/guzzle|GuzzleHttp\\\\",
+      "message": "GuzzleHttp dihapus dari core PrestaShop 9.",
+      "fix": "Pakai Symfony HTTP Client, atau bundle guzzle sendiri di vendor module."
+    },
+    {
+      "id": "dep-swiftmailer",
+      "severity": "error",
+      "affects": [
+        "9"
+      ],
+      "kind": "dependency",
+      "pattern": "swiftmailer/swiftmailer|Swift_Mailer|Swift_Message",
+      "message": "SwiftMailer dihapus dari core PrestaShop 9.",
+      "fix": "Pakai Symfony Mailer."
+    },
+    {
+      "id": "dep-tactician",
+      "severity": "error",
+      "affects": [
+        "9"
+      ],
+      "kind": "dependency",
+      "pattern": "league/tactician-bundle|League\\\\Tactician",
+      "message": "league/tactician-bundle dihapus dari core PrestaShop 9.",
+      "fix": "Pakai Symfony Messenger."
+    },
+    {
+      "id": "dep-framework-extra",
+      "severity": "error",
+      "affects": [
+        "9"
+      ],
+      "kind": "dependency",
+      "pattern": "sensio/framework-extra-bundle|Sensio\\\\Bundle\\\\FrameworkExtraBundle",
+      "message": "Symfony FrameworkExtraBundle tidak lagi tersedia di PrestaShop 9.",
+      "fix": "Pakai atribut/anotasi Symfony 6.4 native."
+    },
+    {
+      "id": "dep-psbundle-annotation",
+      "severity": "warning",
+      "affects": [
+        "9"
+      ],
+      "kind": "dependency",
+      "pattern": "use\\s+PrestaShopBundle\\\\Security\\\\Annotation",
+      "message": "Anotasi PrestaShopBundle\\Security ditandai warning oleh Validator untuk PS9.",
+      "fix": "Migrasi ke atribut keamanan PrestaShopAdminController."
+    }
   ],
   "removed_classes_methods": [
-    {"id": "cls-attribute", "severity": "error", "affects": ["8", "9"], "kind": "class", "pattern": "\\bnew\\s+Attribute\\b|\\bAttribute::", "message": "Kelas Attribute di-rename jadi ProductAttribute di PrestaShop 8.", "fix": "Ganti Attribute -> ProductAttribute."},
-    {"id": "cls-hookdispatcher", "severity": "error", "affects": ["8", "9"], "kind": "class", "pattern": "\\bHookDispatcher\\b", "message": "HookDispatcher dihapus di PrestaShop 8 (deprecated sejak 1.7.5).", "fix": "Pakai Hook::exec atau dispatchHook (Symfony)."},
-    {"id": "mth-tools-jsonencode", "severity": "error", "affects": ["8", "9"], "kind": "method", "pattern": "Tools::jsonEncode|Tools::jsonDecode", "message": "Tools::jsonEncode/jsonDecode dihapus di PrestaShop 8.", "fix": "Pakai json_encode/json_decode native PHP."},
-    {"id": "mth-tools-addonsrequest", "severity": "error", "affects": ["8", "9"], "kind": "method", "pattern": "Tools::addonsRequest", "message": "Tools::addonsRequest dihapus di PrestaShop 8.", "fix": "Hapus; integrasi addons lama tak didukung."},
-    {"id": "mth-hook-alias", "severity": "warning", "affects": ["8", "9"], "kind": "method", "pattern": "Hook::getHookAliasList|Hook::getRetroHookName", "message": "Hook alias API dihapus/deprecated di PrestaShop 8.", "fix": "Pakai nama hook kanonik, hindari alias."},
-    {"id": "mth-validate-ispasswd", "severity": "error", "affects": ["8", "9"], "kind": "method", "pattern": "Validate::isPasswd\\b", "message": "Validate::isPasswd dihapus di PrestaShop 8.", "fix": "Pakai Validate::isPlaintextPassword / isHashedPassword sesuai konteks."},
-    {"id": "cls-prestashopautoload", "severity": "error", "affects": ["9"], "kind": "class", "pattern": "\\bPrestaShopAutoload\\b", "message": "PrestaShopAutoload dihapus di PrestaShop 9.", "fix": "Pakai paket prestashop/autoload + composer autoload module."},
-    {"id": "cls-framework-admin-controller", "severity": "warning", "affects": ["9"], "kind": "class", "pattern": "FrameworkBundleAdminController", "message": "FrameworkBundleAdminController deprecated di PrestaShop 9, dihapus di 10.", "fix": "Migrasi ke PrestaShopAdminController."},
-    {"id": "mth-legacy-controller-override", "severity": "warning", "affects": ["9"], "kind": "method", "pattern": "function\\s+(initContent|initHeader|initFooter)\\s*\\(", "message": "Override method legacy controller (initContent/initHeader/initFooter) tidak lagi dipanggil langsung di PS9 untuk halaman termigrasi.", "fix": "Cek apakah halaman target sudah Symfony; sesuaikan."}
+    {
+      "id": "cls-attribute",
+      "severity": "error",
+      "affects": [
+        "8",
+        "9"
+      ],
+      "kind": "class",
+      "pattern": "\\bnew\\s+Attribute\\b|\\bAttribute::",
+      "message": "Kelas Attribute di-rename jadi ProductAttribute di PrestaShop 8.",
+      "fix": "Ganti Attribute -> ProductAttribute."
+    },
+    {
+      "id": "cls-hookdispatcher",
+      "severity": "error",
+      "affects": [
+        "8",
+        "9"
+      ],
+      "kind": "class",
+      "pattern": "\\bHookDispatcher\\b",
+      "message": "HookDispatcher dihapus di PrestaShop 8 (deprecated sejak 1.7.5).",
+      "fix": "Pakai Hook::exec atau dispatchHook (Symfony)."
+    },
+    {
+      "id": "mth-tools-jsonencode",
+      "severity": "error",
+      "affects": [
+        "8",
+        "9"
+      ],
+      "kind": "method",
+      "pattern": "Tools::jsonEncode|Tools::jsonDecode",
+      "message": "Tools::jsonEncode/jsonDecode dihapus di PrestaShop 8.",
+      "fix": "Pakai json_encode/json_decode native PHP."
+    },
+    {
+      "id": "mth-tools-addonsrequest",
+      "severity": "error",
+      "affects": [
+        "8",
+        "9"
+      ],
+      "kind": "method",
+      "pattern": "Tools::addonsRequest",
+      "message": "Tools::addonsRequest dihapus di PrestaShop 8.",
+      "fix": "Hapus; integrasi addons lama tak didukung."
+    },
+    {
+      "id": "mth-hook-alias",
+      "severity": "warning",
+      "affects": [
+        "8",
+        "9"
+      ],
+      "kind": "method",
+      "pattern": "Hook::getHookAliasList|Hook::getRetroHookName",
+      "message": "Hook alias API dihapus/deprecated di PrestaShop 8.",
+      "fix": "Pakai nama hook kanonik, hindari alias."
+    },
+    {
+      "id": "mth-validate-ispasswd",
+      "severity": "error",
+      "affects": [
+        "8",
+        "9"
+      ],
+      "kind": "method",
+      "pattern": "Validate::isPasswd\\b",
+      "message": "Validate::isPasswd dihapus di PrestaShop 8.",
+      "fix": "Pakai Validate::isPlaintextPassword / isHashedPassword sesuai konteks."
+    },
+    {
+      "id": "cls-prestashopautoload",
+      "severity": "error",
+      "affects": [
+        "9"
+      ],
+      "kind": "class",
+      "pattern": "\\bPrestaShopAutoload\\b",
+      "message": "PrestaShopAutoload dihapus di PrestaShop 9.",
+      "fix": "Pakai paket prestashop/autoload + composer autoload module."
+    },
+    {
+      "id": "cls-framework-admin-controller",
+      "severity": "warning",
+      "affects": [
+        "9"
+      ],
+      "kind": "class",
+      "pattern": "FrameworkBundleAdminController",
+      "message": "FrameworkBundleAdminController deprecated di PrestaShop 9, dihapus di 10.",
+      "fix": "Migrasi ke PrestaShopAdminController."
+    },
+    {
+      "id": "mth-legacy-controller-override",
+      "severity": "warning",
+      "affects": [
+        "9"
+      ],
+      "kind": "method",
+      "pattern": "function\\s+(initContent|initHeader|initFooter)\\s*\\(",
+      "message": "Override method legacy controller (initContent/initHeader/initFooter) tidak lagi dipanggil langsung di PS9 untuk halaman termigrasi.",
+      "fix": "Cek apakah halaman target sudah Symfony; sesuaikan."
+    }
   ],
   "removed_hooks": [
-    {"id": "hook-admin-product-legacy", "severity": "error", "affects": ["9"], "kind": "hook", "pattern": "actionAdminProductsController\\w+|actionAdminActivate(Before|After)|actionAdminDeactivate(Before|After)|actionAdminDelete(Before|After)|actionAdminSort(Before|After)", "message": "Hook halaman produk legacy dihapus di PrestaShop 9 (halaman produk lama dihapus).", "fix": "Pakai hook halaman produk modern / event yang setara."},
-    {"id": "hook-admin-login", "severity": "error", "affects": ["9"], "kind": "hook", "pattern": "actionAdminLoginControllerBefore|actionAdminLoginControllerAfter|actionAdminLoginControllerForgot|actionAdminLoginControllerReset", "message": "Hook login admin legacy dihapus di PrestaShop 9 (login ditangani Symfony).", "fix": "Pakai actionBackOfficeLoginForm / actionEmployeeRequestPasswordResetForm."},
-    {"id": "hook-displaysearch", "severity": "warning", "affects": ["9"], "kind": "hook", "pattern": "displaySearch\\b", "message": "Hook displaySearch deprecated untuk module compatible PS 9.1+.", "fix": "Pakai mekanisme pencarian modern."}
+    {
+      "id": "hook-admin-product-legacy",
+      "severity": "error",
+      "affects": [
+        "9"
+      ],
+      "kind": "hook",
+      "pattern": "actionAdminProductsController\\w+|actionAdminActivate(Before|After)|actionAdminDeactivate(Before|After)|actionAdminDelete(Before|After)|actionAdminSort(Before|After)",
+      "message": "Hook halaman produk legacy dihapus di PrestaShop 9 (halaman produk lama dihapus).",
+      "fix": "Pakai hook halaman produk modern / event yang setara."
+    },
+    {
+      "id": "hook-admin-login",
+      "severity": "error",
+      "affects": [
+        "9"
+      ],
+      "kind": "hook",
+      "pattern": "actionAdminLoginControllerBefore|actionAdminLoginControllerAfter|actionAdminLoginControllerForgot|actionAdminLoginControllerReset",
+      "message": "Hook login admin legacy dihapus di PrestaShop 9 (login ditangani Symfony).",
+      "fix": "Pakai actionBackOfficeLoginForm / actionEmployeeRequestPasswordResetForm."
+    },
+    {
+      "id": "hook-displaysearch",
+      "severity": "warning",
+      "affects": [
+        "9"
+      ],
+      "kind": "hook",
+      "pattern": "displaySearch\\b",
+      "message": "Hook displaySearch deprecated untuk module compatible PS 9.1+.",
+      "fix": "Pakai mekanisme pencarian modern."
+    }
   ],
   "removed_constants": [
-    {"id": "const-smarty-dir", "severity": "error", "affects": ["8", "9"], "kind": "constant", "pattern": "_PS_SMARTY_DIR_|_PS_TCPDF_DIR_|_PS_TCPDF_PATH_|_PS_SWIFT_DIR_", "message": "Konstanta _PS_SMARTY_DIR_/_PS_TCPDF_*/_PS_SWIFT_DIR_ dihapus di PrestaShop 8.", "fix": "Hapus referensi; pakai service/path modern."},
-    {"id": "const-legacy-images", "severity": "error", "affects": ["9"], "kind": "constant", "pattern": "PS_LEGACY_IMAGES|PS_HIGHT_DPI", "message": "Variabel PS_LEGACY_IMAGES & PS_HIGHT_DPI dihapus di PrestaShop 9.", "fix": "Hapus penggunaan; fitur tidak ada lagi."}
+    {
+      "id": "const-smarty-dir",
+      "severity": "error",
+      "affects": [
+        "8",
+        "9"
+      ],
+      "kind": "constant",
+      "pattern": "_PS_SMARTY_DIR_|_PS_TCPDF_DIR_|_PS_TCPDF_PATH_|_PS_SWIFT_DIR_",
+      "message": "Konstanta _PS_SMARTY_DIR_/_PS_TCPDF_*/_PS_SWIFT_DIR_ dihapus di PrestaShop 8.",
+      "fix": "Hapus referensi; pakai service/path modern."
+    },
+    {
+      "id": "const-legacy-images",
+      "severity": "error",
+      "affects": [
+        "9"
+      ],
+      "kind": "constant",
+      "pattern": "PS_LEGACY_IMAGES|PS_HIGHT_DPI",
+      "message": "Variabel PS_LEGACY_IMAGES & PS_HIGHT_DPI dihapus di PrestaShop 9.",
+      "fix": "Hapus penggunaan; fitur tidak ada lagi."
+    }
   ],
   "forbidden_functions": [
-    {"id": "fn-eval", "severity": "error", "affects": ["1.7", "8", "9"], "kind": "function", "pattern": "\\beval\\s*\\(", "message": "Fungsi eval() dilarang oleh PrestaShop Validator.", "fix": "Hapus eval()."},
-    {"id": "fn-system-exec", "severity": "error", "affects": ["1.7", "8", "9"], "kind": "function", "pattern": "\\b(passthru|shell_exec|system|proc_open|popen)\\s*\\(", "message": "Fungsi eksekusi sistem dilarang oleh PrestaShop Validator.", "fix": "Hapus; tidak boleh menjalankan program sistem dari module."}
+    {
+      "id": "fn-eval",
+      "severity": "error",
+      "affects": [
+        "1.7",
+        "8",
+        "9"
+      ],
+      "kind": "function",
+      "pattern": "\\beval\\s*\\(",
+      "message": "Fungsi eval() dilarang oleh PrestaShop Validator.",
+      "fix": "Hapus eval()."
+    },
+    {
+      "id": "fn-system-exec",
+      "severity": "error",
+      "affects": [
+        "1.7",
+        "8",
+        "9"
+      ],
+      "kind": "function",
+      "pattern": "\\b(passthru|shell_exec|system|proc_open|popen)\\s*\\(",
+      "message": "Fungsi eksekusi sistem dilarang oleh PrestaShop Validator.",
+      "fix": "Hapus; tidak boleh menjalankan program sistem dari module."
+    }
   ],
   "structure": [
-    {"id": "struct-compliancy", "severity": "error", "affects": ["1.7", "8", "9"], "kind": "compliancy", "pattern": "ps_versions_compliancy\\s*=", "files": ["__MAIN__"], "expect": "present", "message": "ps_versions_compliancy WAJIB ada di main module file (diwajibkan PrestaShop Validator).", "fix": "Tambahkan $this->ps_versions_compliancy = ['min' => '1.7.0.0', 'max' => _PS_VERSION_] di constructor."},
-    {"id": "struct-compliancy-range", "severity": "error", "affects": ["1.7", "8", "9"], "kind": "compliancy", "files": ["__MAIN__"], "expect": "compliancy_covers_target", "message": "Range ps_versions_compliancy tidak mencakup versi target — module menolak install di versi itu.", "fix": "Set 'min' <= versi target terendah dan 'max' => _PS_VERSION_ (atau literal >= target tertinggi)."},
-    {"id": "struct-composer-prepend", "severity": "error", "affects": ["1.7", "8", "9"], "kind": "structure", "expect": "composer_prepend_autoloader_false", "message": "composer.json module wajib set config.prepend-autoloader = false — kalau true/absen, autoloader module bisa override kelas core dan merusak PrestaShop.", "fix": "Tambahkan \"config\": {\"prepend-autoloader\": false} di composer.json module."},
-    {"id": "struct-index-php", "severity": "warning", "affects": ["1.7", "8", "9"], "kind": "structure", "expect": "index_php_each_dir", "message": "Setiap folder module harus punya index.php (keamanan: redirect ke FO).", "fix": "Tambahkan index.php standar di tiap subfolder."}
+    {
+      "id": "struct-compliancy",
+      "severity": "error",
+      "affects": [
+        "1.7",
+        "8",
+        "9"
+      ],
+      "kind": "compliancy",
+      "pattern": "ps_versions_compliancy\\s*=",
+      "files": [
+        "__MAIN__"
+      ],
+      "expect": "present",
+      "message": "ps_versions_compliancy WAJIB ada di main module file (diwajibkan PrestaShop Validator).",
+      "fix": "Tambahkan $this->ps_versions_compliancy = ['min' => '1.7.0.0', 'max' => _PS_VERSION_] di constructor."
+    },
+    {
+      "id": "struct-compliancy-range",
+      "severity": "error",
+      "affects": [
+        "1.7",
+        "8",
+        "9"
+      ],
+      "kind": "compliancy",
+      "files": [
+        "__MAIN__"
+      ],
+      "expect": "compliancy_covers_target",
+      "message": "Range ps_versions_compliancy tidak mencakup versi target — module menolak install di versi itu.",
+      "fix": "Set 'min' <= versi target terendah dan 'max' => _PS_VERSION_ (atau literal >= target tertinggi)."
+    },
+    {
+      "id": "struct-composer-prepend",
+      "severity": "error",
+      "affects": [
+        "1.7",
+        "8",
+        "9"
+      ],
+      "kind": "structure",
+      "expect": "composer_prepend_autoloader_false",
+      "message": "composer.json module wajib set config.prepend-autoloader = false — kalau true/absen, autoloader module bisa override kelas core dan merusak PrestaShop.",
+      "fix": "Tambahkan \"config\": {\"prepend-autoloader\": false} di composer.json module."
+    },
+    {
+      "id": "struct-index-php",
+      "severity": "warning",
+      "affects": [
+        "1.7",
+        "8",
+        "9"
+      ],
+      "kind": "structure",
+      "expect": "index_php_each_dir",
+      "message": "Setiap folder module harus punya index.php (keamanan: redirect ke FO).",
+      "fix": "Tambahkan index.php standar di tiap subfolder."
+    }
   ],
   "smarty": [
-    {"id": "smarty-unescaped", "severity": "warning", "affects": ["1.7", "8", "9"], "kind": "smarty", "pattern": "\\{\\$[a-zA-Z_][a-zA-Z0-9_.\\[\\]']*\\}", "files": ["*.tpl"], "negate_pattern": "nofilter|escape|\\|", "message": "Variabel Smarty tampak tidak di-escape (Validator: error sejak v5.14.1).", "fix": "Tambahkan modifier escape, mis. {$var|escape:'html':'UTF-8'} atau {$var nofilter} bila memang sengaja."}
+    {
+      "id": "smarty-unescaped",
+      "severity": "warning",
+      "affects": [
+        "1.7",
+        "8",
+        "9"
+      ],
+      "kind": "smarty",
+      "pattern": "\\{\\$[a-zA-Z_][a-zA-Z0-9_.\\[\\]']*\\}",
+      "files": [
+        "*.tpl"
+      ],
+      "negate_pattern": "nofilter|escape|\\|",
+      "message": "Variabel Smarty tampak tidak di-escape (Validator: error sejak v5.14.1).",
+      "fix": "Tambahkan modifier escape, mis. {$var|escape:'html':'UTF-8'} atau {$var nofilter} bila memang sengaja."
+    }
   ]
 }

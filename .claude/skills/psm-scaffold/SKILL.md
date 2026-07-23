@@ -34,7 +34,7 @@ Kerangka sengaja telanjang. Tawarkan fungsi e-commerce yang relevan dengan maksu
 
 ## Verifikasi (gerbang wajib)
 
-Panggil psm-validate atas module hasil terhadap ketiga versi target (lihat `<skills-dir>/psm-validate/SKILL.md`). Status lolos per versi adalah vonis JSON dari psm-validate — baca `pass` & hitungan error/warning per versi dari situ apa adanya, jangan menilai sendiri. Kerangka dinyatakan siap hanya bila JSON itu lolos di 1.7.x, 8.x, dan 9.x; bila fungsi e-commerce ditambahkan, validasi ulang. Bila psm-validate sendiri gagal berjalan atau vonisnya tak terbaca (skill absen, crash, non-JSON), perlakukan sebagai **BUKAN lolos** — jangan tafsir "tak ada error" sebagai hijau. Ringkas ke Budi: apa yang dibangkitkan, fungsi apa yang ditambahkan, dan status lolos per versi dari vonis.
+Panggil psm-validate atas module hasil terhadap ketiga versi target (lihat `<skills-dir>/psm-validate/SKILL.md`). Status lolos per versi adalah vonis JSON dari psm-validate — baca `ready` & hitungan error/warning per versi dari situ apa adanya, jangan menilai sendiri. Kerangka dinyatakan siap hanya bila `ready` true di 1.7.x, 8.x, dan 9.x; bila fungsi e-commerce ditambahkan, validasi ulang. Baca `ready`, bukan `pass`: `pass` sengaja tak diblok oleh lapis yang tak pernah jalan, jadi ia hijau juga saat cuma 2 dari 4 lapis teruji. Bila psm-validate sendiri gagal berjalan atau vonisnya tak terbaca (skill absen, crash, non-JSON), perlakukan sebagai **BUKAN lolos** — jangan tafsir "tak ada error" sebagai hijau. Ringkas ke Budi: apa yang dibangkitkan, fungsi apa yang ditambahkan, dan status lolos per versi dari vonis.
 
 ## Mode headless
 

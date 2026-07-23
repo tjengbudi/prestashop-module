@@ -46,26 +46,50 @@ import uuid
 from pathlib import Path
 
 DEFAULT_TAG_MAP = {"1.7.8": "1.7.8.11", "8.1": "8.1.6-nginx", "9.1": "9.1.4-nginx"}
+# Kontrol positif cakupan phpstan. Namanya dipakai DUA sisi — INNER_SH menulis filenya,
+# parse_phpstan mengenalinya di laporan — jadi ia disulih ke INNER_SH lewat token di bawah,
+# bukan diketik ulang di sana. Mengetiknya ulang membuat komentar ini bohong: rename konstanta
+# akan memalsukan error yang memblok (temuan canary tak dikenali lalu dihitung sbg milik module)
+# SEKALIGUS memvoidkan cakupan (canary "tak muncul") — dua cacat dari satu refactor yang tampak
+# tak berbahaya, persis kelas rename CONTAINER_PREFIX.
+CANARY_BASENAME = "psm-coverage-canary.php"
+_CANARY_TOKEN = "__PSM_CANARY_BASENAME__"
 IMAGE = "prestashop/prestashop-flashlight"
 DEFAULT_DB_IMAGE = "mariadb:lts"
 DEFAULT_PS_DOMAIN = "localhost:8000"
 DEFAULT_STARTUP_TIMEOUT = 180  # detik menunggu container jadi healthy
+DEFAULT_ORCHESTRATOR = "auto"   # auto = compose bila ada, else manual
 # Kredensial DB — harus cocok di sisi flashlight & DB; nilai internal, bukan setelan.
 DB_USER = "prestashop"
 DB_PASSWORD = "prestashop"
 DB_NAME = "prestashop"
 
-# Skrip yang dijalankan DI DALAM container flashlight setelah healthy: salin module,
-# install via PS console, lalu phpstan (neon module bila ada, else auto-generate).
-# Memakai $MOD_NAME dari env (dilewatkan lewat `docker ... -e MOD_NAME=...`).
-INNER_SH = r'''
+# Awalan SEMUA sentinel fase phpstan (PSM_PHPSTAN_GEN=/_JSON_START/_JSON_END/_ABSENT). Dipakai
+# untuk memotong ekor phpstan dari log install; dinamai supaya kopling ke awalannya terlihat,
+# dan dikunci test yang memeriksa tiap sentinel fase itu benar-benar berawalan ini.
+PHPSTAN_SENTINEL_PREFIX = "PSM_PHPSTAN"
+
+# Blok install yang dijalankan DI DALAM container. Dipakai KEDUA lapis: Lapis 2 (INNER_SH, +
+# phpstan) dan Lapis 4 (ps-e2e-run.INSTALL_SH, tanpa phpstan). SATU konstanta, karena sentinel
+# di sini berpasangan dengan parse_install di bawah. Seam-nya dulu asimetris — reader dibagi
+# lewat impor, writer disalin — jadi rename satu sentinel di satu sisi bikin install dilaporkan
+# GAGAL untuk module yang sebenarnya sukses, lalu jatuh jadi tak-konklusif berbentuk infra dan
+# `ready` turun tanpa ada yang menyebut sebabnya. $MOD_NAME dari env.
+INSTALL_BLOCK_SH = r'''
 if ! cp -r /ps-module-src "/var/www/html/modules/$MOD_NAME" 2>&1; then echo PSM_COPY_FAIL; fi
 cd /var/www/html || echo PSM_NO_PSROOT
-if php -d memory_limit=-1 bin/console prestashop:module --no-interaction install "$MOD_NAME" 2>&1; then
+if [ ! -f bin/console ]; then
+  echo PSM_NO_CONSOLE
+elif php -d memory_limit=-1 bin/console prestashop:module --no-interaction install "$MOD_NAME" 2>&1; then
   echo PSM_INSTALL_OK
 else
   echo PSM_INSTALL_FAIL
 fi
+'''
+
+# Skrip yang dijalankan DI DALAM container flashlight setelah healthy: salin module,
+# install via PS console, lalu phpstan (neon module bila ada, else auto-generate).
+INNER_SH = INSTALL_BLOCK_SH + r'''
 NEON=""
 for c in "modules/$MOD_NAME/phpstan.neon" "modules/$MOD_NAME/phpstan.neon.dist"; do
   if [ -f "$c" ]; then NEON="$c"; break; fi
@@ -85,13 +109,22 @@ if [ -z "$NEON" ]; then
 fi
 if command -v phpstan >/dev/null 2>&1; then
   echo "PSM_PHPSTAN_GEN=$GEN"
+  # CANARY / kontrol positif. Laporan JSON phpstan TAK bisa membedakan "bersih" dari "tak
+  # menganalisis apa-apa": map `files` hanya memuat file YANG BER-ERROR, jadi module bersih dan
+  # module yang neon-nya mengecualikan dirinya sendiri sama-sama menghasilkan files:{} &
+  # file_errors:0 — dan yang kedua dulu diklaim "coding standard bersih, konklusif". File ini
+  # dijamin ber-error di level berapa pun (fungsi tak dikenal); kalau ia TAK muncul di laporan,
+  # berarti phpstan tak menyentuh pohon module dan vonis CS tak boleh diklaim. Ditulis ke
+  # SALINAN dalam container (module di-cp di atas), jadi pohon module di host tak tersentuh.
+  printf '<?php\npsm_canary_undefined_fn_xyz();\n' > "modules/$MOD_NAME/__PSM_CANARY_BASENAME__"
   echo PSM_PHPSTAN_JSON_START
   phpstan analyse --no-progress --error-format=json --memory-limit=-1 -c "$NEON" "modules/$MOD_NAME" 2>/dev/null || true
   echo PSM_PHPSTAN_JSON_END
+  rm -f "modules/$MOD_NAME/__PSM_CANARY_BASENAME__"
 else
   echo PSM_PHPSTAN_ABSENT
 fi
-'''
+'''.replace(_CANARY_TOKEN, CANARY_BASENAME)
 
 
 def docker_available():
@@ -123,23 +156,61 @@ def image_present(image_ref):
         return False
 
 
-def parse_tag_map(raw):
-    """Format: '1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx' -> dict. Kosong -> default."""
-    if not raw:
-        return dict(DEFAULT_TAG_MAP)
+def _parse_pairs(raw):
+    """'1.7.8=1.7.8.11,8.1=8.1.6-nginx' -> dict. Tanpa pasangan valid -> {}."""
     out = {}
-    for pair in raw.split(","):
+    for pair in (raw or "").split(","):
         if "=" in pair:
             k, v = pair.split("=", 1)
             out[k.strip()] = v.strip()
-    return out or dict(DEFAULT_TAG_MAP)
+    return out
+
+
+def parse_tag_map(raw, extra=None):
+    """Peta versi->tag. `raw` MENGGANTI peta default; `extra` MENAMBAH di atasnya.
+
+    Dua kanal karena dua maksud berbeda: --tag-map memasang peta lengkap (mis. dari
+    config psm_flashlight_tag_map), --extra-tag-map menambal satu-dua versi tanpa
+    menjatuhkan sisanya. Dulu hanya ada kanal pengganti, sehingga satu tag tambahan
+    membuang tag versi lain -> tag telanjang -> image tak ada -> lapis void diam-diam.
+    """
+    base = _parse_pairs(raw) or dict(DEFAULT_TAG_MAP)
+    base.update(_parse_pairs(extra))
+    return base
+
+
+def resolve_tag(tag_map, full_ver):
+    """Tag image untuk satu versi target: cocokkan versi penuh, lalu bentuk yang dipendekkan.
+
+    Satu pemilik untuk aturan ini. Ekspresinya sempat disalin di dua main() (flashlight & e2e),
+    dan pra-pass kesegaran butuh jawaban yang SAMA untuk tahu apakah file lapis diproduksi image
+    yang sama — implementasi ketiga yang mendrift akan membuat gerbangnya menolak reuse yang sah
+    atau, lebih buruk, menerima bukti dari core yang lain.
+    """
+    return tag_map.get(full_ver) or tag_map.get(full_ver.rsplit(".", 1)[0]) or full_ver
 
 
 def parse_install(out):
-    """Baca penanda hasil install dari output inner-script."""
+    """Baca penanda hasil install dari output inner-script.
+
+    `no_console`/`no_psroot` = kondisi INFRASTRUKTUR (image tanpa bin/console, PS root
+    tak ada): pemanggil memperlakukannya tak konklusif, bukan module gagal install.
+    Keduanya benar-benar diemit inner-script — sentinel yang dibaca tapi tak pernah
+    ditulis = jalur degrade mati, dan infra jatuh jadi vonis memblok palsu.
+
+    `no_verdict` = installer TAK PERNAH mencapai vonisnya: baik PSM_INSTALL_OK maupun
+    PSM_INSTALL_FAIL absen (docker exec mati sesudah healthy / output terpotong / sh gagal).
+    Dulu PSM_INSTALL_FAIL DITULIS tapi tak pernah DIBACA — jadi 'exec mati' dan 'installer
+    menolak module' jatuh ke ok=False yang sama, dan infra murni dijual sbg vonis memblok
+    'modul gagal install di core asli'. Membaca PSM_INSTALL_FAIL memisahkan keduanya: hanya
+    ia bukti installer BENAR-BENAR menjalankan lalu menolak (satu-satunya yang boleh memblok).
+    """
     if "PSM_COPY_FAIL" in out:
-        return {"ok": False, "no_console": False, "copy_fail": True}
-    return {"ok": "PSM_INSTALL_OK" in out, "no_console": "PSM_NO_CONSOLE" in out, "copy_fail": False}
+        return {"ok": False, "no_console": False, "no_psroot": False,
+                "copy_fail": True, "no_verdict": False}
+    ran = ("PSM_INSTALL_OK" in out) or ("PSM_INSTALL_FAIL" in out)
+    return {"ok": "PSM_INSTALL_OK" in out, "no_console": "PSM_NO_CONSOLE" in out,
+            "no_psroot": "PSM_NO_PSROOT" in out, "copy_fail": False, "no_verdict": not ran}
 
 
 def parse_phpstan(out):
@@ -169,19 +240,32 @@ def parse_phpstan(out):
     generic = report.get("errors", []) or []  # error non-file (mis. neon/bootstrap)
     files = report.get("files", {}) or {}
     messages = []
+    canary_hits = 0
     for path, fdata in files.items():
-        for m in (fdata.get("messages", []) or []):
+        msgs = fdata.get("messages", []) or []
+        # Temuan canary BUKAN temuan module: ia cuma membuktikan phpstan benar-benar menyentuh
+        # pohon module. Disaring dari vonis lalu dikurangkan dari hitungan supaya kontrol positif
+        # ini tak pernah bocor jadi error yang memblok.
+        if CANARY_BASENAME in str(path):
+            canary_hits += len(msgs)
+            continue
+        for m in msgs:
             messages.append({"line": m.get("line"), "source": "phpstan",
                              "message": (m.get("message") or "")[:160], "file": path})
     for g in generic:
         messages.append({"line": 0, "source": "phpstan", "message": str(g)[:160]})
-    count = totals.get("file_errors", 0) + len(generic)
+    count = totals.get("file_errors", 0) - canary_hits + len(generic)
+    # Canary tak muncul = phpstan tak menganalisis satu file pun dari module (mis. neon module
+    # meng-excludePaths dirinya sendiri). 0 error di situ bukan "bersih" — itu "tak diukur".
+    coverage_ok = canary_hits > 0
     if generated:
         return {"available": True, "parse_ok": True, "generated_config": True,
-                "errors": 0, "warnings": count, "error_messages": messages[:50],
+                "coverage_ok": coverage_ok, "errors": 0, "warnings": count,
+                "error_messages": messages[:50],
                 "note": "phpstan pakai neon auto-generate (advisory — tak memblok)"}
     return {"available": True, "parse_ok": True, "generated_config": False,
-            "errors": count, "warnings": 0, "error_messages": messages[:50]}
+            "coverage_ok": coverage_ok, "errors": count, "warnings": 0,
+            "error_messages": messages[:50]}
 
 
 def _health_status(container):
@@ -254,9 +338,20 @@ def _compose_file_text(db_image, image_ref, ps_domain, module_dir, publish=None)
     )
 
 
+CONTAINER_PREFIX = "psm-fl"  # SATU prefix untuk KEDUA orkestrator — lihat _project_name
+
+
 def _project_name(full_ver):
+    """Nama project compose — ber-prefix sama dgn jalur manual (CONTAINER_PREFIX).
+
+    Dulu compose memakai `psmfl<ver><uid>` sementara jalur manual memakai `psm-fl-ps-<uid>`:
+    dua konvensi untuk satu pertanyaan ("container mana milik skrip ini"). Akibatnya perintah
+    pembersihan port-bocor `--filter name=psmfl` TIDAK cocok dgn container jalur manual —
+    justru jalur yang dipakai saat `docker compose` absen, dan yang memegang port host. Satu
+    prefix = satu filter (`--filter name=psm-fl`) menangkap keduanya.
+    """
     v = re.sub(r"[^a-z0-9]", "", full_ver.lower())
-    return f"psmfl{v}{uuid.uuid4().hex[:8]}"
+    return f"{CONTAINER_PREFIX}-{v}-{uuid.uuid4().hex[:8]}"
 
 
 def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout, publish=None):
@@ -282,8 +377,8 @@ def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_t
 
 def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout, publish=None):
     uid = uuid.uuid4().hex[:8]
-    session = {"mode": "manual", "network": f"psm-fl-net-{uid}",
-               "db": f"psm-fl-db-{uid}", "ps_container": f"psm-fl-ps-{uid}"}
+    session = {"mode": "manual", "network": f"{CONTAINER_PREFIX}-net-{uid}",
+               "db": f"{CONTAINER_PREFIX}-db-{uid}", "ps_container": f"{CONTAINER_PREFIX}-ps-{uid}"}
     n = subprocess.run(["docker", "network", "create", session["network"]], capture_output=True, text=True)
     if n.returncode != 0:
         return session, f"gagal buat network: {n.stderr.strip()[-200:]}"
@@ -408,7 +503,9 @@ def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_ima
             res["errors"].append("gagal menyalin module ke dalam container")
             return res
         res["install"] = {"ok": inst["ok"], "no_console": inst.get("no_console", False),
-                          "log": out.split("PSM_PHPSTAN", 1)[0][-2000:]}
+                          "no_psroot": inst.get("no_psroot", False),
+                          "no_verdict": inst.get("no_verdict", False),
+                          "log": out.split(PHPSTAN_SENTINEL_PREFIX, 1)[0][-2000:]}
         res["coding_standard"] = parse_phpstan(out)
         cs = res["coding_standard"]
         res["pass"] = bool(res["install"]["ok"]) and \
@@ -420,11 +517,15 @@ def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_ima
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Validasi module PrestaShop di Docker flashlight (DB-backed), per versi.")
+        description="Validasi module PrestaShop di Docker flashlight (DB-backed), per versi.",
+        epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module_path", help="Path folder module PrestaShop")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
-    ap.add_argument("--tag-map", default="", help="Pemetaan versi=tag dipisah koma, mis. '9.1=9.1.4-nginx'")
-    ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default="auto",
+    ap.add_argument("--tag-map", default="", help="Peta LENGKAP versi=tag dipisah koma (MENGGANTI default), "
+                                                  "mis. '1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx'")
+    ap.add_argument("--extra-tag-map", default="", help="Tag TAMBAHAN versi=tag (MENAMBAH di atas peta), "
+                                                        "mis. '9.2=9.2.0-nginx' — versi lain tak terpengaruh")
+    ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default=DEFAULT_ORCHESTRATOR,
                     help="Cara menghidupkan DB+flashlight (default: auto = compose bila ada, else manual)")
     ap.add_argument("--db-image", default=DEFAULT_DB_IMAGE, help=f"Image server DB (default: {DEFAULT_DB_IMAGE})")
     ap.add_argument("--ps-domain", default=DEFAULT_PS_DOMAIN, help=f"PS_DOMAIN flashlight (default: {DEFAULT_PS_DOMAIN})")
@@ -452,12 +553,12 @@ def main():
         (Path(args.output).write_text(out, encoding="utf-8") if args.output else print(out))
         return 0  # bukan error: degrade terkontrol
 
-    tag_map = parse_tag_map(args.tag_map)
+    tag_map = parse_tag_map(args.tag_map, args.extra_tag_map)
     result = {"module": mod_name, "docker_available": True, "status": "ran",
               "orchestrator": args.orchestrator, "versions": {}}
     overall_pass = True
     for full_ver in [v.strip() for v in args.versions.split(",")]:
-        tag = tag_map.get(full_ver) or tag_map.get(full_ver.rsplit(".", 1)[0]) or full_ver
+        tag = resolve_tag(tag_map, full_ver)
         if args.verbose:
             print(f"versi {full_ver} -> {IMAGE}:{tag}", file=sys.stderr)
         r = run_one_version(module_dir, mod_name, full_ver, tag,

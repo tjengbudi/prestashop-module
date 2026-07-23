@@ -48,24 +48,31 @@ Format spec skenario authored (`<module>/tests/e2e/*.json`):
      {"action": "expect_no_console_error"},
      {"action": "fill", "selector": "#PSM_FIELD", "value": "42"},
      {"action": "click", "selector": "button[name=submitSave]"},
+     {"action": "click_optional", "selector": "#warn-close"},
      {"action": "expect_text", "text": "successful"},
      {"action": "screenshot"},
      {"action": "goto", "area": "fo", "path": "/"},
      {"action": "expect_visible", "selector": "#header"}
    ]}
-Placeholder yang disubstitusi di `path`/`url`/`text`: {mod} {fo} {bo}. Area default `fo`.
+Placeholder yang disubstitusi di `path`/`url`/`text`/`value`: {mod} {fo} {bo} {browser}.
+Area default `fo`. {browser} = engine aktif — pakai untuk nama data unik per-browser
+(browser berbagi satu DB per versi; duplikat data = temuan memblok palsu).
 
-Prasyarat browser (sekali, host): `playwright install chromium firefox`.
+Prasyarat browser (sekali, host): `uv run --with playwright playwright install chromium firefox`
+— lewat playwright yang sama dgn yang diprovisi header PEP723 skrip ini, supaya build browser
+yang di-install cocok dgn yang di-drive.
 """
 import argparse
 import importlib.util
 import json
 import re
+import socket
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 # Pakai-ulang orkestrasi Docker dari sibling ps-flashlight-run.py (impor by-path
@@ -79,7 +86,22 @@ _spec.loader.exec_module(fl)
 DEFAULT_BROWSERS = "chromium,firefox"
 SUPPORTED_ENGINES = ("chromium", "firefox", "webkit")
 SUPPORTED_ACTIONS = ("goto", "expect_no_fatal", "expect_visible", "expect_text",
-                     "expect_no_console_error", "click", "fill", "screenshot")
+                     "expect_no_console_error", "click", "click_optional", "fill", "screenshot")
+# Aksi yang benar-benar MENEGAKKAN sesuatu. goto/click/fill/screenshot menggerakkan browser
+# tapi tak menyatakan apa pun soal benar/salah — `click` cuma membuktikan tombolnya ADA, bukan
+# hasilnya benar. Diturunkan dari SUPPORTED_ACTIONS supaya aksi expect_* yang ditambahkan nanti
+# ikut terhitung tanpa daftar kedua yang bisa melenceng.
+ASSERT_ACTIONS = tuple(a for a in SUPPORTED_ACTIONS if a.startswith("expect_"))
+# Aksi yang menilai RESPONS server (status + fatal) di URL yang dituju: konklusif tanpa login
+# BO. Dulu konklusivitas dikunci per-AREA, jadi BO yang 500-fatal → login gagal → bo_authed
+# False → SETIAP assertion BO tak konklusif, TERMASUK expect_no_fatal yang ada persis untuk
+# menangkap fatal itu → pass palsu atas BO mati. BO PS sehat me-redirect request tanpa-auth ke
+# AdminLogin (200/302, tanpa fatal), jadi goto/expect_no_fatal tak false-block tanpa login.
+# SENGAJA TAK memuat expect_no_console_error: ia menilai console HALAMAN YANG TERMUAT — saat
+# login gagal itu halaman login, bukan halaman BO module → memblok atas derau console login =
+# misattribusi. Ia konklusif hanya lewat bo_authed (halaman authed benar-benar tercapai).
+# Sisanya (expect_visible/expect_text/click/fill) butuh sesi & tetap tak konklusif tanpa auth.
+SESSION_INDEPENDENT_ACTIONS = ("goto", "expect_no_fatal")
 CONTAINER_HTTP_PORT = 80          # nginx/apache flashlight mendengarkan di 80
 DEFAULT_HOST_PORT = 8000
 # Default admin flashlight (BO folder `admin-dev`); override lewat flag. Login BO
@@ -87,7 +109,10 @@ DEFAULT_HOST_PORT = 8000
 DEFAULT_ADMIN_PATH = "admin-dev"
 DEFAULT_ADMIN_EMAIL = "admin@prestashop.com"
 DEFAULT_ADMIN_PASSWORD = "prestashop"
-DEFAULT_NAV_TIMEOUT_S = 20        # timeout per navigasi/aksi Playwright
+DEFAULT_NAV_TIMEOUT_S = 60        # timeout per navigasi/aksi Playwright; flashlight dingin
+                                  # butuh >20s di load pertama (kompilasi Smarty/Symfony)
+SETTLE_TIMEOUT_MS = 15000         # batas tunggu settle (networkidle login BO / 'load'
+                                  # sebelum expect_text) — BO polling XHR, jangan tunggu selamanya
 
 # Tanda PHP fatal / error server yang bikin "shop rusak" (white-screen / 500).
 FATAL_SIGNS = (
@@ -95,18 +120,64 @@ FATAL_SIGNS = (
     "Whoops, looks like something went wrong", "500 Internal Server Error",
     "Uncaught Error", "Parse error", "syntax error, unexpected",
 )
+_SCRIPT_RE = re.compile(r"<script\b.*?</script>", re.IGNORECASE | re.DOTALL)
+
+
+def fatal_sign_in(raw_body):
+    """Tanda fatal pertama di body respons MENTAH, atau None.
+
+    WAJIB diberi body mentah (`response.text()`), BUKAN `page.content()`.
+    content() adalah DOM TERSERIALISASI: parser menutup setiap tag yang terbuka,
+    jadi fatal yang memotong render di tengah `<script>` justru ikut tersapu regex
+    di bawah dan terbaca "tak ada fatal" — lolos konklusif atas toko rusak.
+    Di body mentah, script terpotong TAK punya `</script>` sehingga tak match
+    _SCRIPT_RE dan fatalnya tetap terlihat.
+
+    Blok script yang benar-benar tertutup dibuang: halaman PS sehat meng-embed
+    kamus terjemahan/JSON yang bisa memuat frasa ini — match di sana = temuan
+    memblok palsu atas module sehat.
+    """
+    visible = _SCRIPT_RE.sub("", raw_body or "")
+    for s in FATAL_SIGNS:
+        if s in visible:
+            return s
+    return None
+
+
+def _track_document(sink, resp):
+    """Simpan body MENTAH tiap respons dokumen, dikunci URL-nya, ke `sink`.
+
+    Dikunci URL supaya expect_no_fatal mengambil body milik halaman yang SEDANG
+    dibuka (page.url) — bukan body basi navigasi sebelumnya, bukan body iframe
+    (URL-nya beda). Ini jalur BEST-EFFORT untuk navigasi yang dipicu klik; jalur
+    utama (goto) menyimpan body langsung lewat _capture_body, karena Playwright
+    sync baru mendispatch event saat ada panggilan API yang memompa event loop —
+    listener saja TAK deterministik.
+    """
+    try:
+        if resp.request.resource_type != "document":
+            return
+        sink[resp.url] = resp.text()
+    except Exception:  # noqa: BLE001 — body tak tersedia; degrade jujur di titik pakai
+        pass
+
+
+def _capture_body(ctx, resp):
+    """Ambil body MENTAH langsung dari respons goto — deterministik, tanpa event."""
+    sink = ctx.get("doc")
+    if sink is None or resp is None:
+        return
+    try:
+        sink[resp.url] = resp.text()
+    except Exception:  # noqa: BLE001 — body tak terbaca (redirect/non-teks); degrade jujur
+        pass
 
 # Dijalankan DI DALAM container flashlight setelah healthy: salin + install module
 # (TANPA phpstan — coding-standard adalah wilayah Lapis 2). $MOD_NAME dari env.
-INSTALL_SH = r'''
-if ! cp -r /ps-module-src "/var/www/html/modules/$MOD_NAME" 2>&1; then echo PSM_COPY_FAIL; fi
-cd /var/www/html || echo PSM_NO_PSROOT
-if php -d memory_limit=-1 bin/console prestashop:module --no-interaction install "$MOD_NAME" 2>&1; then
-  echo PSM_INSTALL_OK
-else
-  echo PSM_INSTALL_FAIL
-fi
-'''
+# Blok yang SAMA dengan yang dipakai Lapis 2, dari pemiliknya — bukan salinan. Sentinelnya
+# berpasangan dgn fl.parse_install yang sudah kita impor: reader dibagi, jadi writer-nya
+# harus dibagi juga. Dua salinan yang kebetulan cocok tak menahan apa pun.
+INSTALL_SH = fl.INSTALL_BLOCK_SH
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +212,52 @@ def publish_spec(ps_domain):
     return f"{host_port_from_domain(ps_domain)}:{CONTAINER_HTTP_PORT}"
 
 
+def pick_free_host_port(preferred=0):
+    """Port host yang BEBAS: pakai `preferred` bila kosong, else port ephemeral OS.
+
+    Dua sesi validasi paralel dulu sama-sama menurunkan port dari
+    psm_flashlight_ps_domain (default 8000) → keduanya publish `:8000` → sesi kedua
+    gagal `docker` bind. Port harus dipilih SEBELUM boot karena PrestaShop membangun
+    URL absolut dari PS_DOMAIN saat container dibuat, dan Playwright mengikuti link
+    nyata: host:port publish HARUS sama dengan PS_DOMAIN. Port ephemeral yang baru
+    diketahui SESUDAH boot (docker `-p :80`) tak bisa dipakai — PS sudah memancarkan
+    link ke port yang salah. Jadi kita bind socket di muka untuk menemukan port bebas.
+
+    `preferred=0` (atau port yang sedang terpakai) → OS memilih port ephemeral bebas
+    lewat bind(('', 0)). Socket ditutup sebelum return; ada jendela race kecil (TOCTOU)
+    antara tutup socket & docker bind — pemanggil menutupnya dengan satu retry.
+    """
+    if preferred:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("", preferred))
+            return s.getsockname()[1]
+        except OSError:
+            pass  # preferred terpakai → jatuh ke ephemeral di bawah
+        finally:
+            s.close()
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+# Tanda docker gagal bind port host — sesi lain menyambar port di jendela race (TOCTOU)
+# antara kita menutup socket probe dan docker mem-bind. Pemanggil mundur ke port ephemeral.
+_PORT_CONFLICT_SIGNS = ("already allocated", "address already in use",
+                        "ports are not available", "failed to bind host port",
+                        "bind: address already in use")
+
+
+def _is_port_conflict(err):
+    """True bila pesan error bring-up menandakan tabrakan port host (bukan kegagalan lain)."""
+    low = (err or "").lower()
+    return any(sign in low for sign in _PORT_CONFLICT_SIGNS)
+
+
 def base_urls(ps_domain, admin_path):
     """(fo_base, bo_base) dari PS_DOMAIN + folder admin flashlight."""
     host = ps_domain or f"localhost:{DEFAULT_HOST_PORT}"
@@ -150,20 +267,28 @@ def base_urls(ps_domain, admin_path):
 
 
 def substitute(text, ctx):
-    """Substitusi placeholder {mod}/{fo}/{bo} di string spec."""
+    """Substitusi placeholder {mod}/{fo}/{bo}/{browser} di string spec.
+
+    {browser} = engine aktif (ctx['engine']) — dipakai spec pembuat data supaya
+    nama unik per-browser: chromium & firefox berbagi satu DB per versi, data
+    duplikat dari browser pertama bikin browser kedua gagal palsu (memblok).
+    """
     if not text:
         return text
     return (text.replace("{mod}", ctx["mod"])
                 .replace("{fo}", ctx["fo"])
-                .replace("{bo}", ctx["bo"]))
+                .replace("{bo}", ctx["bo"])
+                .replace("{browser}", ctx.get("engine", "")))
 
 
 def universal_smoke():
     """Skenario built-in yang berlaku ke SEMUA module: shop tak rusak dgn module aktif.
 
-    FO home (no-auth, selalu konklusif) + BO module manager (konklusif hanya bila
-    login admin berhasil). Assertion inti: tak ada fatal/500 & halaman benar-benar
-    ter-render. Placeholder {mod} tersedia untuk skenario authored, bukan smoke ini.
+    FO home (no-auth, selalu konklusif) + BO module manager. Di BO, goto/expect_no_fatal
+    menilai RESPONS server (status + fatal) → konklusif tanpa login: BO PS sehat me-redirect
+    request tanpa-auth ke AdminLogin (200, tanpa fatal), jadi hanya BO yang benar-benar 500/
+    fatal yang memblok. Assertion isi ber-auth (expect_visible/expect_text) butuh login berhasil.
+    Placeholder {mod} tersedia untuk skenario authored, bukan smoke ini.
     """
     return {
         "name": "psm-universal-smoke",
@@ -178,14 +303,54 @@ def universal_smoke():
     }
 
 
+def deleted_specs(module_dir):
+    """Spec E2E yang git tahu ada, tapi tak ada di working tree. Return daftar nama file.
+
+    Spec yang merah membuat vonis jujur: `ready` jatuh karena ada coverage yang diniatkan
+    tapi tak jalan. Hapus filenya dan catatannya ikut mati bersamanya — jadi `ready` NAIK
+    justru karena uji berkurang. Satu-satunya yang masih mengingat spec itu pernah ada
+    adalah git, jadi ke sanalah kita bertanya.
+
+    Lingkupnya sengaja penghapusan yang BELUM di-commit (staged maupun tidak): itulah
+    jendela tempat "hapus uji yang merah lalu jalankan ulang validasi" terjadi. Penghapusan
+    yang sudah di-commit adalah keputusan yang terekam dan bisa ditinjau lewat diff-nya —
+    itu urusan review, bukan skrip ini, dan menandainya selamanya cuma bikin bising.
+
+    Bukan repo git / git tak terpasang / tests/e2e tak pernah dilacak -> [] (tak bisa tahu;
+    jangan menebak).
+    """
+    module_dir = Path(module_dir)
+    try:
+        r = subprocess.run(["git", "-C", str(module_dir), "status", "--porcelain",
+                            "--untracked-files=no", "--", "tests/e2e"],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode != 0:
+        return []
+    gone = set()
+    for line in r.stdout.splitlines():
+        # porcelain v1: "XY <path>" — X=index, Y=working tree. 'D' di salah satunya =
+        # file yang dilacak git hilang dari disk.
+        if len(line) > 3 and "D" in line[:2]:
+            name = Path(line[3:].strip().strip('"')).name
+            if name.endswith(".json"):
+                gone.add(name)
+    return sorted(gone)
+
+
 def discover_scenarios(module_dir):
     """Muat spec authored dari <module>/tests/e2e/*.json. Return (scenarios, notes).
 
     Spec tak valid (JSON rusak / tanpa 'steps' list / aksi tak dikenal) DILEWATI
     dengan catatan — tak crash, tak diam-diam hilang. Validasi aksi di sini supaya
-    typo (mis. 'expect_visable') tak pernah terbaca hijau.
+    typo (mis. 'expect_visable') tak pernah terbaca hijau. Spec yang DIHAPUS tapi masih
+    tercatat git juga dicatat: kalau tidak, menghapus uji yang merah menaikkan `ready`.
     """
     found, notes = [], []
+    for name in deleted_specs(module_dir):
+        notes.append(f"{name}: spec dihapus dari working tree tapi masih tercatat git — "
+                     "pulihkan (git checkout) atau commit penghapusannya sbg keputusan sadar")
     e2e_dir = Path(module_dir) / "tests" / "e2e"
     if not e2e_dir.is_dir():
         return found, notes
@@ -197,14 +362,28 @@ def discover_scenarios(module_dir):
             continue
         steps = data.get("steps") if isinstance(data, dict) else None
         if not isinstance(steps, list) or not steps:
-            notes.append(f"{f.name}: tak ada 'steps' list — dilewati")
+            notes.append(f"{f.name}: tak ada 'steps' list — dilewati "
+                         '(bentuk: {"name": "...", "steps": [{"action": "goto", ...}]})')
             continue
+        # Catatan menyebut kosakata yang SAH, bukan cuma yang salah: spec adalah satu-satunya
+        # input yang ditulis tangan manusia, dan tanpa daftar ini penulisnya harus menebak
+        # atau membuka --help — padahal SUPPORTED_ACTIONS ada tepat di sini.
         unknown = sorted({str((s.get("action") if isinstance(s, dict) else None) or "?")
                           for s in steps
                           if not isinstance(s, dict) or s.get("action") not in SUPPORTED_ACTIONS})
         if unknown:
-            notes.append(f"{f.name}: aksi tak dikenal ({', '.join(unknown)}) — dilewati")
+            notes.append(f"{f.name}: aksi tak dikenal ({', '.join(unknown)}) — dilewati; "
+                         f"sah: {', '.join(SUPPORTED_ACTIONS)}")
             continue
+        # Spec tanpa satu pun aksi expect_* tak menegakkan apa pun — ia tetap DIJALANKAN
+        # (sebuah `goto` yang kena HTTP 500 tetap temuan yang memblok), tapi tak dihitung
+        # sebagai cakupan uji perilaku. Catatannya lahir di sini, pemilik tunggal aturan
+        # "spec mana yang sah", supaya pra-pass ps-plan-layers ikut memancarkannya SEBELUM
+        # container boot — dulu penulisnya baru tahu sesudah N versi x M browser terbakar.
+        if not any(isinstance(s, dict) and s.get("action") in ASSERT_ACTIONS for s in steps):
+            notes.append(f"{f.name}: tak ada aksi expect_* — skenario ini tak menegakkan apa pun, "
+                         f"jadi tak dihitung sebagai cakupan uji perilaku (tetap dijalankan); "
+                         f"assertion yang sah: {', '.join(ASSERT_ACTIONS)}")
         found.append({"name": data.get("name") or f.stem, "source": f.name, "steps": steps})
     return found, notes
 
@@ -223,13 +402,11 @@ def _res(action, ok, conclusive, message, location):
             "message": message, "location": location}
 
 
-def _fatal_message(status, html):
+def _fatal_message(status, raw_body):
     if status is not None and status >= 500:
         return f"HTTP {status} (server error)"
-    for sign in FATAL_SIGNS:
-        if sign in html:
-            return f"tanda fatal: '{sign}'"
-    return "tak ada fatal"
+    sign = fatal_sign_in(raw_body)
+    return f"tanda fatal: '{sign}'" if sign else "tak ada fatal"
 
 
 def _resolve_url(step, ctx, area):
@@ -237,6 +414,20 @@ def _resolve_url(step, ctx, area):
         return substitute(step["url"], ctx)
     base = ctx["fo"] if area == "fo" else ctx["bo"]
     return base + substitute(step.get("path", ""), ctx)
+
+
+def run_shot_dir(base):
+    """Subfolder screenshot khusus run ini — `<base>/run-<YYYYMMDD-HHMMSS>`.
+
+    Nama file screenshot deterministik (`<ver>/<engine>-<skenario>-<label>.png`) dan tak
+    pernah dibersihkan, jadi satu folder datar menumpuk PNG dari run-run sebelumnya —
+    termasuk versi yang tak lagi dalam cakupan run sekarang. Verifikasi visual Lapis 4
+    menyuruh model MEMVONIS dari gambar itu, jadi folder datar membuka jalan: layout rusak
+    dari run minggu lalu ditulis jadi `error` yang MEMBLOK module, atas bukti dari run yang
+    sudah tak ada. Memisahkan per-run menghapus kelasnya di sumber — lebih baik daripada
+    menaruh gotcha yang harus diingat model.
+    """
+    return str(Path(base) / f"run-{datetime.now():%Y%m%d-%H%M%S}") if base else None
 
 
 def _snap(page, ctx, label):
@@ -260,8 +451,13 @@ def _snap(page, ctx, label):
 def run_steps(page, steps, ctx):
     """Eksekusi langkah skenario terhadap `page` (Playwright-like). Return list hasil.
 
-    `page` cukup mengekspos goto()->response(status), content()->str, locator(sel),
+    `page` cukup mengekspos goto()->response(status), url, content()->str, locator(sel)
+    (.first.is_visible()/.count()), get_by_text(txt).filter(visible=True)(.count()),
     click(sel), fill(sel,val) — sehingga logika ini teruji dengan page-tiruan.
+    `expect_no_fatal` menilai body MENTAH dari ctx['doc'][page.url] (diisi
+    _track_document lewat listener response); tanpa body itu ia TAK menilai (tak
+    konklusif) alih-alih menebak dari DOM. `click_optional` = klik bila elemen ada,
+    lewati tanpa gagal bila tidak (interstitial yang muncul hanya di sebagian versi).
     Assertion di area BO konklusif hanya bila ctx['bo_authed'] True. `expect_no_console_error`
     membaca error JS/console yang ditangkap drive_engine (ctx['console_sink'] sejak
     ctx['console_base']). Screenshot otomatis diambil sesudah goto & pada kegagalan bila
@@ -274,26 +470,54 @@ def run_steps(page, steps, ctx):
         action = step.get("action")
         if action == "goto":
             area = step.get("area", area)
-        conclusive = (area != "bo") or ctx.get("bo_authed", False)
+        conclusive = ((area != "bo") or ctx.get("bo_authed", False)
+                      or action in SESSION_INDEPENDENT_ACTIONS)
         try:
             if action == "goto":
                 url = _resolve_url(step, ctx, area)
                 resp = page.goto(url)
                 last_status = getattr(resp, "status", None) if resp is not None else None
+                _capture_body(ctx, resp)
                 ok = last_status is None or last_status < 500
                 results.append(_res(action, ok, conclusive, f"status={last_status}", url))
                 _snap(page, ctx, f"{idx:02d}-goto")
             elif action == "expect_no_fatal":
-                html = page.content() or ""
-                bad = (last_status is not None and last_status >= 500) or any(s in html for s in FATAL_SIGNS)
-                results.append(_res(action, not bad, conclusive, _fatal_message(last_status, html), area))
+                if last_status is not None and last_status >= 500:
+                    results.append(_res(action, False, conclusive, f"HTTP {last_status} (server error)", area))
+                else:
+                    try:
+                        # Memompa event loop (Playwright sync mendispatch event hanya
+                        # saat ada panggilan API) supaya body navigasi-lewat-klik sempat
+                        # tertangkap listener, sekaligus menunggu dokumen selesai.
+                        page.wait_for_load_state("load", timeout=SETTLE_TIMEOUT_MS)
+                    except Exception:  # noqa: BLE001 — pompa best-effort
+                        pass
+                    body = (ctx.get("doc") or {}).get(getattr(page, "url", None))
+                    if body is None:
+                        # Tanpa body mentah halaman ini, tak ada penilaian jujur —
+                        # jangan menebak dari page.content() (lihat fatal_sign_in).
+                        results.append(_res(action, False, False,
+                                            "body respons mentah tak tertangkap — fatal tak dinilai", area))
+                    else:
+                        results.append(_res(action, fatal_sign_in(body) is None, conclusive,
+                                            _fatal_message(last_status, body), area))
             elif action == "expect_visible":
                 sel = step.get("selector", "")
                 vis = page.locator(sel).first.is_visible()
                 results.append(_res(action, bool(vis), conclusive, f"visible={bool(vis)} sel={sel}", sel))
             elif action == "expect_text":
+                try:
+                    # Settle pasca submit/redirect: tanpa ini konten halaman LAMA
+                    # terbaca -> false-fail timing yang menggerus kepercayaan run merah.
+                    page.wait_for_load_state("load", timeout=SETTLE_TIMEOUT_MS)
+                except Exception:  # noqa: BLE001 — settle best-effort, assertion tetap dievaluasi
+                    pass
                 txt = substitute(step.get("text", ""), ctx)
-                present = txt in (page.content() or "")
+                # Teks yang BENAR-BENAR TERLIHAT. get_by_text saja tak cukup: ia
+                # mencocokkan node teks apa pun termasuk yang display:none, dan BO
+                # PrestaShop membawa template growl/modal tersembunyi — 'successful'
+                # di sana bikin simpan yang GAGAL terbaca lolos konklusif.
+                present = page.get_by_text(txt).filter(visible=True).count() > 0
                 results.append(_res(action, present, conclusive, f"text present={present}: {txt[:50]}", area))
             elif action == "expect_no_console_error":
                 errs = ctx.get("console_sink", [])[ctx.get("console_base", 0):]
@@ -304,6 +528,16 @@ def run_steps(page, steps, ctx):
             elif action == "click":
                 page.click(step.get("selector", ""))
                 results.append(_res(action, True, conclusive, "clicked", step.get("selector", "")))
+            elif action == "click_optional":
+                # Utk elemen yang hanya muncul di sebagian versi (mis. interstitial
+                # "Invalid security token" BO legacy 1.7/8, absen di Symfony 9):
+                # klik bila ada, lewati TANPA gagal bila tidak.
+                sel = step.get("selector", "")
+                if page.locator(sel).count() > 0:
+                    page.click(sel)
+                    results.append(_res(action, True, conclusive, "clicked (elemen ada)", sel))
+                else:
+                    results.append(_res(action, True, conclusive, "dilewati — elemen tak ada", sel))
             elif action == "fill":
                 page.fill(step.get("selector", ""), substitute(step.get("value", ""), ctx))
                 results.append(_res(action, True, conclusive, "filled", step.get("selector", "")))
@@ -319,6 +553,30 @@ def run_steps(page, steps, ctx):
         if results and not results[-1]["ok"]:
             _snap(page, ctx, f"{idx:02d}-FAIL-{action or 'x'}")
     return results
+
+
+def count_authored_assertions(driven):
+    """Berapa assertion authored yang BENAR-BENAR dinilai di versi ini — fakta yang DIHITUNG.
+
+    Dulu pertanyaan "module ini punya uji perilaku?" dijawab dari NAMA skenario: ada `source`
+    yang bukan `builtin:` berarti ya. Itu premis STRUKTURAL, dan sebuah spec berisi dua
+    `screenshot` — nol assertion — menjawabnya "ya" juga, jadi `ready` naik dari false ke true
+    karena sebuah FILE ada. Insentifnya terbalik: cara termurah dapat siap-rilis justru menulis
+    spec kosong, kebalikan dari tekanan menuju TDD yang jadi alasan gerbang ini dipilih.
+
+    Yang dihitung: hasil dari skenario authored (bukan builtin), aksinya keluarga expect_*, DAN
+    konklusif — assertion yang tak konklusif (mis. area BO tanpa login) tak membuktikan apa pun,
+    sejalan aturan "jangan percaya sesi rusak" yang sudah berlaku di seam lain.
+    """
+    n = 0
+    for eng in driven:
+        for sc in eng.get("scenarios", []):
+            if str(sc.get("source", "")).startswith("builtin"):
+                continue
+            for r in sc.get("results", []):
+                if r.get("action") in ASSERT_ACTIONS and r.get("conclusive"):
+                    n += 1
+    return n
 
 
 def assemble_findings(full_ver, driven):
@@ -389,21 +647,31 @@ def browser_available(engine):
 
 
 def wait_http(url, timeout, poll=2.0):
-    """Poll GET url sampai respons < 500 (200/redirect) / timeout. Return (ok, status)."""
+    """Poll GET url sampai respons < 500 (200/redirect) / timeout. Return (ok, status, responded).
+
+    `responded` True begitu server membalas HTTP apa pun — TERMASUK 5xx: nginx+kernel PS
+    menjawab, jadi port jelas terpublish & boot berhasil. 5xx yang BERTAHAN sepanjang timeout
+    (500 saat cold-start akan resolve jadi 200 lewat poll) adalah bukti MODULE merusak toko,
+    bukan infra — pemanggil harus membiarkan browser + expect_no_fatal memvonisnya, jangan
+    menyapunya ke kanal infra. `responded` False hanya bila TAK ada respons TCP sama sekali
+    (connection refused / timeout tanpa HTTP) = port publish / boot memang gagal.
+    """
     deadline = time.monotonic() + timeout
     last = "no-response"
+    responded = False
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(url, timeout=10) as r:  # noqa: S310 (localhost)
-                return True, r.status
+                return True, r.status, True
         except urllib.error.HTTPError as e:
+            responded = True
             if e.code < 500:
-                return True, e.code
+                return True, e.code, True
             last = f"HTTP {e.code}"
         except (urllib.error.URLError, OSError) as e:
             last = str(e)[:80]
         time.sleep(poll)
-    return False, last
+    return False, last, responded
 
 
 def install_module(session, mod_name, timeout):
@@ -416,22 +684,43 @@ def install_module(session, mod_name, timeout):
     inst = fl.parse_install(out)
     if inst.get("copy_fail"):
         return {"ok": False}, "gagal menyalin module ke dalam container"
-    return {"ok": inst["ok"], "no_console": inst.get("no_console", False)}, None
+    return {"ok": inst["ok"], "no_console": inst.get("no_console", False),
+            "no_psroot": inst.get("no_psroot", False),
+            "no_verdict": inst.get("no_verdict", False)}, None
 
 
 def _bo_login(page, ctx):
-    """Login BO best-effort (form AdminLogin: email/passwd/submitLogin stabil 1.7/8/9)."""
-    try:
-        page.goto(ctx["bo"] + "/index.php?controller=AdminLogin")
-        page.fill("input[name=email]", ctx["admin_email"])
-        page.fill("input[name=passwd]", ctx["admin_password"])
-        page.click("button[name=submitLogin]")
-        page.wait_for_load_state("networkidle")
-        html = page.content() or ""
-        # Berhasil bila form login tak lagi ada (sudah masuk BO).
-        return "submitLogin" not in html
-    except Exception:  # noqa: BLE001
-        return False
+    """Login BO best-effort (form AdminLogin: input email/passwd stabil 1.7/8/9).
+
+    Tombol submit — verified vs flashlight 1.7.8.11/8.1.6/9.1.4: NAME `submitLogin`
+    di 1.7 & 8 (form legacy; dan cocok ke DUA tombol — login + "Send reset link"),
+    `submit_login` di 9 (Symfony). ID `#submit_login` sama di ketiganya — klik via id,
+    satu-satunya selector yang jalan di ketiga versi.
+
+    Sukses = sinyal STRUKTURAL ganda, bukan absen substring di HTML terserialisasi
+    (halaman 500 / interstitial token juga tanpa field passwd → cek substring lama
+    lapor sukses palsu → assertion BO jadi konklusif-memblok atas kegagalan infra):
+    field passwd hilang (locator count 0) DAN URL sudah meninggalkan AdminLogin.
+    Dicoba 2x — POST+redirect pertama flaky di cold-container 1.7/8 (verified).
+    """
+    for _ in range(2):
+        try:
+            page.goto(ctx["bo"] + "/index.php?controller=AdminLogin")
+            page.fill("input[name=email]", ctx["admin_email"])
+            page.fill("input[name=passwd]", ctx["admin_password"])
+            page.click("#submit_login")
+            try:
+                # BO punya polling XHR — networkidle bisa tak pernah tercapai; batasi,
+                # lalu fallback ke "load".
+                page.wait_for_load_state("networkidle", timeout=SETTLE_TIMEOUT_MS)
+            except Exception:  # noqa: BLE001
+                page.wait_for_load_state("load")
+            if (page.locator("input[name=passwd]").count() == 0
+                    and "controller=AdminLogin" not in (getattr(page, "url", "") or "")):
+                return True
+        except Exception:  # noqa: BLE001 — attempt gagal (nav/selector) → coba sekali lagi
+            pass
+    return False
 
 
 def _drive_page(browser, engine, scenarios, ctx):
@@ -447,9 +736,13 @@ def _drive_page(browser, engine, scenarios, ctx):
     page.on("console", lambda m: console_sink.append({"type": m.type, "text": (m.text or "")[:200]})
             if getattr(m, "type", "") == "error" else None)
     page.on("pageerror", lambda e: console_sink.append({"type": "pageerror", "text": str(e)[:200]}))
+    # Body respons MENTAH per URL — satu-satunya masukan sah expect_no_fatal.
+    doc_sink = {}
+    page.on("response", lambda r: _track_document(doc_sink, r))
     base = dict(ctx)
     base["engine"] = engine
     base["console_sink"] = console_sink
+    base["doc"] = doc_sink
     base["bo_authed"] = _bo_login(page, base) if _needs_bo(scenarios) else False
     out = []
     for sc in scenarios:
@@ -561,13 +854,28 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
                 res["errors"].append(f"gagal pull {i}: {p.stderr.strip()[-200:]}")
                 return res
 
-    publish = publish_spec(ps_domain)
-    if mode == "compose":
-        session, err = fl._bring_up_compose(module_dir, full_ver, image_ref, db_image,
-                                            ps_domain, op_timeout, publish)
-    else:
-        session, err = fl._bring_up_manual(module_dir, image_ref, db_image, ps_domain,
-                                           startup_timeout, publish)
+    # Port host dipilih dinamis SEBELUM boot: PS_DOMAIN & publish memakai port yang SAMA
+    # (PrestaShop membangun URL absolut dari PS_DOMAIN; Playwright mengikuti link nyata).
+    # Basis dari ps_domain config, jatuh ke port ephemeral bila terpakai → dua sesi paralel
+    # tak rebutan bind. Satu retry menutup jendela race (TOCTOU): bila docker gagal bind
+    # karena tabrakan port, pilih port ephemeral baru lalu ulang sekali.
+    preferred_port = host_port_from_domain(ps_domain)
+    session, err, ps_domain_eff = None, None, None
+    for attempt in range(2):
+        host_port = pick_free_host_port(preferred_port if attempt == 0 else 0)
+        ps_domain_eff = f"localhost:{host_port}"
+        publish = f"{host_port}:{CONTAINER_HTTP_PORT}"
+        if mode == "compose":
+            session, err = fl._bring_up_compose(module_dir, full_ver, image_ref, db_image,
+                                                ps_domain_eff, op_timeout, publish)
+        else:
+            session, err = fl._bring_up_manual(module_dir, image_ref, db_image, ps_domain_eff,
+                                               startup_timeout, publish)
+        if err and _is_port_conflict(err) and attempt == 0:
+            fl._teardown(session)  # port disambar sesi lain di jendela race → coba port lain
+            continue
+        break
+    res["ps_domain"] = ps_domain_eff
     if err:
         res["errors"].append(err)
         fl._teardown(session)
@@ -581,18 +889,40 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
             return res
 
         install, ierr = install_module(session, mod_name, op_timeout)
-        res["install"] = {"ok": install["ok"], "no_console": install.get("no_console", False)}
+        res["install"] = {"ok": install["ok"], "no_console": install.get("no_console", False),
+                          "no_psroot": install.get("no_psroot", False),
+                          "no_verdict": install.get("no_verdict", False)}
         if ierr or not install["ok"]:
             # Install adalah wilayah vonis Lapis 2; di sini cuma prasyarat E2E → tak konklusif.
-            res["errors"].append(
-                ierr or "module gagal install — E2E tak bisa menilai perilaku (Lapis 2 flashlight yang memvonis install)")
+            # Bedakan infra (image tanpa bin/console / PS root, atau installer tak mencapai
+            # vonisnya) dari module ditolak core: keduanya tak memblok di sini, tapi alasannya
+            # harus jujur, bukan disamarkan.
+            if install.get("no_console") or install.get("no_psroot"):
+                res["errors"].append(
+                    "image tak punya bin/console / PS root — module tak bisa di-install, E2E tak bisa menilai perilaku")
+            elif install.get("no_verdict"):
+                res["errors"].append(
+                    "installer tak mencapai vonis di container (exec/output gagal) — E2E tak bisa menilai perilaku")
+            else:
+                res["errors"].append(
+                    ierr or "module gagal install — E2E tak bisa menilai perilaku (Lapis 2 flashlight yang memvonis install)")
             return res
 
-        fo, bo = base_urls(ps_domain, admin_path)
-        reach_ok, rstatus = wait_http(fo + "/", startup_timeout)
-        if not reach_ok:
+        fo, bo = base_urls(ps_domain_eff, admin_path)
+        reach_ok, rstatus, responded = wait_http(fo + "/", startup_timeout)
+        if not reach_ok and not responded:
+            # Tak ada respons TCP sama sekali → port publish / boot memang gagal (infra jujur).
             res["errors"].append(f"PS tak terjangkau di {fo} ({rstatus}) — port publish/boot gagal")
             return res
+        # reach_ok False TAPI responded True (mis. 5xx bertahan): nginx+kernel menjawab, port
+        # terpublish → JANGAN return. Biarkan smoke universal (goto '/' + expect_no_fatal)
+        # men-drive & memvonis toko yang rusak — itu justru yang Lapis 4 ada untuk menangkap.
+
+        # Warm-up BO sebelum browser men-drive (verified: login cold-container 1.7/8
+        # flaky karena kompilasi halaman login lambat) — best-effort, gagal tak memvonis:
+        # login tetap best-effort di _bo_login (plus satu retry di sana).
+        if _needs_bo(scenarios):
+            wait_http(f"{bo}/index.php?controller=AdminLogin", startup_timeout)
 
         ver_shot_dir = None
         if screenshot_dir:
@@ -622,15 +952,22 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
             res["skipped_browser"] = True
             return res
 
-        # Rollup artefak visual: hitungan error console/JS (advisory, surface visibilitas) + path screenshot.
+        # Rollup artefak visual: hitungan error console/JS (advisory) + path screenshot.
+        # SENGAJA TIDAK masuk `browser_notes`. Field itu memikul CELAH CAKUPAN (engine tak
+        # jalan, binary absen) yang memang harus menjatuhkan `ready`; error console adalah
+        # OBSERVASI yang desainnya sendiri nyatakan tak memblok. Menyatukan keduanya bikin
+        # `ready` tak deterministik: modul & spec yang sama persis menghasilkan ready=true
+        # saat toko diam dan ready=false saat satu skrip pihak-ketiga kebetulan berisik
+        # (kureproduksi: console_errors 0 -> ready true, lalu 3 -> ready false, kode identik).
+        # Hitungannya sudah punya kanal sendiri di bawah; yang mau menegakkan memakai aksi
+        # `expect_no_console_error` — pilihan sadar, per-skenario, dan konklusif.
         res["console_errors"] = sum(len(sc.get("console_errors", []))
                                     for eng in driven for sc in eng.get("scenarios", []))
         res["screenshots"] = [s for eng in driven for sc in eng.get("scenarios", [])
                               for s in sc.get("screenshots", [])]
-        if res["console_errors"]:
-            res["browser_notes"].append(
-                f"{res['console_errors']} error console/JS terdeteksi di browser "
-                "(advisory; pakai aksi 'expect_no_console_error' di skenario untuk menegakkan)")
+        # Cakupan authored versi ini, DIHITUNG di sini karena hanya di sini langkah per-skenario
+        # terlihat; agregat cuma menerima ringkasan dan tak bisa menurunkannya sendiri.
+        res["authored_assertions"] = count_authored_assertions(driven)
 
         findings, inconclusive = assemble_findings(full_ver, driven)
         res["findings"] = findings
@@ -652,13 +989,15 @@ def _emit(result, output):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Lapis 4 — uji perilaku browser (E2E) module di Docker flashlight, per versi & browser.")
+        description="Lapis 4 — uji perilaku browser (E2E) module di Docker flashlight, per versi & browser.",
+        epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module_path", help="Path folder module PrestaShop")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
     ap.add_argument("--browsers", default=DEFAULT_BROWSERS,
                     help=f"Engine Playwright dipisah koma (default: {DEFAULT_BROWSERS}; didukung: {','.join(SUPPORTED_ENGINES)})")
-    ap.add_argument("--tag-map", default="", help="Pemetaan versi=tag dipisah koma, mis. '9.1=9.1.4-nginx'")
-    ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default="auto",
+    ap.add_argument("--tag-map", default="", help="Peta LENGKAP versi=tag dipisah koma (MENGGANTI default)")
+    ap.add_argument("--extra-tag-map", default="", help="Tag TAMBAHAN versi=tag (MENAMBAH di atas peta)")
+    ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default=fl.DEFAULT_ORCHESTRATOR,
                     help="Cara menghidupkan DB+flashlight (default: auto)")
     ap.add_argument("--db-image", default=fl.DEFAULT_DB_IMAGE, help=f"Image server DB (default: {fl.DEFAULT_DB_IMAGE})")
     ap.add_argument("--ps-domain", default=fl.DEFAULT_PS_DOMAIN,
@@ -707,15 +1046,16 @@ def main():
     authored, notes = discover_scenarios(module_dir)
     scenarios = [universal_smoke()] + authored
 
-    tag_map = fl.parse_tag_map(args.tag_map)
+    tag_map = fl.parse_tag_map(args.tag_map, args.extra_tag_map)
+    shot_dir = run_shot_dir(args.screenshot_dir)
     result = {"module": mod_name, "e2e_available": True, "status": "ran",
               "orchestrator": args.orchestrator, "browsers": requested, "browsers_available": usable,
-              "headed": args.headed, "screenshot_dir": args.screenshot_dir,
+              "headed": args.headed, "screenshot_dir": shot_dir,
               "scenario_sources": ["builtin:psm-universal-smoke"] + [s["source"] for s in authored],
               "scenario_notes": notes, "versions": {}}
     overall_pass = True
     for full_ver in [v.strip() for v in args.versions.split(",")]:
-        tag = tag_map.get(full_ver) or tag_map.get(full_ver.rsplit(".", 1)[0]) or full_ver
+        tag = fl.resolve_tag(tag_map, full_ver)
         if args.verbose:
             print(f"versi {full_ver} -> {fl.IMAGE}:{tag} | browser terpasang: {','.join(usable) or '(none)'}",
                   file=sys.stderr)
@@ -726,7 +1066,7 @@ def main():
                             admin_email=args.admin_email, admin_password=args.admin_password,
                             startup_timeout=args.startup_timeout, op_timeout=args.timeout,
                             nav_timeout=args.nav_timeout * 1000, allow_pull=args.allow_image_pull,
-                            headed=args.headed, screenshot_dir=args.screenshot_dir)
+                            headed=args.headed, screenshot_dir=shot_dir)
         result["versions"][full_ver] = r
         overall_pass = overall_pass and r["pass"]
     result["pass"] = overall_pass
