@@ -1,0 +1,429 @@
+{
+  "schema_version": 2,
+  "subject": "/home/budi/dev/prestashop-module/.claude/skills/psm-validate",
+  "generated": "2026-07-24",
+  "verdict": "Ronde-7: seluruh warisan enam ronde terverifikasi utuh, tapi dua commit yang belum pernah dianalisis (paralelisme per-versi + port dinamis) memasang produsen file kanonik baru — ps-merge-versions.py — di luar setiap gerbang yang menjaga file lapis, sehingga bukti basi 10 hari lolos jadi ready=true (determinism-1 CRITICAL, dikonfirmasi independen architecture-1).",
+  "grade": "poor",
+  "summary": "Yang dibangun enam ronde masih berdiri: nol dead wire, empat invarian false-pass utuh, keempat pra-pass bersih, 6 skrip semua ber-test dan 6 suite hijau. Kekuatan intinya juga terbukti sekali lagi — tiap gerbang di skill ini punya satu pemilik yang benar-benar menegakkan (lensa memverifikasinya dengan mutasi, bukan membaca klaim). Peluang terbesarnya adalah satu kelas yang persis diramalkan verifier ronde-5: gerbang yang benar di satu seam, telanjang di kembarannya. ps-merge-versions.py masuk sebagai produsen file kanonik yang dipercaya seluruh rantai vonis, tapi ia menerima daftar file yang diketik model dan tak memeriksa kesegaran, identitas module, identitas lapis, maupun kelengkapan versi — dan mtime file hasil merge sendiri membatalkan gerbang kesegaran ps-plan-layers.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "Merge jadi produsen file kanonik di luar setiap gerbang yang menjaga file itu",
+      "root_cause": "Seluruh rantai vonis mempercayai <module>-<lapis>.json, dan sampai commit 01013b5 hanya skrip lapis yang boleh menulisnya. ps-merge-versions.py kini menulisnya juga, tapi menerima daftar --inputs yang diketik model: ia tak tahu module, lapis, maupun versi target, jadi ia secara struktural tak bisa menegakkan kesegaran (pl.newest_source_mtime), identitas, kelengkapan, atau token path belum-resolve — empat gerbang yang sudah ada pemiliknya di seam sebelah. Ini bentuk yang persis dinamai kedua verifier ronde-5: gerbang ada dan benar di satu seam, kembarannya telanjang.",
+      "finding_ids": ["determinism-1", "architecture-1", "determinism-2", "determinism-3", "determinism-5", "architecture-7", "architecture-8", "customization-2", "architecture-10"],
+      "action": "Balik arah kepemilikan: merge harus MENURUNKAN input-nya, bukan menerimanya. Ganti --inputs dengan --module-path/--reports-dir/--layer(wajib)/--versions, lalu pasang pemilik yang sudah ada di dalamnya — pl.newest_source_mtime untuk kesegaran tiap input, ss.unresolved_path_args untuk -o, agg.validate_layer_shape tanpa syarat, plus cek versions-file==versi-di-nama, module cocok, dan tiap versi diminta punya file. Batasi --layer ke lapis yang memang per-versi (flashlight, e2e) dan tolak static/adversarial dengan pesan sebabnya, bukan vonis 'input rusak'. Rekonsiliasi skalar 'first present' diganti: fakta cakupan (main_file_found) reconcile pesimistis atau beda skalar = exit 2 seperti konflik versi. Tiap gerbang butuh test yang terbukti merah saat gerbangnya dilepas — tiga di antaranya hari ini hijau di atas kode yang salah."
+    },
+    {
+      "title": "Jalur resume dan kegagalan parsial tak punya jalan untuk artefak baru",
+      "root_cause": "ps-plan-layers ada supaya run mahal tak diulang, dan ia hanya mengenal <module>-<lapis>.json. File per-versi — satu-satunya artefak yang tersisa saat fan-out terputus — tak terlihat olehnya, jadi jawabannya 'file lapis belum ada' dan N boot Docker terbakar ulang. Satu-satunya jembatan dari file per-versi ke jalur resume adalah ingatan orkestrator tentang subagent mana yang sudah kembali: persis state yang kompaksi konteks makan, dan persis alasan fan-out ini ada.",
+      "finding_ids": ["architecture-2", "enhancement-1", "enhancement-2", "enhancement-6"],
+      "action": "Ajari ps-plan-layers glob <module>-<lapis>-*.json, lewatkan tiap file lewat gerbang kesegaran/provenance yang sama, dan emit pending_merge:{lapis:[file]} bila file per-versi segar sementara file kanonik absen/basi; SKILL.md cukup satu klausa 'lapis ber-pending_merge: merge dulu, jangan jalankan ulang'. Sebutkan juga jalur kegagalan parsial (subagent mati/kosong -> ulangi versi itu saja sekali, lalu merge yang ada dan sebut versi itu) dan tambahkan dua asumsi baru ke daftar memlog headless."
+    },
+    {
+      "title": "Kanal bukti menyusut diam-diam di bawah fan-out",
+      "root_cause": "run_shot_dir menstempel folder per-PROSES, jadi N subagent versi menghasilkan N folder screenshot; merge memilih satu lewat aturan first-present, dan ps-aggregate mengangkat yang satu itu jadi e2e_screenshot_dir. SKILL.md menyebut peninjauan visual screenshot itu 'satu-satunya kanal judgment model ke vonis' sekaligus melarang subagent per-versi memvonis — jadi di jalur paralel kanal itu tak punya pemilik dan model meninjau 1 dari N versi tanpa pernah diberi tahu.",
+      "finding_ids": ["architecture-4", "enhancement-3", "determinism-4", "enhancement-7"],
+      "action": "Beri fan-out satu identitas sesi: orkestrator menghitung folder run sekali dan meneruskan --screenshot-dir yang sama ke tiap subagent versi (subfolder per-versi sudah mencegah kontaminasi). Di merge, screenshot_dir yang berbeda antar-input = union (atau exit 2), bukan first-present diam-diam. Nyatakan eksplisit bahwa ORKESTRATOR yang meninjau visual sesudah merge — 'TAK memvonis' tak boleh berarti buktinya lenyap — dan urutkan penulisan file adversarial supaya tak ada dua penulis serentak."
+    },
+    {
+      "title": "Perubahan port dinamis tak direkonsiliasi lintas titik pakainya",
+      "root_cause": "pick_free_host_port menyelesaikan bentrok bind nyata, tapi maknanya cuma diperbarui di satu tempat. psm_flashlight_ps_domain kini kehilangan komponen host di Lapis 4 (shop.mycorp.local:9100 -> localhost:9100) sementara Lapis 2 memakainya apa adanya; empat deskripsi key itu tak ikut berubah; prosa menjual port dinamis sebagai alasan Lapis 2 aman paralel padahal Lapis 2 tak publish port sama sekali; dan perbandingan 'duplikat identik' di merge kini mustahil terpenuhi karena payload memuat port yang berubah tiap sesi.",
+      "finding_ids": ["customization-1", "determinism-6", "leanness-5", "leanness-2", "architecture-9"],
+      "action": "Tetapkan satu makna untuk psm_flashlight_ps_domain lalu samakan semua titik pakainya: pertahankan host terkonfigurasi dan biarkan hanya port yang mengambang, atau persempit deskripsi key di keempat tempat jadi 'preferensi port; host diabaikan di Lapis 4'. Bandingkan duplikat lewat proyeksi kanonik yang membuang field ber-scope-sesi (ps_domain, screenshots, screenshot_dir) supaya 'identik' berarti vonisnya identik. Perbaiki 'why' Lapis 2 (aman paralel karena nama project/network ber-suffix uuid, bukan karena port) dan beri syarat pada perintah cleanup psm-fl yang kini bisa membunuh container versi lain yang sedang boot."
+    },
+    {
+      "title": "Premis dan biaya paralelisme belum dibayar",
+      "root_cause": "Paragraf paralelisme 468 token masuk ke file yang selalu dimuat untuk optimasi yang paragrafnya sendiri sebut 'bukan syarat vonis', mendorong SKILL.md ke 3573 token dari budget 3000. Premis fallback-nya juga tak didukung: keempat skill sibling yang disebut memanggil psm-validate sebagai skill biasa, bukan men-spawn-nya sebagai subagent. Dan rasionalnya dipinjam dari Lapis 3 ('source module tak membebani konteks') padahal Lapis 2/4 dengan -o hanya mengembalikan satu baris ke pemanggil.",
+      "finding_ids": ["architecture-3", "leanness-1", "architecture-5", "architecture-6", "enhancement-4", "enhancement-5", "customization-3"],
+      "action": "Putuskan dulu bentuknya (lihat rekomendasi rank-1), baru bayar biayanya. Bila fan-out dipertahankan: ukir prosedurnya ke references/parallel-versions.md dengan brief subagent literal (flag hasil resolve, kontrak kembalian, kebijakan --allow-image-pull diputuskan sekali sebelum fan-out) dan batas lebar, sisakan satu baris rute di Validate; ganti premis 'dipanggil sebagai subagent oleh 4 skill' dengan kondisi yang bisa diamati model sendiri. Bila diganti --jobs N: paragraf, skrip merge, konvensi nama per-versi, dan cabang deteksi-diri semuanya hilang sekaligus."
+    }
+  ],
+  "strengths": [
+    "Nol dead wire: kesepuluh key psm_* masih sampai titik pakainya, dan lensa customization membuktikannya lagi dengan menjalankan resolver, bukan membacanya.",
+    "Gerbang yang sudah dipasang benar-benar menegakkan: mutasi independen atas gerbang kesegaran ps-plan-layers, gerbang drift psm_flashlight_* (termasuk key baru yang belum pernah ada), dan gerbang konflik versi merge semuanya merah — bukan test hijau di atas kode yang salah.",
+    "Empat invarian false-pass warisan ronde 1-6 utuh: kanal infra tak menelan vonis, findings dan errors mutually exclusive, browser_notes bukan kanal infra, delegasi vonis ke skrip tetap dipatuhi.",
+    "Degrade jujur bertahan bahkan di seam baru yang cacat: merge parsial atas 2 dari 3 versi tetap menghasilkan ready=false lewat 'versi tak ada di hasil flashlight' — cacatnya ada di instruksi dan gerbang input, bukan di keselamatan vonis.",
+    "Higiene skrip penuh: 6 skrip, 6 suite test, keempat pra-pass (path-standards, script-standards, workflow-integrity, prompt-metrics) nol temuan selain ukuran SKILL.md.",
+    "Disiplin satu-pemilik-satu-aturan sudah jadi refleks di kode lama (is_skipped, resolve_tag, INSTALL_BLOCK_SH, _int_fact/_bool_fact, CANARY token) — pemiliknya ada dan siap dipasang di seam baru, tak perlu ditemukan ulang."
+  ],
+  "recommendations": [
+    {
+      "rank": 1,
+      "action": "PUTUSKAN DULU (butuh keputusan user, jangan dieksekusi sepihak): pertahankan fan-out subagent per-versi, atau ganti dengan --jobs N di loop per-versi yang sudah ada di ps-flashlight-run/ps-e2e-run. Pilihan ini menentukan makna semua rank di bawahnya — bila --jobs menang, paragraf SKILL.md, ps-merge-versions.py, konvensi nama per-versi dan cabang deteksi-diri hilang sekaligus, dan sebagian besar temuan ronde ini larut bersamanya.",
+      "resolves": ["enhancement-4", "architecture-5", "architecture-6", "enhancement-5"]
+    },
+    {
+      "rank": 2,
+      "action": "Bila fan-out dipertahankan: tutup kelas gerbang di seam merge dengan membalik kepemilikan input (merge menurunkan file-nya dari module/reports-dir/layer/versions, bukan menerima daftar), lalu pasang keempat pemilik yang sudah ada plus cek identitas dan kelengkapan; tiap gerbang wajib punya test yang terbukti merah saat gerbangnya dilepas.",
+      "resolves": ["determinism-1", "architecture-1", "determinism-2", "determinism-3", "determinism-5", "architecture-7", "architecture-8", "customization-2", "architecture-10"]
+    },
+    {
+      "rank": 3,
+      "action": "Sambungkan artefak per-versi ke jalur resume: ps-plan-layers glob file per-versi dan emit pending_merge, SKILL.md rutekan satu klausa ke sana, dan namai jalur kegagalan parsial serta dua asumsi memlog headless yang baru.",
+      "resolves": ["architecture-2", "enhancement-1", "enhancement-2", "enhancement-6"]
+    },
+    {
+      "rank": 4,
+      "action": "Rekonsiliasi port dinamis lintas titik pakai: satu makna untuk psm_flashlight_ps_domain di Lapis 2 dan 4 plus keempat deskripsinya, proyeksi kanonik tanpa field ber-scope-sesi untuk perbandingan duplikat, 'why' Lapis 2 dibetulkan, dan cleanup psm-fl diberi syarat.",
+      "resolves": ["customization-1", "determinism-6", "leanness-5", "leanness-2", "architecture-9", "enhancement-7"]
+    },
+    {
+      "rank": 5,
+      "action": "Pulihkan kanal bukti visual di bawah paralelisme: satu folder run bersama untuk semua subagent versi, screenshot_dir di-union (atau exit 2) alih-alih first-present, orkestrator dinyatakan pemilik peninjauan visual sesudah merge, dan penulisan file adversarial diurutkan.",
+      "resolves": ["architecture-4", "enhancement-3", "determinism-4"]
+    },
+    {
+      "rank": 6,
+      "action": "Kembalikan SKILL.md ke bawah budget 3000: ukir prosedur paralelisme ke reference (atau hapus bersama rank-1), lalu terapkan trim yang sudah punya proposed_smallest terverifikasi — narasi mekanisme port di On Activation, duplikat pass-vs-ready, semantik menambah-vs-mengganti yang sudah ada di --help, salinan keempat prasyarat playwright, dan enumerasi lapis di Overview.",
+      "resolves": ["architecture-3", "leanness-1", "leanness-3", "leanness-4", "leanness-6", "leanness-7"]
+    },
+    {
+      "rank": 7,
+      "action": "Sisa kecil: beri psm_e2e_enabled titik pakai mekanis (flag) atau nyatakan ia keputusan orkestrator saja, dan pulihkan kepemilikan tunggal publish_spec() yang mati sejak 01013b5.",
+      "resolves": ["customization-3", "customization-4"]
+    }
+  ],
+  "experience": {
+    "journeys": [
+      {
+        "name": "Validasi interaktif satu versi (jalur paling umum)",
+        "steps": "Resolver -> pilih module + cakupan -> Lapis 1 static -> Lapis 2 flashlight -> Lapis 3 subagent adversarial -> Lapis 4 E2E + tinjau screenshot -> ps-aggregate -> ringkasan. Jalur ini sehat: tak menyentuh merge, kanal visual punya pemilik, dan resume lewat ps-plan-layers bekerja seperti dirancang."
+      },
+      {
+        "name": "Validasi paralel multi-versi (permukaan baru)",
+        "steps": "Fan-out subagent per versi -> tiap subagent tulis file per-versi -> merge jadi file kanonik -> agregat. Tiga lubang terbukti di jalur ini: merge tak memeriksa kesegaran/identitas input, screenshot N versi menyusut jadi satu, dan brief subagent tak menyebut flag hasil resolve maupun kontrak kembalian."
+      },
+      {
+        "name": "Melanjutkan run yang terputus",
+        "steps": "ps-plan-layers -> jalankan lapis bertanda rerun. Utuh untuk run serial; buta total untuk run paralel yang terputus — file per-versi yang sudah jadi dilaporkan 'belum ada' dan N boot Docker terulang."
+      }
+    ],
+    "headless": "Kontrak headless tetap yang terkuat di skill ini — objek JSON kecil, status complete|blocked beralasan, gerbang CI membaca ready dan bisa dipenuhi — tapi ia belum bisa membedakan 'runner tanpa Docker' dari 'subagent versi 9.1 mati', dua kondisi yang menuntut reaksi berlawanan dari psm-develop/psm-cross-version, dan daftar asumsi memlog belum memuat keputusan seam baru (paralelisme dilewati, file lapis di-merge dari input parsial)."
+  },
+  "findings": [
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "critical",
+      "title": "ps-merge-versions mencuci bukti basi dan bukti module lain jadi file lapis kanonik",
+      "location": "scripts/ps-merge-versions.py:130-175 (main) vs scripts/ps-plan-layers.py:127 (age <= src_mtime)",
+      "evidence": "Direproduksi utuh. Source module disentuh sekarang, reports/mod-e2e-1.7.8.json dimundurkan 10 hari, 8.1 dan 9.1 segar. Merge exit 0 tanpa suara; file kanonik hasilnya dapat mtime BARU, jadi ps-plan-layers menjawab reuse:true 'lebih baru dari module & cakupan versi cocok' dan ps-aggregate mengembalikan READY:True dengan per-versi {1.7.8:True, 8.1:True, 9.1:True} — 1.7.8 siap-rilis atas bukti yang mendahului kode sekarang sepuluh hari. Gerbang kesegaran plan_layer sendiri nyata dan ber-test (mutasi 'if age <= src_mtime' -> 'if False' bikin test-ps-plan-layers merah); merge tak punya gerbang itu sama sekali. Dua lubang lain di seam yang sama juga direproduksi: identitas module (--inputs mod-e2e-8.1.json other-e2e-9.1.json merge bersih, emit module:'mod' berisi bukti module lain) dan identitas lapis (mod-e2e-8.1 + mod-flashlight-9.1 exit 0, menghasilkan hibrida ber-docker_available DAN e2e_available). Tak ada yang memeriksa bahwa key versions sebuah file cocok dengan -<versi> di namanya, sementara reports dir mengakumulasi file per-versi lintas run.",
+      "recommendation": "Bocor ke arah prompt: 'file mana yang jadi input' punya tepat satu jawaban benar bila (reports_dir, module, layer, versi target) diketahui, jadi skrip harus menurunkannya, bukan menerimanya. Tambah --module-path/--reports-dir/--layer/--versions dan biarkan merge menyusun sendiri <module>-<lapis>-<versi>.json, lalu tegakkan di dalam skrip apa yang hanya ia bisa lihat: tiap versi diminta punya file, key versions cocok dengan nama, module top-level cocok, dan tiap mtime input lebih baru dari pl.newest_source_mtime (pakai ulang pemiliknya, jangan implementasi ulang)."
+    },
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "Merge mencuci bukti per-versi basi melewati gerbang kesegaran ps-plan-layers",
+      "location": "scripts/ps-merge-versions.py:168-172 + scripts/ps-plan-layers.py:127-129 (plan_layer mtime); SKILL.md:27",
+      "evidence": "Direproduksi independen dari lensa determinism. File flashlight per-versi bertanggal 2026-07-01, source module disentuh sekarang — basi menurut definisi yang ditulis docstring ps-plan-layers sendiri ('file lapis basi membuat vonis mengklaim coverage atas kode yang sudah berubah'). Sesudah merge, plan menjawab reuse:true 'lebih baru dari module & cakupan versi cocok', karena mtime file merged adalah waktu merge. plan_layer punya gerbang provenance untuk ruleset (Lapis 1) dan tag image (Lapis 2/4) tapi tak punya apa pun untuk 'kapan bukti ini sebenarnya diproduksi' — mtime adalah proksi itu, dan merge membatalkannya. Terjangkau di jalur normal: operator menambal module sementara subagent per-versi berjalan, atau merge apa pun yang dilakukan sesudah suntingan source terakhir.",
+      "recommendation": "Beri merge pemilik provenance alih-alih mtime segar: sesudah menulis, os.utime(output, (mtime_input_tertua, mtime_input_tertua)), dan/atau catat merged_from:[{path,mtime}] di payload dengan ps-plan-layers membaca min(merged_from.mtime) lebih diutamakan dari mtime file itu sendiri. Tutup dengan test di sebelah test-ps-merge-versions.py supaya gerbangnya tak bisa regresi."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "File lapis per-versi tak punya rumah di jalur plan/reuse — run paralel terputus membuang semua kerja yang sudah selesai",
+      "location": "SKILL.md:25 dan SKILL.md:27; scripts/ps-plan-layers.py:254-257",
+      "evidence": "Direproduksi: dengan reports/mymod-flashlight-8.1.json dan mymod-flashlight-9.1.json di disk (dua run Docker yang sudah selesai) dan tanpa file kanonik, ps-plan-layers melaporkan flashlight {'reuse': false, 'reason': 'file lapis belum ada'} dan rerun:[static, flashlight, adversarial, e2e]. plan_layer hanya pernah menyusun Path(reports_dir)/f'{module}-{layer}.json' (baris 255); tak ada yang mem-glob file ber-<versi>. SKILL.md:25 menempatkan langkah plan PALING DULU, sementara instruksi merge (SKILL.md:27) hanya berlaku 'Setelah semua subagent satu lapis selesai' — persis kondisi yang tak terjadi saat run terputus. Jadi jalur resume, satu-satunya alasan ps-plan-layers ada, buta terhadap lapis yang justru dibuat lebih murah oleh paralelisme.",
+      "recommendation": "Beri langkah plan bentuk per-versi: ps-plan-layers mem-glob <module>-<lapis>-*.json dan melaporkannya sebagai kandidat mergeable (merge_pending:[...]) atau merencanakan reuse per versi, sehingga 'rerun' hanya menyebut versi yang benar-benar hilang. Alternatifnya nyatakan di prosedur bahwa merge jalan sebelum plan saat resume — tapi perbaikan sisi-skrip yang bertahan melewati kompaksi konteks."
+    },
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Tambahkan rendezvous: jalur resume buta terhadap file lapis per-versi, jadi fan-out terputus membuang tiap run Docker yang sudah selesai",
+      "location": "scripts/ps-plan-layers.py:255 + SKILL.md:25,27",
+      "evidence": "Direproduksi. Tiga file per-versi asli ditulis (mymod-flashlight-1.7.8/8.1/9.1.json, persis nama yang disuruh SKILL.md:27) di samping file static segar, lalu perintah resume terdokumentasi dijalankan: flashlight kembali {'reuse': false, 'reason': 'file lapis belum ada'} dan rerun:[flashlight, adversarial, e2e]. Menjalankan merge lalu plan ulang membalik lapis yang sama jadi reuse:true — jadi merge adalah SATU-SATUNYA jembatan dari artefak antara baru ke jalur resume, dan ia hidup hanya di ingatan orkestrator tentang subagent mana yang sudah kembali. Itu persis state yang dimakan kompaksi, sedangkan fan-out ada justru untuk menjauhkan kerja dari konteks itu.",
+      "recommendation": "Ajari ps-plan-layers artefak antaranya: glob <reports>/<module>-<layer>-*.json, lewatkan tiap file lewat gerbang kesegaran/provenance yang sama, dan emit pending_merge:{layer:[files...]} untuk lapis yang file per-versinya segar sementara file kanonik absen atau basi. Lalu satu klausa di SKILL.md:25 — 'lapis yang plan tandai pending_merge: jalankan ps-merge-versions.py atas file itu dulu, jangan jalankan ulang' — dan biarkan --inputs merge datang dari daftar itu, bukan dari ingatan model."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Tambahkan degradasi anggun: fan-out tak menyebut fallback untuk subagent versi yang mati atau tak mengembalikan apa-apa",
+      "location": "SKILL.md:27",
+      "evidence": "Kedua cabang direproduksi. (a) Model me-merge daftar file yang direncanakan, satu subagent mati: exit 2 'gagal baca input ... No such file'. SKILL.md:27 hanya bilang exit 2 = 'input rusak/konflik versi, bukan vonis — baca stderr' dan tak menyebut pemulihan apa pun, sementara perakitan tangan dilarang dua baris di atas — jadi langkah patuh-instruksi termurah adalah menjalankan ulang ketiga versi. (b) Model me-merge yang selamat: exit 0, file kanonik ditulis dengan top-level pass:true atas 2 dari 3 versi. ps-aggregate tetap jujur (9.1 -> flashlight {state:skipped, conclusive:false, reason:'versi tak ada di hasil flashlight'}, ready:false), jadi vonisnya aman — yang hilang adalah instruksinya, bukan keselamatannya.",
+      "recommendation": "Satu klausa di akhir SKILL.md:27: 'Subagent versi X tak menghasilkan file lapis (mati/kosong)? Jalankan ULANG versi itu saja secara serial sekali; masih gagal -> merge file yang ADA lalu sebut versi itu di ringkasan — agregat sudah menandainya conclusive:false dan menjatuhkan ready; jangan jalankan ulang versi yang sudah punya file.' Catat juga merge parsial sebagai assumption memlog di headless."
+    },
+    {
+      "id": "architecture-4",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "Paralelisme diam-diam memutus kanal visual->vonis: hanya screenshot satu versi yang selamat dari merge, dan tak ada yang boleh menilainya",
+      "location": "SKILL.md:27 vs SKILL.md:35 dan SKILL.md:41; scripts/ps-merge-versions.py:55 (_FIRST_PRESENT_KEYS); scripts/ps-e2e-run.py:419-430 (run_shot_dir)",
+      "evidence": "Direproduksi dengan skrip asli. Tiap pemanggilan ps-e2e-run mencetak folder <base>/run-<YYYYMMDD-HHMMSS> sendiri, jadi N subagent per-versi menghasilkan N folder berbeda. Merge dua file e2e per-versi ber-screenshot_dir run-20260724-220101 dan run-20260724-220337 menghasilkan screenshot_dir = .../run-20260724-220101 (aturan first-present), dan ps-aggregate meng-echo persis itu sebagai e2e_screenshot_dir; bukti 9.1 tak terjangkau dari artefak vonis. Lebih buruk: SKILL.md:35 mewajibkan verifikasi visual di run interaktif dan menyebut file adversarial 'satu-satunya kanal judgment model ke vonis', tapi SKILL.md:27 melarang subagent per-versi memvonis, dan orkestrator mendelegasikan justru supaya tak memegang konteks itu — jadi di bawah paralelisme kanal itu tak punya pemilik. Seam ketiga: e2e-quickstart.md:160 menyuruh peninjau visual meng-APPEND ke file adversarial 'jangan timpa', aturan yang mengandaikan urutan lapis serial, sementara paragraf baru menjalankan Lapis 3 berdampingan dengan fan-out tanpa pengurutan.",
+      "recommendation": "Tiga perbaikan di prosedur paralel: (a) teruskan --screenshot-dir bersama yang eksplisit ke tiap subagent versi (atau union-kan run dir di merge), (b) nyatakan bahwa subagent mengembalikan path screenshot-nya dan ORKESTRATOR yang meninjau visual sesudah merge — 'tak memvonis' tak boleh berarti buktinya lenyap, (c) urutkan penulisan adversarial: Lapis 3 selesai dan filenya ada sebelum temuan visual di-append, satu penulis pada satu waktu."
+    },
+    {
+      "id": "enhancement-3",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Tambahkan identitas sesi bersama: folder screenshot per-run terpecah antar-subagent dan merge diam-diam menyimpan satu",
+      "location": "scripts/ps-e2e-run.py:419 (run_shot_dir) + ps-merge-versions.py:55 (_FIRST_PRESENT_KEYS) + SKILL.md:35,41",
+      "evidence": "Direproduksi. Tiga file e2e per-versi yang screenshot_dir-nya beda hitungan detik merge jadi satu nilai; ps-aggregate:814 mengangkatnya ke e2e_screenshot_dir, dan vonis nyata yang saya hasilkan untuk run 3 versi berakhir dengan e2e_screenshot_dir menunjuk satu dari tiga. PNG versi lain ada (versions[8.1].screenshots, versions[9.1].screenshots memuat path-nya) tapi tak ada konsumen yang membacanya dan tak ada catatan yang merekam kehilangannya. SKILL.md:41 lalu menyuruh model menyebut folder itu ke operator dan SKILL.md:35 menjadikan tinjauan visualnya kanal judgment satu-satunya — jadi di jalur paralel gerbang judgment model diam-diam mencakup 1 dari N versi tanpa catatan apa pun. Ini lubang honest-degrade di skill yang tulang punggungnya justru honest degradation.",
+      "recommendation": "Beri fan-out satu id sesi: orkestrator menghitung folder run sekali dan meneruskan path penuhnya ke tiap subagent versi, dengan ps-e2e-run memakai folder pemanggil apa adanya bila sudah berakhiran run-* (atau flag --run-id). Subfolder per-versi sudah mencegah kontaminasi shot lama, jadi tak ada yang hilang. Jaga di ps-merge-versions: input yang berselisih soal screenshot_dir adalah input error (exit 2), bukan pilihan first-wins."
+    },
+    {
+      "id": "enhancement-4",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Subtract: subagent-per-versi adalah pola Lapis 3 yang dipinjam ke tempat rasionalnya tak berlaku — flag --jobs di loop versi yang sudah ada menggantikan seluruh aparatus",
+      "location": "SKILL.md:27 + scripts/ps-merge-versions.py (seluruh file) + scripts/ps-flashlight-run.py:557-571, ps-e2e-run.py:1057-1071",
+      "evidence": "SKILL.md:27 membenarkan fan-out sebagai 'memperluas pola Lapis 3: source module tak membebani konteks orkestrasi'. Rasional itu nyata untuk Lapis 3, tempat reviewer harus membaca source module ke dalam konteks. Ia tak berlaku untuk Lapis 2/4: dengan -o <file> kedua skrip mengembalikan tepat SATU baris ke pemanggil ('ditulis: <path>'; diverifikasi dengan menjalankannya). Orkestrator tak pernah membaca source module di lapis itu — ia membaca vonis JSON dari disk. Yang tersisa adalah paralelisme wall-clock, dan kedua skrip sudah punya loop per-versi (for full_ver in ... di flashlight:561 dan e2e:1057) yang body-nya run_one_version mengembalikan dict terisolasi dan sudah menangkap kegagalan infra per-versi sebagai errors non-blocking; sync_playwright dibuka di dalam jalur per-versi itu (e2e:639,775), jadi worker pool feasible. Yang dibayar pola ini: skrip merge 179 baris + test-nya, konvensi penamaan file kedua, langkah merge di dua bagian SKILL.md, cabang deteksi-diri nested-subagent, lubang resume, lubang identitas sesi, dan lebar tak terbatas. Docstring ps-merge-versions sendiri menyatakan tujuannya membuat output paralel identik bentuknya dengan run multi-versi tunggal — yakni aparatus itu ada semata untuk membatalkan pemisahannya.",
+      "recommendation": "Pindahkan paralelisme ke tempat loop versinya sudah ada: --jobs N (default 1) atas run_one_version di ps-flashlight-run.py dan ps-e2e-run.py, lalu hapus SKILL.md:27, ps-merge-versions.py, konvensi nama per-versi dan cabang nested-subagent — Lapis 3 tetap dengan satu reviewer subagent. Yang hilang: tak ada bukti (bentuk output identik, menurut piagam skrip merge sendiri) dan tak ada ekonomi konteks (satu baris juga). Yang didapat: resume bekerja tanpa disentuh, --jobs jadi batasnya, retry port ephemeral dan folder run screenshot dibagi dalam satu proses, dan SKILL.md kehilangan paragraf terbesarnya. Bila fan-out tetap dipertahankan karena alasan di luar bukti ini, maka enhancement-1/2/3/5 adalah tepi-tepinya yang belum selesai dan keempatnya harus mendarat."
+    },
+    {
+      "id": "architecture-3",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "SKILL.md lewat budget token, didorong prosedur yang sepenuhnya cabang-spesifik dan seharusnya di reference",
+      "location": "SKILL.md:27 (paragraf 'Paralelisme antar-versi'); prepass-metrics.json skill_md.tokens 3573",
+      "evidence": "SKILL.md 3573 tiktoken terhadap budget keras 3000 / desired 2000 (budget di file pra-pass sendiri lebih ketat lagi: 1500/2500). Paragraf paralelisme adalah gumpalan terbesar dan satu-satunya yang murni kondisional: ia menyala hanya bila versi target > 1, lapis mahal tersedia, run tak ter-nest, dan operator menginginkan optimasinya — paragrafnya sendiri menyebutnya 'opsional ... optimasi, bukan syarat vonis'. Tiap run satu-versi, tiap panggilan gerbang headless dari skill sibling, dan tiap run tanpa Docker membayarnya. Ia bukan gotcha (pemicunya — 'lebih dari satu versi target' — trivial dikenali), jadi pengecualian gotcha-tetap-inline tak melindunginya. Catat aritmetikanya: mengangkat paragraf ini plus rujukan silangnya di Vonis menyisakan ~3080 tiktoken — masih di atas 3000, jadi satu pengangkatan saja tak membereskan.",
+      "recommendation": "Angkat prosedurnya ke references/parallel-versions.md (brief subagent, pemanggilan merge, fallback, kepemilikan screenshot/adversarial) dan sisakan satu baris rute di ## Validate. Lalu ambil pengangkatan kedua untuk melewati budget; prosedur Lapis 4 (sudah setengah terukir ke e2e-quickstart.md) kandidat terbaik berikutnya."
+    },
+    {
+      "id": "architecture-5",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "Fallback nested-subagent bertumpu pada klaim wiring yang tak dibuat satu pun dari empat skill sibling yang disebutnya",
+      "location": "SKILL.md:27 (kalimat terakhir) dan SKILL.md:33 (fallback Lapis 3)",
+      "evidence": "SKILL.md:27 menyatakan sebagai fakta: 'dipanggil sebagai gerbang oleh psm-develop/psm-cross-version/psm-optimize/psm-scaffold yang men-spawn-nya, jadi tak bisa men-spawn subagent anak'. Keempat SKILL.md itu di-grep: kata 'subagent' tak muncul di satu pun, dan semuanya memanggil psm-validate sebagai skill biasa ('Panggil psm-validate atas module hasil ... (lihat <skills-dir>/psm-validate/SKILL.md)' — psm-develop:59, psm-cross-version:46, psm-optimize:49, psm-scaffold:37). Skill yang dipanggil inline berjalan di konteks agen pemanggil, yang bisa men-spawn. Premisnya jadi tak didukung persis untuk keempat pemanggil yang disebutnya. Konsekuensinya tak terbatas pada paralelisme opsional: premis yang sama adalah pemicu fallback Lapis 3 di SKILL.md:33, jadi model yang mempercayai pernyataan itu meninggalkan delegasi yang dibenarkan Overview justru di peran paling umum skill ini — gerbang rilis.",
+      "recommendation": "Nyatakan kondisinya sebagai sesuatu yang bisa diamati model yang sedang berjalan — 'bila kamu tak bisa men-spawn subagent (alat Task/Agent tak tersedia)' — dan tulis sekali saja, di paragraf Lapis 3 atau di reference paralel yang terukir, dengan situs satunya menunjuk ke sana. Buang klaim tentang sibling mana yang men-spawn, atau buat ia benar dengan menuliskannya di skill-skill itu."
+    },
+    {
+      "id": "customization-1",
+      "lens": "customization",
+      "severity": "high",
+      "title": "Host psm_flashlight_ps_domain dibuang diam-diam di Lapis 4; tiga deskripsi key itu kini salah",
+      "location": "scripts/ps-e2e-run.py:862-878,911,1003-1004 + psm-setup/scripts/resolve-psm-config.py:47,49-50 + docs/psm/README.md:50",
+      "evidence": "Direproduksi ujung ke ujung. psm_flashlight_ps_domain: 'shop.mycorp.local:9100' di config; resolver mengemitnya benar. Tapi jalur run ps-e2e-run.py memanggil host_port_from_domain(ps_domain) HANYA untuk portnya lalu menghardcode host: ps_domain_eff = f'localhost:{host_port}' (baris 866). Nilai itulah yang masuk PS_DOMAIN untuk kedua jalur bring-up, yang jadi dasar base_urls() untuk URL FO/BO Playwright, dan yang dilaporkan sebagai res['ps_domain']. Teramati: config shop.mycorp.local:9100 -> Lapis 4 PS_DOMAIN localhost:9100. Lapis 2 (ps-flashlight-run.py:400) meneruskan key YANG SAMA apa adanya sebagai PS_DOMAIN=shop.mycorp.local:9100. Jadi satu key config kini berarti dua hal berbeda di dua titik pakainya. base_urls() sendiri masih menghormati host sembarang, jadi kemampuannya ada dan dibuang hanya di jalur run. Sementara itu commit 01013b5 tak menyentuh tiga tempat yang mendeskripsikan key ini: resolve-psm-config.py:47 masih '# PS_DOMAIN container flashlight', baris 49-50 masih 'memakai ulang psm_flashlight_ps_domain (bukan key baru)', README.md:50 masih 'PS_DOMAIN container flashlight | localhost:8000', dan ps-e2e-run.py:1004 masih 'PS_DOMAIN flashlight = URL yang di-drive Playwright'.",
+      "recommendation": "Putuskan semantik key-nya dan buat semua titik pakai sepakat. Perbaikan jujur termurah: pertahankan port dinamis tapi lestarikan host terkonfigurasi — ps_domain_eff = f'{host_from_domain(ps_domain)}:{host_port}' — sehingga key itu berarti satu hal di Lapis 2 dan 4 dan hanya portnya yang mengambang. Bila localhost memang wajib untuk Lapis 4, persempit deskripsi key di keempat tempat jadi apa adanya dan tambahkan drift test yang menegakkan itu."
+    },
+    {
+      "id": "determinism-2",
+      "lens": "determinism",
+      "severity": "high",
+      "title": "SKILL.md baris 27 menyuruh model menyusun nama file, mengenumerasi --inputs, dan memilih --layer",
+      "location": "SKILL.md:27",
+      "evidence": "'Beri tiap subagent satu versi dan suruh menulis file lapis per-versi <psm_reports_dir>/<module>-<lapis>-<versi>.json ... satukan ...: uv run scripts/ps-merge-versions.py --inputs <module>-<lapis>-<v1>.json ... --layer <lapis> -o ...'. Tiap elemen perintah itu fungsi murni dari nilai yang sudah dipegang skill — reports dir, nama module, lapis, daftar versi target. Diberi input identik ia punya satu jawaban benar dan trivial diuji-unit, yakni uji determinisme gagal di ketiga pertanyaannya. Biayanya bukan token: karena skrip diberi daftar path telanjang dan tak pernah tahu module/lapis/himpunan-versi, ia secara struktural tak sanggup menggerbang identitas, kesegaran, atau kelengkapan — determinism-1 adalah hilir dari kebocoran ini.",
+      "recommendation": "Bocor ke arah prompt. Terapkan pindai kata-kerja-sinyal pada baris 27 ('satukan', 'tulis <module>-<lapis>-<versi>.json', mengenumerasi input). Ganti perintah rakitan-tangan dengan bentuk turunan dari determinism-1 — ps-merge-versions.py --module-path <module> --reports-dir <psm_reports_dir> --layer <lapis> --versions <target> — dan arahkan prosanya ke --help. Konvensi nama per-versi lalu punya satu pemilik (skrip yang menulis dan skrip yang membaca sepakat by construction) alih-alih jadi string yang diketik ulang model di dua seam."
+    },
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "high",
+      "title": "Paragraf 'Paralelisme antar-versi' 468 token untuk optimasi yang paragrafnya sendiri sebut bukan syarat vonis, dan separuhnya restatement",
+      "location": "SKILL.md:27 (Validate)",
+      "evidence": "Terukur 468 tiktoken pada satu baris — blok terbesar di file dan lebih besar dari paragraf Lapis mana pun. Baris demi baris: (a) 'memperluas pola Lapis 3: source module tak membebani konteks orkestrasi' mengulang baris 33 nyaris verbatim; (b) '(port host kini dinamis per sesi, jadi tak rebutan bind)' mengulang baris 19 DAN salah sebagai pembenaran untuk Lapis 2 — ps-flashlight-run.py memanggil kedua jalur bring-up dengan publish=None (baris 480, 482), jadi Lapis 2 tak publish port host sama sekali dan keamanan paralelnya datang dari nama project/network ber-suffix uuid (_project_name, baris 354); port dinamis fakta Lapis 4 saja; (c) '(exit 2 = input rusak/konflik versi, bukan vonis — baca stderr)' sudah dicakup baris 39; (d) 'Static tetap sekali di orkestrator; adversarial tetap satu subagent' terderivasi dari header paragrafnya sendiri; (e) 'Run serial single-versi tak berubah' menarasikan yang tak berubah; (f) guard nested-subagent mengajarkan ulang fallback Lapis 3 yang sudah ada. Yang benar-benar non-inferable dan wajib selamat: konvensi nama per-versi, pemanggilan ps-merge-versions.py, 'subagent memproduksi bukti, tak pernah vonis', dan fallback serial. Catat juga contoh --inputs sekarang menghilangkan prefiks <psm_reports_dir>/ yang justru dibawa -o.",
+      "recommendation": "Ganti paragrafnya dengan versi terkecil di bawah (-225 token) yang mempertahankan keempat non-inferable dan membetulkan prefiks path --inputs. Bila budget 3000 mau benar-benar dipulihkan alih-alih didekati, langkah lebih kuatnya adalah mengukir seluruh protokol ini ke references/parallel-versions.md dan menyisakan baris rute di Validate.",
+      "proposed_smallest": "**Paralelisme antar-versi (opsional, Lapis 2 & 4 yang mahal).** Lebih dari satu versi target: beri tiap versi satu subagent (`--versions <satu>`) yang menulis file lapis per-versi `<psm_reports_dir>/<module>-<lapis>-<versi>.json` — bukti apa adanya; penggabungan dan vonis tetap milik skrip. Setelah semua subagent satu lapis selesai, satukan jadi file kanonik yang dibaca plan/agregat: `uv run scripts/ps-merge-versions.py --inputs <psm_reports_dir>/<module>-<lapis>-<versi>.json … --layer <lapis> -o <psm_reports_dir>/<module>-<lapis>.json`. Skill ini sendiri sedang jalan sebagai subagent, jadi tak bisa men-spawn anak? Serial per versi, tulis langsung ke file kanonik — paralelisme ini optimasi, bukan syarat vonis.",
+      "predicted_delta": "-225 token (468 -> 243). Kehilangan yang diprediksi: tak ada yang sampai ke vonis. Tiap klausa yang dipotong entah sudah dinyatakan di tempat lain dalam file yang sama, atau rasional yang tak ditindaklanjuti model, atau salah secara faktual untuk separuh cakupannya (klaim port Lapis 2)."
+    },
+    {
+      "id": "determinism-3",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Rekonsiliasi skalar generik bergantung urutan dan tak ber-test; fakta cakupan yang sampai ke version_ready membalik ready atas urutan input",
+      "location": "scripts/ps-merge-versions.py:121-125 (out[k] = present[0])",
+      "evidence": "main_file_found adalah fakta CAKUPAN top-level — ps-aggregate.static_layer:225 mengubah 'main_file_found is not True' jadi inconclusive_note, yang membunuh conclusive, yang membunuh version_ready. Ia tak ada di _AND_KEYS/_OR_KEYS jadi jatuh ke aturan generik 'first present'. Direproduksi: tiga file static per-versi, satu ber-main_file_found:false. Urutan A -> merged main_file_found=True -> ready=True untuk ketiga versi. Tiga file yang sama, urutan dibalik -> main_file_found=False -> ready=False untuk ketiganya. Bukti identik, vonis berlawanan, ditentukan urutan model mengetik nama file. Aturannya juga sepenuhnya tak terverifikasi: mutasi present[0] -> present[-1] membiarkan test-ps-merge-versions DAN seluruh suite 6 file HIJAU, sementara gerbang konflik di sebelahnya benar-benar tercakup (membuang raise _canon bikin tiga assert merah).",
+      "recommendation": "Bocor ke arah skrip sebagai penilaian nilai yang menyamar jadi plumbing. Fakta cakupan harus direkonsiliasi pesimistis seperti pass — tambahkan main_file_found ke himpunan bergaya _AND_KEYS, atau lebih baik jadikan ketidaksepakatan skalar pada key mana pun sebagai hasil eksplisit (exit 2, sama seperti konflik versi). Lalu tulis test yang hilang: mutasi present[0] -> present[-1] wajib merah."
+    },
+    {
+      "id": "determinism-4",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "screenshot_dir first-present meruntuhkan N folder run jadi satu, diam-diam mengecilkan kanal verifikasi visual",
+      "location": "scripts/ps-merge-versions.py:55 (_FIRST_PRESENT_KEYS) dengan ps-e2e-run.py:419 run_shot_dir dan ps-aggregate.py:814-816",
+      "evidence": "run_shot_dir mengembalikan <base>/run-<YYYYMMDD-HHMMSS> per RUN, jadi tiga subagent per-versi menghasilkan tiga folder run berbeda. Direproduksi: file per-versi ber-screenshot_dir run-...220101, ...220117, ...220134 merge jadi satu, dan ps-aggregate mengemit e2e_screenshot_dir untuk yang satu itu. PNG versi lain ada (versions[8.1].screenshots, versions[9.1].screenshots memuat path-nya) tapi tak ada konsumen yang membacanya dan tak ada catatan yang merekam kehilangannya. Ini kebingungan observasi/celah-cakupan di tempat baru: skalar yang berarti 'folder run' di run serial berarti 'satu folder run sembarang' sesudah merge, dan tak ada yang menandai bedanya.",
+      "recommendation": "Bocor ke arah skrip (himpunan diam-diam direduksi jadi skalar). Union-kan screenshot_dir alih-alih first-present dan biarkan ps-aggregate mengemit e2e_screenshot_dir sebagai list bila lebih dari satu — atau lebih murah dan lebih jujur, biarkan ps-aggregate menurunkan folder yang dilaporkan dari path versions[*].screenshots yang sudah ia terima, yang membuat field itu benar untuk run serial maupun paralel."
+    },
+    {
+      "id": "determinism-5",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Gerbang bentuk merge tak terverifikasi dan ketatnya bergantung flag opsional yang diketik model",
+      "location": "scripts/ps-merge-versions.py:136-138 (--layer opsional) dan :151-160",
+      "evidence": "finding_keys = ('id','severity','message') if args.layer == 'static' else () — ketatnya gerbang bergantung flag yang diketik model dan bisa dilupakan. Direproduksi dengan file static per-versi yang findings-nya tanpa 'id': --layer static -> exit 2; flag dihilangkan -> exit 0, bukti malformed ditulis ke file kanonik. Lebih buruk, gerbangnya sendiri tak ber-test: mengganti notes = agg.validate_layer_shape(payload, finding_keys) dengan notes = [] membiarkan test-ps-merge-versions HIJAU. Satu assert yang tampak mencakupnya ('versions bertipe list -> exit 2') dipenuhi mekanisme lain (raise isinstance milik merge_versions_field), jadi test lolos di atas kode tempat gerbang bentuknya tak ada — pola suite-hijau-di-atas-kode-salah yang sama dengan ronde-ronde lalu. Terkendali di hilir (ps-aggregate memvalidasi ulang static dengan key yang sama), jadi dampaknya kegagalan yang salah alamat, bukan false pass.",
+      "recommendation": "Jadikan --layer wajib (atau turunkan dari nama file input / dari input turunan determinism-1) supaya ketatnya gerbang tak pernah jadi fungsi dari apa yang diingat model. Lalu tambahkan test yang membunuh gerbangnya lewat mutasi: input malformed yang cacat satu-satunya adalah key finding yang hilang wajib exit 2, dan melepas validate_layer_shape wajib membuat test itu merah."
+    },
+    {
+      "id": "determinism-6",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Port host dinamis membuat output e2e per-versi tak reproducible, jadi cabang duplikat-identik merge tak terjangkau dan pesan konfliknya menyesatkan",
+      "location": "scripts/ps-e2e-run.py:215-245 / :878 (res['ps_domain']) dengan ps-merge-versions.py:77-86",
+      "evidence": "merge_versions_field membandingkan versi yang tumpang tindih lewat isi kanonik persis dan mendokumentasikan cabang sah: 'duplikat identik: sah (mis. reuse), pertahankan'. pick_free_host_port menulis port terpilih ke versions[v].ps_domain, dan run_shot_dir menstempel timestamp ke tiap path screenshot, jadi dua run versi yang sama tak akan pernah byte-identik. Direproduksi: dua file lapis e2e untuk 9.1 yang HANYA beda di ps_domain ('localhost:8000' vs 'localhost:41337') -> exit 2 dengan 'versi 9.1 muncul di >1 input dengan isi BERBEDA — bukti tak konsisten (dua run atas core/kode beda?)'; kontrol byte-identik merge normal. Di sisi lain sapuan ini bersih: tiap perbandingan reuse di ps-plan-layers (mtime, ruleset.files/mtime, tag per-versi vs tag map, cakupan versi) tak membaca ps_domain, jadi port dinamis tak membatalkan reuse dan tak menutupi perubahan image/tag nyata.",
+      "recommendation": "Bocor ke arah skrip: uji kesamaan atas payload yang memuat derau ber-scope-sesi adalah aturan yang tak bisa berlaku. Bandingkan proyeksi kanonik yang mengecualikan field ber-scope-sesi (ps_domain, screenshots, screenshot_dir, orchestrator) supaya 'duplikat identik' berarti VONIS-nya identik, dan pertahankan exit 2 keras untuk apa pun yang beda di findings/install/tag/authored_assertions — dengan pesan error menyebut key pertama yang berbeda."
+    },
+    {
+      "id": "architecture-6",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Brief subagent per-versi tak dispesifikasi, tak seperti brief Lapis 3 yang diklaimnya diperluas",
+      "location": "SKILL.md:27 vs SKILL.md:33",
+      "evidence": "Lapis 3 menspesifikasi delegasinya lengkap: apa yang diserahkan (path module, versi target, dan 'selalu references/adversarial-lens.md'), dan bentuk kembaliannya ditegakkan gerbang skema agregat. Paragraf baru hanya berkata 'Beri tiap subagent satu versi (--versions <satu>)'. Subagent baru tak mewarisi SKILL.md, padahal ps-flashlight-run/ps-e2e-run butuh flag hasil resolve yang dibawa SKILL.md (--tag-map, --db-image, --ps-domain, --extra-tag-map, --browsers, --screenshot-dir, -o) untuk jalan sekali panggil, plus pengetahuan spec/gotcha Lapis 4 di references/e2e-quickstart.md. Tak ada yang menyatakan kontrak kembaliannya. Kebijakan --allow-image-pull juga tak punya rumah: SKILL.md:31 menyelesaikannya dengan bertanya ke manusia, dan subagent tak bisa bertanya — dengan flag tak dispesifikasi, N subagent masing-masing degrade ke skipped_image tanpa ada yang diberi tahu sebabnya.",
+      "recommendation": "Di reference yang terukir, tulis brief-nya sebagai template literal: baris uv run persis dengan flag hasil resolve dan -o per-versi, file reference yang harus dimuat, dan 'Return ONLY {path, versi, status} — jangan memvonis, jangan prosa.' Nyatakan bahwa konfirmasi image-pull terjadi sekali di orkestrator SEBELUM fan-out."
+    },
+    {
+      "id": "architecture-7",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "ps-merge-versions mengiklankan nilai --layer yang secara struktural tak bisa ia merge, dan salah mendiagnosis file adversarial yang sah sebagai rusak",
+      "location": "scripts/ps-merge-versions.py:136-160 (choices=agg.LAYERS, gerbang bentuk)",
+      "evidence": "Direproduksi: --inputs mymod-adversarial-8.1.json mymod-adversarial-9.1.json --layer adversarial atas file yang cocok kontrak adversarial terdokumentasi ({'versions': ['8.1'], 'findings': [...]} — references/adversarial-lens.md:31, dan cabang list ps-plan-layers.layer_versions:96 secara eksplisit mendukungnya) exit 2 dengan \"'versions' bertipe list, harus object {versi: {...}}\" diikuti 'file lapis rusak = input rusak (exit 2) — jalankan ulang versi itu lalu ulangi'. Filenya tidak rusak; merge meminjam validate_layer_shape milik ps-aggregate, yang aggregate sengaja terapkan hanya untuk static/flashlight/e2e (ps-aggregate.py:675-676) dan merutekan adversarial lewat validate_adversarial. CLI mengambil choices dari agg.LAYERS, jadi dua dari empat lapis yang ditawarkan tak pernah diparalelkan dan salah satunya gagal keras dengan pesan yang menyuruh operator menjalankan ulang bukti yang baik.",
+      "recommendation": "Batasi --layer ke lapis yang memang mergeable per-versi (flashlight, e2e), dan tolak static/adversarial dengan pesan yang menyebut sebabnya ('lapis ini tak pernah dijalankan per versi — static sekali di orkestrator, adversarial satu subagent'), bukan dengan vonis input-rusak."
+    },
+    {
+      "id": "architecture-8",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Gerbang token {project-root} punya satu pemilik tapi tak dipasang di seam skrip baru; kegagalan -o melanggar kontrak exit code yang dinyatakan SKILL.md",
+      "location": "scripts/ps-merge-versions.py:139/171 vs scripts/ps-static-scan.py:316 (pemilik) dan ps-plan-layers.py:221",
+      "evidence": "Tiap seam yang menerima path laporan tulisan model dienumerasi: ps-static-scan (bergerbang), ps-plan-layers (bergerbang, dengan komentar eksplisit bahwa --reports-dir adalah 'leak yang direproduksi'), ps-flashlight-run -o, ps-e2e-run -o/--screenshot-dir, dan kini ps-merge-versions --inputs/-o. Skrip baru itu membangun kedua argumen path-nya dari psm_reports_dir, yang nilai kanoniknya adalah {project-root}/_bmad-output/psm-validate — persis input yang gerbangnya ada untuknya — dan tak didaftarkan. Asimetri direproduksi: --inputs '{project-root}/x/f.json' -> exit 2 berpesan terbaca (agg.load_json), tapi -o '{project-root}/x/out.json' -> traceback FileNotFoundError mentah, exit 1. SKILL.md:39 memberi tahu model 'Exit 2 dari skrip manapun = error input', dan keluarga ini memakai exit 1 untuk vonis gagal (docstring merge sendiri: 'Tak ada exit 1: skrip ini tak memvonis'). Traceback exit 1 dari merge adalah state yang menurut kontrak tertulis mustahil.",
+      "recommendation": "Panggil ss.unresolved_path_args([('-o', args.output), *[('--inputs', p) for p in args.inputs]]) di awal main() dan return 2 dengan pesan pemiliknya; bungkus penulisan supaya OSError apa pun pada -o exit 2, tak pernah 1."
+    },
+    {
+      "id": "customization-2",
+      "lens": "customization",
+      "severity": "medium",
+      "title": "ps-merge-versions.py adalah kembaran telanjang di seam token path belum-resolve; melanggar kontrak exit-nya sendiri",
+      "location": "scripts/ps-merge-versions.py:130-175 (dan ps-aggregate.py -o)",
+      "evidence": "Direproduksi. ps-merge-versions.py -o '{project-root}/_bmad-output/psm-validate/m-static.json' -> FileNotFoundError tak tertangkap, exit 1. Input sama ke kembaran yang bergerbang ps-plan-layers.py -> pesan bersih \"error: token '{project-root}' belum diresolve di --reports-dir: ... ini path filesystem, bukan nilai config.\" dan exit 2. ps-aggregate.py -o telanjang identik. Gerbangnya ada dan bersatu pemilik (unresolved_path_args, ps-static-scan.py:316) tapi terpasang di dua dari enam skrip. Cakupan test mengonfirmasi polanya per-skrip dan tak terenumerasi: kasus token hanya diuji di test-ps-static-scan.py:462 dan test-ps-plan-layers.py:301; test-ps-merge-versions.py tak punya kasus itu, jadi skrip baru berikutnya juga telanjang secara default.",
+      "recommendation": "Pasang pemilik yang ada di kedua seam sisa. Lalu tutup kelasnya alih-alih menambah penangkap keempat: satu test enumerasi yang menyusuri tiap skrip di scripts/ yang mendeklarasikan opsi argparse bernilai path dan menegaskan ia menolak nilai ber-{project-root} dengan exit 2 — meniru enumerasi yang sudah dipakai untuk drift psm_flashlight_*."
+    },
+    {
+      "id": "customization-3",
+      "lens": "customization",
+      "severity": "medium",
+      "title": "psm_e2e_enabled satu-satunya key psm_* tanpa flag skrip, tanpa gerbang drift, dan tanpa test — penegakannya hidup di prosa saja",
+      "location": "SKILL.md:19,35 + scripts/ps-e2e-run.py:991-1021",
+      "evidence": "SKILL.md:19 menyatakan aturan keluarganya eksplisit: 'Setiap lapis menerima setelannya sebagai flag di titik pakainya.' Tiap key lain menghormatinya (psm_target_versions -> --versions, psm_flashlight_tag_map -> --tag-map, dst). psm_e2e_enabled tidak: --help ps-e2e-run.py tak menampilkan opsi apa pun untuknya, dan grep mengonfirmasi skrip itu tak pernah membaca config.yaml maupun resolver. Direproduksi: psm_e2e_enabled: 'false' di config, resolver mengemitnya, dan skrip sepenuhnya tak sadar — konsumen satu-satunya adalah prosa SKILL.md:35 dan dokumentasi. Ia juga di luar tiap gerbang drift (enumerasi hanya meliputi psm_flashlight_*). Ia pula satu-satunya toggle on/off di permukaan ini, dan pola subagent-per-versi membuatnya paling mudah hilang: subagent yang diberi --versions <satu> tak punya kanal apa pun untuk menerima gerbang itu.",
+      "recommendation": "Beri key itu titik pakai mekanis supaya aturan yang dinyatakan berlaku dan gerbangnya selamat melewati delegasi: tambah --e2e-enabled (default true, cocok konstanta DEFAULT_E2E_ENABLED) yang memintas ke payload status:skipped, reason:e2e_disabled_by_config, teruskan dari nilai hasil resolve di samping --browsers, dan masukkan ke drift test. Bila toggle itu memang dimaksudkan tetap keputusan orkestrator saja, nyatakan begitu di SKILL.md:19."
+    },
+    {
+      "id": "leanness-2",
+      "lens": "leanness",
+      "severity": "medium",
+      "title": "On Activation menarasikan mekanisme port host dinamis yang tak pernah dikendalikan model — salinan keempat fakta yang sama",
+      "location": "SKILL.md:19 (On Activation langkah 1)",
+      "evidence": "Ekor langkah 1 menghabiskan 89 dari 185 tokennya menjelaskan bahwa port host Playwright dipilih dinamis, dari mana preferensinya, fallback ephemeral-nya, mengapa (run paralel), dan bahwa PS_DOMAIN dan port publish cocok. Model tak menyetel satu pun: ia meneruskan --ps-domain dari config di Lapis 2/4 (baris 31, 35) dan ps-e2e-run.py mengurus sisanya (pick_free_host_port + retry konflik port di baris 862-875). Fakta yang sama lalu dinyatakan lagi di baris 27, dan dua kali lagi di references/e2e-quickstart.md (gotcha baris 169 dan Config keys baris 194). Ini persis pola yang ditandai dan diterima di ronde 3, 4 dan 5 ('Lapis 2/4 menarasikan internal skrip yang tak ditindaklanjuti model'), diperkenalkan ulang di waktu aktivasi tempat tiap pemanggilan membayarnya.",
+      "recommendation": "Potong mekanismenya dari langkah 1 dan biarkan reference E2E memilikinya — ia sudah ada di sana lebih rinci, dan dimuat persis saat manusia berurusan dengan port. Pertahankan kalimat penerusan flag.",
+      "proposed_smallest": "Setiap lapis menerima setelannya sebagai flag di titik pakainya.",
+      "predicted_delta": "-71 token (89 -> 18). Kehilangan yang diprediksi: tak ada. Tak ada keputusan di On Activation yang bergantung pada port itu dinamis — nilai config tetap diteruskan sebagai --ps-domain di kedua titik pakai, dan port terpilih diemit di hasil per-versi (ps_domain) bila ringkasan membutuhkannya."
+    },
+    {
+      "id": "leanness-3",
+      "lens": "leanness",
+      "severity": "medium",
+      "title": "pass-vs-ready dan saran penyempitan --require masih dinyatakan dua kali, berjarak enam baris (temuan ronde-5 yang belum diterapkan)",
+      "location": "SKILL.md:41 (Vonis dan output) dan SKILL.md:47 (Mode headless)",
+      "evidence": "Baris 41: 'sempitkan gerbang lewat --require, jangan abaikan ready. pass buta konklusivitas — ready yang menjawab siap-rilis.' Baris 47: 'Gerbang CI membaca ready ... pass tetap menampung temuan nyata. Menggating lebih sempit: nyatakan di --require.' Salinan ketiga ada di help argparse --require ps-aggregate.py, yang baris 39 arahkan model untuk membacanya. Ini diangkat sebagai leanness-2 di .analysis/2026-07-17-1642 dan tak pernah diterapkan; kedua salinan masih verbatim di file sekarang. Pemisahan audiens (ringkasan manusia vs JSON headless) tak butuh pembedaan itu dua kali.",
+      "recommendation": "Biarkan baris 47 memiliki semantik pass/ready dan buang kalimat duplikatnya dari baris 41, sisakan hanya dorongan yang bisa ditindaklanjuti.",
+      "proposed_smallest": "… dan E2E yang cuma smoke (`e2e_smoke_only`: shop terbukti tak rusak, perilaku module belum teruji — ini **menjatuhkan `ready`**). Untuk dua yang terakhir tawarkan perbaikannya: perbaiki/tulis skenario di `<module>/tests/e2e/` (format + pola BO lintas-versi: `references/e2e-quickstart.md`); rilis tanpa uji perilaku harus disadari: sempitkan gerbang lewat `--require`, jangan abaikan `ready`.",
+      "predicted_delta": "-24 token. Kehilangan yang diprediksi: tak ada — salinan yang selamat di baris 47 yang lebih presisi (ia menyatakan ready tersusun dari apa), dan ada di file yang sama yang selalu dimuat."
+    },
+    {
+      "id": "architecture-9",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Perintah cleanup psm-fl tanpa syarat dan kini menghancurkan container versi sibling yang masih hidup",
+      "location": "SKILL.md:31 (Lapis 2) dan references/e2e-quickstart.md:173-175",
+      "evidence": "docker ps -aq --filter name=psm-fl | xargs -r docker rm -f && docker network ls --filter name=psm-fl -q | xargs -r docker network rm mencocokkan tiap sesi kedua orkestrator by design (ps-flashlight-run.py:341-354 sengaja menyatukan prefiksnya supaya satu filter menangkap keduanya). Sebelum commit 01013b5 paling banyak ada satu sesi; SKILL.md:27 kini menginstruksikan 'versi-versi boot Docker serentak'. Pemicu yang dinyatakannya ('run berikut gagal bind') juga kini sebagian besar usang untuk Lapis 4 (port dinamis) dan tak pernah berlaku untuk Lapis 2 sama sekali (diverifikasi: _bring_up_compose/_bring_up_manual dipanggil dari ps-flashlight-run dengan publish=None), jadi pembaca paling mungkin baris itu adalah model yang sedang menelusuri satu versi yang gagal sementara dua sibling sedang boot.",
+      "recommendation": "Beri cakupan sesi pada cleanup-nya atau beri syarat: instruksikan ia hanya jalan bila tak ada subagent versi lain yang sedang berjalan, atau persempit filternya memakai id container sesi itu sendiri (sudah ada di session['ps_container']/network) dan pertahankan sapuan lebar sebagai escape hatch yang berlabel eksplisit 'tak ada run lain yang aktif'."
+    },
+    {
+      "id": "enhancement-5",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Tambahkan batas: lebar fan-out sama dengan jumlah versi terkonfigurasi, dan tak ada yang membatasinya",
+      "location": "SKILL.md:27 + psm-setup/scripts/resolve-psm-config.py:40",
+      "evidence": "Grep untuk cap apa pun di SKILL.md dan psm-setup/assets/module.yaml tak mengembalikan apa-apa — tak ada --jobs, tak ada max, tak ada aturan batching. SKILL.md:27 berkata 'Bila versi target lebih dari satu, jalankan lapis mahal per versi di subagent terpisah', jadi lebar = len(psm_target_versions), nilai config teks-bebas (default '1.7.8,8.1,9.1', bisa disunting user, tanpa validasi jumlah). Tiap subagent versi Lapis 4 mem-boot container PrestaShop flashlight + container MariaDB + engine Playwright; user yang memvalidasi lima atau enam versi mem-fan-out sebanyak itu serentak tanpa instruksi batching. Kegagalannya setidaknya jujur (boot timeout -> tak konklusif -> ready false), tapi jujur SESUDAH percobaan mahal, dan ia menggagalkan semua versi sekaligus alih-alih degradasi.",
+      "recommendation": "Nyatakan cap-nya di klausa yang sama: 'fan out paling banyak 3 versi sekaligus; lebih dari itu jalankan bergelombang lalu merge sekali di akhir' — merge sudah menerima semua file per-versi dalam satu panggilan terlepas kapan diproduksi, jadi batching tak berbiaya. Bila enhancement-4 yang mendarat, --jobs N adalah batasnya dan temuan ini larut."
+    },
+    {
+      "id": "enhancement-6",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Tambahkan: seam baru tak terlihat oleh jejak audit maupun hand-back mesin",
+      "location": "SKILL.md:45,47",
+      "evidence": "Klausa memlog headless (SKILL.md:45) mengenumerasi tiga asumsi untuk dicatat — module-path di-infer, default resolver dipakai, review sendiri pengganti subagent — dan tak satu pun keputusan seam baru ada di antaranya: apakah paralelisme dilewati karena skill sendiri berjalan sebagai subagent, dan apakah file lapis kanonik berasal dari merge input parsial (enhancement-2b, tempat saya menghasilkan file flashlight kanonik atas 2 dari 3 versi pada exit 0). Hand-back (SKILL.md:47) mengembalikan flashlight_conclusive/e2e_conclusive/layers_run, yang tak bisa membedakan 'Docker absen di runner ini' dari 'subagent 9.1 mati' — padahal keduanya menuntut reaksi berlawanan dari psm-develop/psm-cross-version, konsumen mesin yang justru jadi alasan kontrak ini ada.",
+      "recommendation": "Perluas daftar SKILL.md:45 dengan dua butir ('paralelisme dilewati — jalan serial', 'file lapis <lapis> di-merge dari input parsial; versi <x> tanpa bukti') — satu klausa, tanpa bagian baru. Untuk hand-back-nya, ps-aggregate sudah tahu versi mana yang tak punya entri lapis; surface-kan versions_missing_layer:{layer:[versi]} di samping layers_run supaya konsumen membaca kehilangan cakupan tanpa membuka laporan."
+    },
+    {
+      "id": "leanness-4",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Langkah Augment menyatakan ulang semantik menambah-vs-mengganti milik --help verbatim padahal sisa file mendelegasikannya",
+      "location": "SKILL.md:21 (On Activation langkah 3)",
+      "evidence": "SKILL.md menulis '--extra-rules (Lapis 1, menambah aturan)', '--extra-tag-map (versi yang sama -> yang tambahan menang)', '--rules/--tag-map MENGGANTI seluruhnya'. Kedua --help dijalankan: ps-static-scan.py mencetak 'Path JSON aturan TAMBAHAN ... di-merge ke ruleset; --rules MENGGANTI, ini MENAMBAH'; ps-flashlight-run.py mencetak 'Peta LENGKAP versi=tag ... (MENGGANTI default)' dan 'Tag TAMBAHAN versi=tag (MENAMBAH di atas peta)'. Tiap paragraf lapis lain di file ini berkata 'lihat --help' alih-alih menyalin. Bagian non-inferable dari langkah ini adalah kebijakannya — aturan tambahan hanya masuk lewat artefak eksplisit, tak pernah lewat prosa yang diterjemahkan tangan — dan itu selamat.",
+      "recommendation": "Pertahankan kalimat kebijakan dan kedua nama flag; serahkan semantik menambah-vs-mengganti ke --help seperti sisa file ini.",
+      "proposed_smallest": "3. **Augment aturan (opsional).** Aturan pindai di luar `assets/ps-rules.json` dan tag di luar `psm_flashlight_tag_map` hanya masuk lewat artefak eksplisit: `--extra-rules <file.json>` (Lapis 1) dan `--extra-tag-map <versi=tag>` (Lapis 2/4) — lihat `--help` untuk semantik menambah vs mengganti. Jangan terjemahkan prosa jadi aturan dengan tangan; tanpa artefak itu, aturan inti sudah di-embed.",
+      "predicted_delta": "-21 token (159 -> 138). Kehilangan yang diprediksi: tak ada, kecuali model meneruskan --rules tanpa membaca --help — tapi ia tak punya alasan menjangkau --rules sama sekali, karena ruleset inti sudah di-embed dan langkah itu mengatakannya."
+    },
+    {
+      "id": "leanness-5",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Aturan cleanup Lapis 2 bergantung pada 'why' yang dibantah skripnya sendiri",
+      "location": "SKILL.md:31 (Lapis 2)",
+      "evidence": "'Run yang di-kill paksa meninggalkan container + network psm-fl -> run berikut gagal bind'. Direproduksi terhadap skripnya: ps-flashlight-run.py membawa naik dengan publish=None di kedua jalur, jadi Lapis 2 tak mem-bind port host apa pun; nama project dan nama network keduanya membawa suffix uuid4 (psm-fl-<ver>-<8hex>, psm-fl-net-<8hex>), jadi orphan tak bisa bertabrakan lewat nama juga. Kegagalan bind yang dijelaskan kalimat ini milik port tetap 8000 Lapis 4 — yang justru dihapus kerja port dinamis. references/e2e-quickstart.md:172 sudah menyatakan versi terkoreksinya. Perintah cleanup-nya sendiri tetap layak dipertahankan (orphan menahan disk dan memori), tapi konsekuensi yang dinyatakan kini salah, dan 'why' yang salah adalah hal yang canon peringatkan akan disalahterapkan ke kasus yang tak diantisipasi penulisnya.",
+      "recommendation": "Nyatakan ulang konsekuensinya sebagai orphan-nya sendiri, selaras dengan reference. Biarkan perintahnya utuh — ia versi hasil koreksi drift ronde 6 dan kedua file kini sepakat.",
+      "proposed_smallest": "Run yang di-kill paksa meninggalkan container + network `psm-fl` yatim; bersihkan: `docker ps -aq --filter name=psm-fl | xargs -r docker rm -f && docker network ls --filter name=psm-fl -q | xargs -r docker network rm`.",
+      "predicted_delta": "-4 token. Yang ini soal kebenaran, bukan ukuran: nilainya adalah model berhenti percaya Lapis 2 punya risiko bind port host — keyakinan yang sama yang menghasilkan pembenaran salah di leanness-1."
+    },
+    {
+      "id": "leanness-6",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Prasyarat playwright install dinyatakan untuk keempat kalinya di Mode headless",
+      "location": "SKILL.md:45 (Mode headless)",
+      "evidence": "'binary browser harus sudah di-playwright install sebelumnya' menduplikasi pointer prasyarat Lapis 4 (baris 35), bagian prasyarat quickstart, dan gotcha headless quickstart sendiri. Ronde 6 menandai aturan yang sama sebagai 'salinan ke-4' dan ia terbentuk ulang di klausa sibling. ps-e2e-run.py sudah degrade jujur dan menandai dirinya saat binary browser hilang, jadi salinan ini tak mencegah kegagalan apa pun — run melaporkan celahnya bagaimanapun.",
+      "recommendation": "Pertahankan aturan image-pull (yang itu punya konsekuensi nyata — menarik gigabyte tanpa manusia hadir) dan buang klausa browser-install; pointer Lapis 4 dan gotcha headless quickstart sudah memilikinya.",
+      "proposed_smallest": "Jalankan Lapis 2 & Lapis 4 **tanpa** `--allow-image-pull` — jangan pernah tarik image tanpa manusia (pemanggil yang memang mau menarik meneruskannya eksplisit).",
+      "predicted_delta": "-15 token. Kehilangan yang diprediksi: tak ada. Runner headless tanpa browser mendapat e2e_conclusive:false dan ready:false dari skrip terlepas SKILL.md memperingatkannya atau tidak."
+    },
+    {
+      "id": "leanness-7",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "Overview masih mengenumerasi keempat lapis untuk ketiga kalinya (temuan ronde-5, belum diterapkan)",
+      "location": "SKILL.md:10 (Overview)",
+      "evidence": "Di tengah kalimat Overview mendaftar keempat lapis dan jenisnya; masing-masing dinyatakan ulang di heading Lapis-nya sendiri 15 baris kemudian bersama kondisi jalannya, dan deskripsi frontmatter menamainya untuk kedua kali. Rasional urutannya duduk terpisah di lead Validate. Ini diangkat sebagai leanness-1 di .analysis/2026-07-17-1642 dengan penalaran yang sama dan tak berubah — diangkat ulang hanya karena file kini 573 token di atas budget dan ini 45 token yang bisa dipulihkan di paragraf ber-traffic tertinggi. Sikap, outcome, konsumen dan bar di sekitarnya sudah benar menurut canon dan tak boleh disentuh.",
+      "recommendation": "Ganti enumerasinya dengan satu hal yang benar-benar ia sumbangkan — bahwa vonisnya bertumpu pada empat lapis berbiaya menaik — dan biarkan heading Lapis memiliki sisanya. Bila penulisnya sudah menolak ini di ronde 5, perlakukan sebagai ditolak dan catat, alih-alih men-trim dua kali.",
+      "proposed_smallest": "Bertindak sebagai validator module PrestaShop yang teliti dan jujur: operator memegang module, skill memegang aturan kompatibilitas lintas versi dan prosedur ujinya. Hasilkan **vonis berbasis bukti** apakah sebuah module sehat di PrestaShop **1.7.x, 8.x, dan 9.x sekaligus** — empat lapis bukti, dari yang murah dan deterministik sampai yang mahal dan nyata. Konsumen hasil: operator (perbaiki sebelum rilis) dan workflow lain (psm-cross-version, psm-develop, psm-scaffold) yang memanggil skill ini sebagai gerbang mutu — jadi output harus JSON terstruktur yang dapat dibaca mesin, dengan ringkasan yang bisa ditindaklanjuti manusia.",
+      "predicted_delta": "-45 token (233 -> 188). Kehilangan yang diprediksi: tak ada yang bertahan lama — tiap fakta yang dienumerasi dinyatakan lebih presisi di Validate, di file yang sama yang selalu dimuat."
+    },
+    {
+      "id": "architecture-10",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Konvensi <module>-<lapis>-<versi>.json hidup di prosa saja, dan template merge menghilangkan reports dir dari input-nya",
+      "location": "SKILL.md:27",
+      "evidence": "Tak ada skrip yang menyusun, mem-glob, atau memvalidasi nama file per-versi: ps-merge-versions menerima --inputs eksplisit dan menurunkan versi dari isi payload, jadi file bernama -9.1 yang membawa bukti 8.1 merge tanpa suara; ps-plan-layers tak pernah mencari polanya. Konvensinya jadi pembukuan tanpa pemilik dan file-nya menumpuk di psm_reports_dir tanpa ada yang membersihkan atau merekonsiliasi. Di kalimat yang sama, template menulis --inputs <module>-<lapis>-<v1>.json ... tanpa prefiks <psm_reports_dir>/ yang justru dibawa argumen berikutnya (-o) — direproduksi bahwa nama telanjang hanya resolve bila cwd kebetulan reports dir. Input yang terlupa degrade jujur (agregat melaporkan 'versi tak ada di hasil flashlight', ready=false), jadi biayanya friksi, bukan hijau palsu.",
+      "recommendation": "Beri prefiks pada input di template, dan biarkan merge memiliki konvensinya: terima --reports-dir <dir> --module <name> --layer <lapis> dan glob file per-versi sendiri, sambil memeriksa bahwa key versions tiap file cocok dengan versi di nama filenya."
+    },
+    {
+      "id": "customization-4",
+      "lens": "customization",
+      "severity": "low",
+      "title": "publish_spec() mati sejak 01013b5 tapi test-nya masih meng-assert-nya, terbaca sebagai cakupan atas jalur yang tak dijalankan apa pun",
+      "location": "scripts/ps-e2e-run.py:210-212 + scripts/tests/test-ps-e2e-run.py:239",
+      "evidence": "Grep pemanggil di scripts/ dan tests/ mengembalikan tepat dua hit: definisi di ps-e2e-run.py:210 dan test-ps-e2e-run.py:239 (publish_spec('localhost:8000') == '8000:80'). Jalur run yang diperkenalkan 01013b5 tak memanggilnya — baris 867 meng-inline ekspresi identik sebagai publish = f'{host_port}:{CONTAINER_HTTP_PORT}'. Jadi satu-satunya assertion yang tampak mencakup cara port container dipublikasikan mencakup fungsi yang tak dicapai jalur eksekusi mana pun, sementara ekspresi hidup di baris 867 tak tercakup. Kecil sendirian, tapi ini salinan kedua aturan penurunan nilai di skill yang disiplin drift-nya justru dibangun atas kepemilikan tunggal.",
+      "recommendation": "Hapus publish_spec() beserta assertion-nya, atau pulihkan kepemilikan tunggal dengan memanggilnya di baris 867 — publish = publish_spec(ps_domain_eff) — yang membuat test yang ada mencakup jalur hidup lagi tanpa biaya."
+    },
+    {
+      "id": "enhancement-7",
+      "lens": "enhancement",
+      "severity": "low",
+      "title": "Peluang: port host dinamis hanya sampai ke laporan di dalam URL yang sudah mati",
+      "location": "scripts/ps-e2e-run.py:878 + ps-aggregate.py (tanpa ps_domain) + SKILL.md:41",
+      "evidence": "ps-e2e-run mencatat port terpilih per versi (res['ps_domain'] = ps_domain_eff, baris 878) dan merge melestarikannya per versi (diverifikasi: file merged menyimpan {1.7.8: localhost:8000, 8.1: localhost:41235, 9.1: localhost:41777}), tapi ps-aggregate tak pernah membaca ps_domain (grep: nol hit) — jadi satu-satunya jejak port di vonis ada di dalam nilai location temuan e2e, yang untuk goto adalah URL penuh. Manusia yang membaca laporan kini melihat http://localhost:41235/... — alamat yang tampak bisa dikunjungi padahal ephemeral dan container-nya sudah dibongkar; sebelum port dinamis ia adalah localhost:8000 yang terdokumentasi.",
+      "recommendation": "Angkat ps_domain per-versi ke blok e2e per-versi di agregat dan tambahkan setengah klausa ke SKILL.md:41: E2E berjalan atas port ephemeral per-sesi, jadi URL di temuan mengidentifikasi halamannya, bukan tempat yang bisa dikunjungi ulang — reproduksi dengan --headed, bukan dengan membuka link."
+    }
+  ]
+}

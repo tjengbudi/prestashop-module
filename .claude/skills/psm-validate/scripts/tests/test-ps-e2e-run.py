@@ -904,6 +904,15 @@ def main():
     ok &= check("run berbeda -> folder berbeda (PNG minggu lalu tak bisa dibaca sbg bukti run ini)",
                 a != b and a.endswith("run-20260717-100000") and b.endswith("run-20260724-113000"))
 
+    # Idempoten: orkestrator multi-versi (ps-run-layer.py) menstempel SEKALI lalu memberi
+    # folder yang sama ke tiap anak. Tanpa ini tiap anak menstempel ulang, bukti visual N
+    # versi pecah jadi N folder, dan hanya satu yang sampai ke vonis.
+    already = "/tmp/shots/run-20260724-113000"
+    ok &= check("folder yang SUDAH berstempel dikembalikan apa adanya (tak distempel ulang)",
+                mod.run_shot_dir(already) == already)
+    ok &= check("nama yang cuma mirip stempel tetap distempel (bukan pencocokan longgar)",
+                mod.run_shot_dir("/tmp/run-lama").startswith("/tmp/run-lama/run-"))
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

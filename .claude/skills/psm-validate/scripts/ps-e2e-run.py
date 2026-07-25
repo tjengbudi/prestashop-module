@@ -416,8 +416,16 @@ def _resolve_url(step, ctx, area):
     return base + substitute(step.get("path", ""), ctx)
 
 
+_RUN_DIR_STAMP = re.compile(r"^run-\d{8}-\d{6}$")
+
+
 def run_shot_dir(base):
     """Subfolder screenshot khusus run ini — `<base>/run-<YYYYMMDD-HHMMSS>`.
+
+    Idempoten: `base` yang SUDAH berstempel dikembalikan apa adanya. Orkestrator multi-versi
+    (ps-run-layer.py) menstempel sekali lalu memberi folder yang sama ke tiap anak; tanpa ini
+    tiap anak menstempel ulang, bukti visual N versi pecah jadi N folder, dan hanya satu yang
+    sampai ke vonis — persis kelas yang pemisahan per-run ini ada untuk dicegah.
 
     Nama file screenshot deterministik (`<ver>/<engine>-<skenario>-<label>.png`) dan tak
     pernah dibersihkan, jadi satu folder datar menumpuk PNG dari run-run sebelumnya —
@@ -427,7 +435,11 @@ def run_shot_dir(base):
     sudah tak ada. Memisahkan per-run menghapus kelasnya di sumber — lebih baik daripada
     menaruh gotcha yang harus diingat model.
     """
-    return str(Path(base) / f"run-{datetime.now():%Y%m%d-%H%M%S}") if base else None
+    if not base:
+        return None
+    if _RUN_DIR_STAMP.match(Path(base).name):
+        return str(Path(base))
+    return str(Path(base) / f"run-{datetime.now():%Y%m%d-%H%M%S}")
 
 
 def _snap(page, ctx, label):
