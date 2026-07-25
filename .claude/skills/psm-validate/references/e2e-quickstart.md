@@ -166,13 +166,20 @@ melihat gambar. Cacat visual yang kamu yakini, tulis ke situ SEBELUM agregat jal
 
 ## 4. Gotchas
 
-- **Port host dinamis.** `ps-e2e-run.py` memilih port host bebas **per versi, sebelum boot**
-  (basis `psm_flashlight_ps_domain`, jatuh ke port ephemeral OS bila terpakai) lalu memakainya
-  untuk `PS_DOMAIN` **dan** publish — jadi dua run paralel (atau dua versi serentak lewat
-  `ps-run-layer.py`) tak rebutan bind. Port terpilih dicatat di hasil per-versi (`ps_domain`). Karena
-  itu tabrakan port sudah jarang; tapi run yang di-kill paksa tetap bisa meninggalkan
-  container/network yatim. Bersihkan (satu prefix `psm-fl` menangkap kedua orkestrator —
-  compose & manual): `docker ps -aq --filter name=psm-fl | xargs -r docker rm -f && docker network ls --filter name=psm-fl -q | xargs -r docker network rm`.
+- **Port host dinamis.** `ps-e2e-run.py` memakai **host** dari `psm_flashlight_ps_domain` tapi
+  memilih **port bebas per versi, sebelum boot** (port di config hanya preferensi; jatuh ke
+  port ephemeral OS bila terpakai), lalu memakai `host:port` itu untuk `PS_DOMAIN` **dan**
+  publish — jadi dua run paralel (atau dua versi serentak lewat `ps-run-layer.py`) tak rebutan
+  bind. Host dipertahankan karena PrestaShop membangun URL absolut dari `PS_DOMAIN`; hanya port
+  yang mengambang. Port terpilih dicatat di hasil per-versi (`ps_domain`). Karena itu tabrakan
+  port sudah jarang; tapi run yang di-kill paksa tetap bisa meninggalkan container/network
+  yatim. Bersihkan (satu prefix `psm-fl` menangkap kedua orkestrator — compose & manual):
+  `docker ps -aq --filter name=psm-fl | xargs -r docker rm -f && docker network ls --filter name=psm-fl -q | xargs -r docker network rm`.
+- **URL di temuan bukan alamat yang bisa dikunjungi.** `location` temuan `goto` adalah URL
+  penuh dengan port ephemeral run itu, dan containernya sudah dibongkar saat kamu membaca
+  laporan — URL itu mengidentifikasi **halaman** yang gagal, bukan tempat untuk dibuka ulang.
+  Untuk melihat halamannya lagi, jalankan ulang dengan `--headed` (memilih port baru), jangan
+  klik link di laporan.
 - **Headless / CI.** Jalankan **tanpa** `--allow-image-pull` (tak akan auto-tarik image) →
   pra-tarik dulu; browser juga wajib sudah di-`install` (tak auto-download di headless).
 - **Login BO.** Default flashlight `admin@prestashop.com` / `prestashop`, folder `admin-dev`
@@ -191,8 +198,8 @@ melihat gambar. Cacat visual yang kamu yakini, tulis ke situ SEBELUM agregat jal
   konklusif vs `inconclusive` (login BO gagal → langkah BO inconclusive, bukan lolos).
 - **Config keys.** `psm_e2e_enabled` (false → lewati Lapis 4) & `psm_e2e_browsers` di section
   `psm` `{project-root}/_bmad/config.yaml`; default kanonik dari resolver. Base URL memakai
-  `psm_flashlight_ps_domain` sebagai **preferensi port** — port host final dipilih dinamis
-  per sesi (bebas-bind); `PS_DOMAIN` & publish memakai port yang sama.
+  **host** `psm_flashlight_ps_domain`; portnya cuma preferensi — port final dipilih dinamis
+  per sesi (bebas-bind), dan `PS_DOMAIN` & publish memakai `host:port` yang sama.
 - **Dependensi psm-setup.** Resolver config dijalankan saat aktivasi dari
   `.claude/skills/psm-setup/scripts/resolve-psm-config.py` — saat menyalin ke mesin lain, sertakan
   skill `psm-setup`, bukan hanya folder `psm-validate`. Resolver absen → skill lanjut dengan

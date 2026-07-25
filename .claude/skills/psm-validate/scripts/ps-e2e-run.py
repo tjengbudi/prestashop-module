@@ -435,6 +435,15 @@ def run_shot_dir(base):
     tiap anak menstempel ulang, bukti visual N versi pecah jadi N folder, dan hanya satu yang
     sampai ke vonis — persis kelas yang pemisahan per-run ini ada untuk dicegah.
 
+    Idempotensi ini AMAN dari kelas PNG-basi hanya karena stempel dibuat SEGAR tiap invokasi
+    orkestrator: ps-run-layer memanggil run_shot_dir dengan base TANPA stempel (dari
+    `--screenshot-dir <psm_reports_dir>/e2e-shots`), jadi dua run berbeda selalu dapat folder
+    berbeda; anak-anak SATU run memakai ulang stempel induknya. Yang tak boleh: mengumpankan
+    balik nilai `screenshot_dir` dari file lapis LAMA (sudah berstempel run lampau) ke run
+    baru — itu akan menaruh PNG run baru di folder run lama. Tak ada jalur terdokumentasi yang
+    melakukannya (reuse ps-plan-layers tak menjalankan ulang E2E), jadi kelasnya tetap tertutup;
+    catat di sini supaya penambah fitur tak membuka seam itu tanpa sadar.
+
     Nama file screenshot deterministik (`<ver>/<engine>-<skenario>-<label>.png`) dan tak
     pernah dibersihkan, jadi satu folder datar menumpuk PNG dari run-run sebelumnya —
     termasuk versi yang tak lagi dalam cakupan run sekarang. Verifikasi visual Lapis 4
