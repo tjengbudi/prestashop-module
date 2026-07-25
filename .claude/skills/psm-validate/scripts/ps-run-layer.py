@@ -270,6 +270,16 @@ def layer_file(reports_dir, module_path, layer):
     return str(Path(reports_dir) / f"{Path(module_path).resolve().name}-{layer}.json")
 
 
+def per_version_file(reports_dir, module_path, layer, ver):
+    """Path file lapis PER-VERSI — `<reports>/<module>-<lapis>-<versi>.json`, DITURUNKAN.
+
+    Cermin per_version_path di ps-plan-layers (pembacanya). Sama seperti layer_file, nama tak
+    bisa diketik pemanggil: bukti versi V tak bisa mendarat di file versi/lapis/module lain.
+    Segmen versi selalu ada, jadi tak pernah bentrok dgn nama kanonik `<module>-<lapis>.json`.
+    """
+    return str(Path(reports_dir) / f"{Path(module_path).resolve().name}-{layer}-{ver}.json")
+
+
 def plan_children(script, module_path, versions, out_dir, extra):
     """(versi, cmd, out_path) untuk tiap versi. Murni — bisa diuji tanpa men-spawn apa pun."""
     plan = []
@@ -348,6 +358,102 @@ def collect(plan, codes):
     return pairs, missing, rejected
 
 
+def merge_only(reports_dir, module_path, layer, versions, log):
+    """Sweep rilis: satukan file per-versi persisten jadi kanonik, TANPA menjalankan lapis.
+
+    Input tiap versi = `<reports>/<module>-<lapis>-<versi>.json` (nama DITURUNKAN, sama seperti
+    yang ditulis mode --per-version) — bukan daftar yang diketik, jadi gerbang identitas berlaku.
+    Versi tanpa file per-versi DIHILANGKAN (degrade jujur; agregat menandainya tak konklusif,
+    ready jatuh), bukan dikarang jadi vonis. mtime kanonik = mtime bukti TERTUA supaya kanonik tak
+    pernah tampak lebih segar dari bukti terbasi yang menyusunnya — gerbang kesegaran ps-plan-layers
+    tetap menyala bila source diedit sesudah salah satu versi dikonvergensi.
+    """
+    agg = aggregate()
+    ss = agg.load_sibling(_HERE / "ps-static-scan.py", "ps_static_scan")
+    bad = ss.unresolved_path_args([("--reports-dir", reports_dir), ("--module", module_path)])
+    for name, val in bad:
+        log(f"error: token '{{project-root}}' belum diresolve di {name}: {val}")
+        log("ini path filesystem, bukan nilai config — resolve dulu di pemanggil")
+    if bad:
+        return 2
+    output = layer_file(reports_dir, module_path, layer)
+    pairs, missing = [], []
+    for ver in versions:
+        pvf = per_version_file(reports_dir, module_path, layer, ver)
+        try:
+            payload = json.loads(Path(pvf).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            missing.append(ver)
+            continue
+        if not isinstance(payload, dict):
+            missing.append(ver)
+            continue
+        # Gerbang bentuk sama seperti sebelum merge run nyata: file per-versi yang terpotong
+        # (proses di-kill saat menulis) tak boleh menyelinap jadi kanonik lalu meledak di agregat.
+        notes = agg.validate_layer_shape(payload, ())
+        if notes:
+            log(f"error: file per-versi {ver} tak lolos gerbang bentuk ({pvf}):")
+            for n in notes:
+                log(f"  - {n}")
+            return 2
+        got = payload.get("versions")
+        # IDENTITAS pada BACA: file per-versi hanya boleh memuat versinya sendiri. Versi asing =
+        # file salah-label (stale, atau ditaruh manual) — error input, bukan vonis. Nama file
+        # diturunkan by construction, tapi merge-only sengaja memakan file yang tak ditulisnya
+        # dalam proses ini, jadi klaim identitas HARUS ditegakkan di sini (cermin collect()).
+        if isinstance(got, dict):
+            stray = sorted(set(got) - {ver})
+            if stray:
+                log(f"error: file per-versi {ver} memuat versi di luar yang diminta: {stray} "
+                    f"({pvf}) — file salah-label, bukan bukti versi {ver}")
+                return 2
+        try:
+            mtime = Path(pvf).stat().st_mtime
+        except OSError:
+            missing.append(ver)
+            continue
+        # Bukti kosong (versions {}) = anak melewatkan lapis: versi ini TAK berbukti. Persis
+        # collect(): masuk `missing` (ready jatuh, bukan diam-diam hilang dengan exit 0) TAPI
+        # payload skip tetap ikut merge — ia membawa status/alasan skip untuk kasus "seluruh
+        # lapis tak tersedia" di bawah.
+        if not (got or {}):
+            missing.append(ver)
+        pairs.append((ver, payload, mtime))
+    for ver in missing:
+        log(f"versi {ver}: file per-versi tak ada/kosong — dihilangkan dari kanonik "
+            "(agregat menandainya tak konklusif, ready jatuh)")
+    if not pairs:
+        log(f"error: tak ada file per-versi yang bisa digabung untuk lapis '{layer}' — "
+            "jalankan lapis per versi (--per-version) dulu")
+        return 1
+    payloads = [p for _v, p, _m in pairs]
+    try:
+        result = merge_toplevel(payloads, merge_versions_field(payloads))
+    except ValueError as e:
+        log(f"error: {e}")
+        return 2
+    try:
+        Path(output).write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError as e:
+        log(f"error: gagal menulis {output}: {e}")
+        return 2
+    oldest = min(m for _v, _p, m in pairs)
+    try:
+        os.utime(output, (oldest, oldest))
+    except OSError:
+        pass
+    log(f"ditulis: {output} (gabung {len(pairs)} versi, mtime = bukti tertua)")
+    # Exit MENGIKUTI run serial (docstring: "bentuk & exit code identik"): seluruh lapis tak
+    # tersedia (semua skip/hilang, tak ada 'pass') -> 0 degrade jujur; ada versi tanpa bukti -> 1;
+    # lengkap -> 0 bila lolos, 1 bila tidak. `return 1 if missing else 0` dulu MENGABAIKAN pass:
+    # kanonik ber-pass:false tanpa versi hilang lolos sebagai exit 0 (gerbang CI terbaca hijau).
+    if "pass" not in result and len(missing) == len(versions):
+        return 0
+    if missing:
+        return 1
+    return 0 if result.get("pass") else 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Jalankan satu lapis mahal untuk banyak versi serentak, tulis file lapis kanonik.",
@@ -364,12 +470,27 @@ def main(argv=None):
                          "module & lapis — tak bisa diketik, supaya bukti tak bisa mendarat "
                          "di file module atau lapis lain")
     ap.add_argument("--verbose", action="store_true", help="Jejak per versi ke stderr")
+    ap.add_argument("--per-version", action="store_true",
+                    help="Persist bukti tiap versi sebagai file lapis PER-VERSI "
+                         "`<module>-<lapis>-<versi>.json` (nama diturunkan) alih-alih menulis satu "
+                         "file kanonik. Untuk fase konvergensi version-first: bukti tiap versi "
+                         "menetap sendiri, jadi menjalankan versi lain tak menimpanya.")
+    ap.add_argument("--merge-only", action="store_true",
+                    help="JANGAN jalankan lapis; baca file per-versi persisten "
+                         "`<module>-<lapis>-<versi>.json` untuk --versions lalu satukan jadi file "
+                         "kanonik untuk sweep rilis. mtime kanonik = mtime bukti per-versi TERTUA "
+                         "(kanonik tak lebih segar dari bukti terbasinya).")
     ap.add_argument("extra", nargs=argparse.REMAINDER,
                     help="Setelah `--`: flag yang diteruskan apa adanya ke skrip lapis")
     args = ap.parse_args(argv)
 
     def log(msg):
         print(msg, file=sys.stderr)
+
+    if args.per_version and args.merge_only:
+        log("error: --per-version dan --merge-only saling eksklusif — satu MEMPRODUKSI file "
+            "per-versi, satu MENYATUKANNYA jadi kanonik")
+        return 2
 
     if args.layer in SERIAL_LAYERS:
         log(f"error: lapis '{args.layer}' tak dijalankan per versi — {SERIAL_LAYERS[args.layer]}")
@@ -386,6 +507,18 @@ def main(argv=None):
     if args.jobs < 1:
         log(f"error: --jobs harus >= 1 (diberi {args.jobs})")
         return 2
+
+    if args.merge_only:
+        # Tak men-spawn apa pun: flag passthrough setelah `--` tak punya tujuan, dan menerimanya
+        # diam-diam menyembunyikan salah pakai.
+        extra = list(args.extra)
+        if extra and extra[0] == "--":
+            extra = extra[1:]
+        if extra:
+            log("error: --merge-only tak menjalankan lapis apa pun — flag passthrough setelah "
+                "`--` tak bermakna; hapus")
+            return 2
+        return merge_only(args.reports_dir, args.module, args.layer, versions, log)
 
     extra = list(args.extra)
     if extra and extra[0] == "--":
@@ -462,22 +595,48 @@ def main(argv=None):
             keep = True
             return 2
 
-        try:
-            Path(output).write_text(json.dumps(result, indent=2, ensure_ascii=False),
-                                    encoding="utf-8")
-        except OSError as e:
-            log(f"error: gagal menulis {output}: {e}")
-            keep = True
-            return 2
         # mtime = SAAT RUN MULAI, bukan saat tulis. Gerbang kesegaran ps-plan-layers memakai
         # mtime file lapis sebagai proksi "kapan bukti ini diproduksi"; run multi-versi bisa
         # berjalan puluhan menit, jadi stempel waktu-tulis membuat source yang diedit DI
-        # TENGAH run terbaca lebih tua dari buktinya.
-        try:
-            os.utime(output, (started, started))
-        except OSError:
-            pass
-        log(f"ditulis: {output}")
+        # TENGAH run terbaca lebih tua dari buktinya. Berlaku sama untuk file per-versi.
+        if args.per_version:
+            # Persist tiap bukti versi ke file per-versi (nama DITURUNKAN); TAK menulis kanonik.
+            # Bukti tiap versi menetap sendiri, jadi menjalankan versi lain tak menimpanya — itulah
+            # yang memungkinkan konvergensi per-versi. `result` tetap dihitung di atas, hanya untuk
+            # keputusan exit/degrade di bawah, tak ditulis ke disk di mode ini.
+            for ver, payload in pairs:
+                # Payload skip (versions {}) TAK dipersist: versi ini tak berbukti, sudah masuk
+                # `missing` & dilaporkan di bawah. Menuliskannya membuat file per-versi kosong yang
+                # kelak dibaca merge-only sebagai "ada tapi hampa" — kelas yang justru dijaga di
+                # sana; jangan produksi sumbernya. Versi tanpa file = tak berbukti, konsisten.
+                if not (payload.get("versions") or {}):
+                    continue
+                pvf = per_version_file(args.reports_dir, args.module, args.layer, ver)
+                try:
+                    Path(pvf).write_text(json.dumps(payload, indent=2, ensure_ascii=False),
+                                         encoding="utf-8")
+                except OSError as e:
+                    log(f"error: gagal menulis {pvf}: {e}")
+                    keep = True
+                    return 2
+                try:
+                    os.utime(pvf, (started, started))
+                except OSError:
+                    pass
+                log(f"ditulis: {pvf}")
+        else:
+            try:
+                Path(output).write_text(json.dumps(result, indent=2, ensure_ascii=False),
+                                        encoding="utf-8")
+            except OSError as e:
+                log(f"error: gagal menulis {output}: {e}")
+                keep = True
+                return 2
+            try:
+                os.utime(output, (started, started))
+            except OSError:
+                pass
+            log(f"ditulis: {output}")
 
         # Lapis tak tersedia sama sekali (Docker/browser absen di mesin ini): TIAP anak
         # melewatkannya dan tak satu pun mengeluarkan vonis. Bentuk dan exit code harus

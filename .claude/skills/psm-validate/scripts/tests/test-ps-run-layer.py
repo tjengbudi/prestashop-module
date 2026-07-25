@@ -499,6 +499,235 @@ def test_help_prints_docstring():
                  "KESEGARAN" in r.stdout and r.returncode == 0)
 
 
+def test_per_version_persist():
+    """Mode --per-version: bukti tiap versi menetap di file per-versi sendiri, kanonik tak ditulis.
+
+    Ini yang memungkinkan konvergensi version-first — menjalankan versi lain tak menimpa bukti
+    versi yang sudah bersih, beda dengan file kanonik satu-untuk-semua yang selalu ditimpa.
+    """
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        fake = FakeChildren()
+        started = time.time()
+        rc, _ = _run_main(["--layer", "e2e", "--module", m, "--versions", "9.1,8.1",
+                           "--reports-dir", rep, "--per-version"], fake)
+        pv91 = Path(rep) / "mymod-e2e-9.1.json"
+        pv81 = Path(rep) / "mymod-e2e-8.1.json"
+        ok &= check("per-version: semua versi berbukti -> exit 0", rc == 0)
+        ok &= check("per-version: file per-versi DITULIS (nama diturunkan, segmen versi)",
+                    pv91.is_file() and pv81.is_file())
+        ok &= check("per-version: file KANONIK TAK ditulis (tak menimpa bukti versi lain)",
+                    not (Path(rep) / "mymod-e2e.json").exists())
+        ok &= check("per-version: tiap file memuat PERSIS versinya",
+                    set(json.loads(pv91.read_text())["versions"]) == {"9.1"}
+                    and set(json.loads(pv81.read_text())["versions"]) == {"8.1"})
+        # mtime = saat run mulai (proksi "kapan bukti diproduksi"), bukan waktu tulis — supaya
+        # gerbang kesegaran ps-plan-layers per-versi menyala benar.
+        ok &= check("per-version: mtime file = saat run mulai (untuk gerbang kesegaran)",
+                    abs(pv91.stat().st_mtime - started) < 5)
+
+    # Satu versi tanpa bukti: file itu TAK ditulis (tak dikarang), exit 1, disebut.
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        fake = FakeChildren(payload_for=lambda ver: None if ver == "8.1" else {
+            "module": "m", "docker_available": True, "status": "ran", "pass": True,
+            "versions": {ver: {"pass": True}}})
+        rc, err = _run_main(["--layer", "flashlight", "--module", m, "--versions", "9.1,8.1",
+                             "--reports-dir", rep, "--per-version"], fake)
+        ok &= check("per-version: versi tanpa bukti -> exit 1 & DISEBUT", rc == 1 and "8.1" in err)
+        ok &= check("per-version: file 9.1 ditulis, file 8.1 TIDAK (tak dikarang jadi vonis)",
+                    (Path(rep) / "mymod-flashlight-9.1.json").is_file()
+                    and not (Path(rep) / "mymod-flashlight-8.1.json").exists())
+
+    # Payload skip (versions {}, Docker absen utk versi itu) TAK dipersist jadi file per-versi
+    # kosong — versi masuk missing (exit 1). Kalau ditulis, merge-only kelak membacanya sebagai
+    # "ada tapi hampa"; jangan produksi sumbernya.
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        fake = FakeChildren(payload_for=lambda ver: {
+            "module": "m", "docker_available": True, "status": "ran", "pass": True,
+            "versions": {ver: {"pass": True}}} if ver == "9.1" else {
+            "module": "m", "docker_available": False, "status": "skipped", "versions": {}})
+        rc, _ = _run_main(["--layer", "flashlight", "--module", m, "--versions", "9.1,8.1",
+                           "--reports-dir", rep, "--per-version"], fake)
+        ok &= check("per-version: versi skip (versions {}) -> file per-versi TAK ditulis, exit 1",
+                    rc == 1 and (Path(rep) / "mymod-flashlight-9.1.json").is_file()
+                    and not (Path(rep) / "mymod-flashlight-8.1.json").exists())
+
+    # Semua versi skip (Docker absen): tak ada file per-versi ditulis, exit 0 (lapis tak tersedia,
+    # seperti run serial) — bukan exit 1 yang menuduh runner tanpa Docker gagal.
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        fake = FakeChildren(payload_for=lambda ver: {
+            "module": "m", "docker_available": False, "status": "skipped", "versions": {}})
+        rc, _ = _run_main(["--layer", "flashlight", "--module", m, "--versions", "9.1,8.1",
+                           "--reports-dir", rep, "--per-version"], fake)
+        ok &= check("per-version: SEMUA skip -> tak ada file per-versi, exit 0 (lapis tak tersedia)",
+                    rc == 0 and not list(Path(rep).glob("mymod-flashlight-*.json")))
+    return ok
+
+
+def _write_pv(rep, layer, ver, mtime, top=None):
+    """Tulis satu file lapis per-versi persisten (bentuk seperti keluaran --per-version)."""
+    p = Path(rep) / f"mymod-{layer}-{ver}.json"
+    payload = {"module": "m", "docker_available": True, "status": "ran", "pass": True,
+               "versions": {ver: {"pass": True}}}
+    if top:
+        payload.update(top)
+    p.write_text(json.dumps(payload), encoding="utf-8")
+    os.utime(p, (mtime, mtime))
+    return p
+
+
+def test_merge_only():
+    """--merge-only: satukan file per-versi persisten jadi kanonik, tanpa men-spawn apa pun."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        _write_pv(rep, "flashlight", "1.7.8", 100)  # tertua
+        _write_pv(rep, "flashlight", "8.1", 300)
+        _write_pv(rep, "flashlight", "9.1", 200)
+        fake = FakeChildren()
+        rc, _ = _run_main(["--layer", "flashlight", "--module", m, "--versions", "1.7.8,8.1,9.1",
+                           "--reports-dir", rep, "--merge-only"], fake)
+        out = Path(rep) / "mymod-flashlight.json"
+        ok &= check("merge-only: exit 0 & kanonik ditulis", rc == 0 and out.is_file())
+        ok &= check("merge-only TAK men-spawn anak sama sekali (hanya menyatukan)", fake.cmds == [])
+        merged = json.loads(out.read_text())
+        ok &= check("merge-only: kanonik = union ketiga versi",
+                    set(merged["versions"]) == {"1.7.8", "8.1", "9.1"})
+        # mtime = bukti TERTUA: kanonik tak boleh tampak lebih segar dari bukti terbasinya, jadi
+        # source yang diedit sesudah salah satu versi dikonvergensi tetap membasikan kanonik.
+        ok &= check("merge-only: mtime kanonik = min(bukti), bukan sekarang",
+                    abs(out.stat().st_mtime - 100) < 1)
+
+    # Versi tanpa file per-versi -> dihilangkan (bukan dikarang), exit 1, disebut.
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        _write_pv(rep, "flashlight", "8.1", 300)
+        _write_pv(rep, "flashlight", "9.1", 200)
+        rc, err = _run_main(["--layer", "flashlight", "--module", m, "--versions", "1.7.8,8.1,9.1",
+                             "--reports-dir", rep, "--merge-only"], FakeChildren())
+        ok &= check("merge-only: versi hilang -> exit 1 & DISEBUT", rc == 1 and "1.7.8" in err)
+        merged = json.loads((Path(rep) / "mymod-flashlight.json").read_text())
+        ok &= check("merge-only: versi hilang dihilangkan dari kanonik (ready jatuh di agregat)",
+                    set(merged["versions"]) == {"8.1", "9.1"})
+
+    # Nol file per-versi -> kanonik TAK ditulis (tak ada bukti untuk disatukan), exit 1.
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        rc, err = _run_main(["--layer", "flashlight", "--module", m, "--versions", "9.1",
+                             "--reports-dir", rep, "--merge-only"], FakeChildren())
+        ok &= check("merge-only: nol bukti -> exit 1, kanonik TAK ditulis",
+                    rc == 1 and not (Path(rep) / "mymod-flashlight.json").exists())
+
+    # Skalar top-level bertentangan -> bukti tak konsisten -> exit 2 (bukan pilih senyap).
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        _write_pv(rep, "e2e", "8.1", 100, top={"screenshot_dir": "/a"})
+        _write_pv(rep, "e2e", "9.1", 200, top={"screenshot_dir": "/b"})
+        rc, err = _run_main(["--layer", "e2e", "--module", m, "--versions", "8.1,9.1",
+                             "--reports-dir", rep, "--merge-only"], FakeChildren())
+        ok &= check("merge-only: skalar top-level bertentangan -> exit 2",
+                    rc == 2 and "berbeda antar bukti" in err
+                    and not (Path(rep) / "mymod-e2e.json").exists())
+
+    # File per-versi terpotong (versions bukan object) -> gerbang bentuk -> exit 2 (tak menyelinap).
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        _write_pv(rep, "flashlight", "8.1", 100)
+        bad = Path(rep) / "mymod-flashlight-9.1.json"
+        bad.write_text(json.dumps({"module": "m", "versions": {"9.1": "bukan-object"}}), encoding="utf-8")
+        os.utime(bad, (200, 200))
+        rc, err = _run_main(["--layer", "flashlight", "--module", m, "--versions", "8.1,9.1",
+                             "--reports-dir", rep, "--merge-only"], FakeChildren())
+        ok &= check("merge-only: file per-versi cacat -> gerbang bentuk -> exit 2",
+                    rc == 2 and "gerbang bentuk" in err
+                    and not (Path(rep) / "mymod-flashlight.json").exists())
+
+    # Review-A: file per-versi KOSONG (versions {}) = tak berbukti -> versi masuk missing (exit 1
+    # & disebut), BUKAN menyelinap hilang dengan exit 0 (present-kosong dulu lebih longgar dari
+    # absen — kebalikan arah degrade jujur). Cermin guard collect() di jalur run nyata.
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        _write_pv(rep, "flashlight", "8.1", 100)
+        empty = Path(rep) / "mymod-flashlight-9.1.json"
+        empty.write_text(json.dumps({"module": "m", "status": "skipped", "versions": {}}),
+                         encoding="utf-8")
+        os.utime(empty, (200, 200))
+        rc, err = _run_main(["--layer", "flashlight", "--module", m, "--versions", "8.1,9.1",
+                             "--reports-dir", rep, "--merge-only"], FakeChildren())
+        merged = json.loads((Path(rep) / "mymod-flashlight.json").read_text())
+        ok &= check("merge-only: file KOSONG -> versi itu missing (exit 1 & disebut), bukan exit 0",
+                    rc == 1 and "9.1" in err and set(merged["versions"]) == {"8.1"})
+
+    # Review-B: file salah-label (nama -9.1 tapi isi versi 8.1) -> exit 2, bukan diam-diam merge
+    # 8.1 & biarkan 9.1 tak berbukti. Identitas by-construction DITEGAKKAN pada baca (merge-only
+    # memakan file yang tak ditulisnya sendiri). Cermin guard stray di collect().
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        _write_pv(rep, "e2e", "8.1", 100)
+        mis = Path(rep) / "mymod-e2e-9.1.json"
+        mis.write_text(json.dumps({"module": "m", "status": "ran", "pass": True,
+                                   "versions": {"8.1": {"pass": True}}}), encoding="utf-8")
+        os.utime(mis, (200, 200))
+        rc, err = _run_main(["--layer", "e2e", "--module", m, "--versions", "8.1,9.1",
+                             "--reports-dir", rep, "--merge-only"], FakeChildren())
+        ok &= check("merge-only: file salah-label (isi versi lain) -> exit 2 (identitas ditegakkan)",
+                    rc == 2 and "salah-label" in err
+                    and not (Path(rep) / "mymod-e2e.json").exists())
+
+    # Review-C: kanonik ber-pass:false tanpa versi hilang -> exit 1 (dulu `1 if missing else 0`
+    # MENGABAIKAN pass -> exit 0, gerbang CI terbaca hijau atas lapis yang gagal).
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        _write_pv(rep, "flashlight", "8.1", 100)
+        fail = Path(rep) / "mymod-flashlight-9.1.json"
+        fail.write_text(json.dumps({"module": "m", "status": "ran", "pass": False,
+                                    "versions": {"9.1": {"pass": False}}}), encoding="utf-8")
+        os.utime(fail, (200, 200))
+        rc, _ = _run_main(["--layer", "flashlight", "--module", m, "--versions", "8.1,9.1",
+                           "--reports-dir", rep, "--merge-only"], FakeChildren())
+        merged = json.loads((Path(rep) / "mymod-flashlight.json").read_text())
+        ok &= check("merge-only: ada versi gagal (pass:false) -> exit 1 (exit code tak berbohong)",
+                    rc == 1 and merged.get("pass") is False)
+
+    # Seluruh lapis tak tersedia (semua file skip) -> exit 0 degrade jujur + kanonik skip-shape,
+    # MENGIKUTI run serial. Bukan exit 1 (itu akan menjatuhkan runner tanpa Docker jadi "gagal").
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        for v in ("8.1", "9.1"):
+            p = Path(rep) / f"mymod-flashlight-{v}.json"
+            p.write_text(json.dumps({"module": "m", "status": "skipped",
+                                     "reason": "Docker tidak tersedia", "versions": {}}),
+                         encoding="utf-8")
+            os.utime(p, (100, 100))
+        rc, _ = _run_main(["--layer", "flashlight", "--module", m, "--versions", "8.1,9.1",
+                           "--reports-dir", rep, "--merge-only"], FakeChildren())
+        merged = json.loads((Path(rep) / "mymod-flashlight.json").read_text())
+        ok &= check("merge-only: SEMUA skip -> exit 0 (degrade jujur, seperti run serial)",
+                    rc == 0 and merged.get("status") == "skipped" and "pass" not in merged)
+    return ok
+
+
+def test_modes_exclusive_and_passthrough():
+    """Guard: dua mode saling eksklusif; merge-only menolak passthrough (tak ada yang dijalankan)."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        rc, err = _run_main(["--layer", "flashlight", "--module", m, "--versions", "9.1",
+                             "--reports-dir", rep, "--per-version", "--merge-only"], FakeChildren())
+        ok &= check("--per-version + --merge-only -> exit 2 (saling eksklusif)",
+                    rc == 2 and "saling eksklusif" in err)
+        rc2, err2 = _run_main(["--layer", "flashlight", "--module", m, "--versions", "9.1",
+                               "--reports-dir", rep, "--merge-only", "--", "--tag-map", "x"],
+                              FakeChildren())
+        ok &= check("--merge-only + passthrough -> exit 2 (tak ada yang dijalankan)",
+                    rc2 == 2 and "passthrough" in err2)
+    return ok
+
+
 def main():
     ok = True
     for name, fn in (("test_pure", test_pure),
@@ -509,6 +738,9 @@ def main():
                      ("test_freshness_stamp", test_freshness_stamp),
                      ("test_merge_rules", test_merge_rules),
                      ("test_scalar_conflict", test_scalar_conflict),
+                     ("test_per_version_persist", test_per_version_persist),
+                     ("test_merge_only", test_merge_only),
+                     ("test_modes_exclusive_and_passthrough", test_modes_exclusive_and_passthrough),
                      ("test_consumed_by_aggregate", test_consumed_by_aggregate),
                      ("test_help_prints_docstring", test_help_prints_docstring)):
         print(f"{name}:")

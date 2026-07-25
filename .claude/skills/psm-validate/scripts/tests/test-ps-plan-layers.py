@@ -307,6 +307,87 @@ def main():
         ok &= check("CLI: --reports-dir bersih tetap jalan (gerbang token tak kelebihan sapu)",
                     r_clean.returncode == 0)
 
+    # --- MODE PER-VERSI (siklus konvergensi version-first) ---------------------------------
+    # Inti: tiap versi divonis SENDIRI. File per-versi 9.1 yang basi tak menyeret file 8.1 yang
+    # segar ke rerun — yang justru mustahil dengan file kanonik satu-untuk-semua-versi (satu
+    # patch source membasikan semuanya serentak). Ini BUKTI SELESAI dari spec.
+    with tempfile.TemporaryDirectory() as tdpv:
+        root = Path(tdpv)
+        mdir = root / "mymod"
+        reports = root / "reports"
+        _touch(mdir / "mymod.php", 1000)  # source termuda t=1000
+        newest, _ = mod.newest_source_mtime(mdir)
+        tag_map = mod.fl.parse_tag_map(None, None)
+        ruleset = mod.ss.ruleset_provenance([str(mod.ss.DEFAULT_RULES)])
+
+        def _pv(layer, ver, mtime, versions_in_file=None):
+            p = mod.per_version_path(reports, "mymod", layer, ver)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            vs = versions_in_file if versions_in_file is not None else [ver]
+
+            def _entry(v):
+                e = {"pass": True}
+                if layer in ("flashlight", "e2e"):
+                    e["tag"] = mod.fl.resolve_tag(tag_map, v)
+                return e
+            p.write_text(json.dumps({"versions": {v: _entry(v) for v in vs}}), encoding="utf-8")
+            os.utime(p, (mtime, mtime))
+            return p
+
+        # BUKTI SELESAI: 9.1 dibasikan di level FILE (mtime < source), 8.1 tetap segar.
+        _pv("flashlight", "8.1", 2000)  # segar
+        _pv("flashlight", "9.1", 500)   # basi (lebih tua dari source t=1000)
+        pv = mod.plan_per_version(reports, "mymod", ["8.1", "9.1"], newest, "mymod.php",
+                                  ruleset, tag_map)
+        ok &= check("per-versi: file 8.1 segar -> reuse (tak diseret kebasian 9.1)",
+                    pv["8.1"]["layers"]["flashlight"]["reuse"] is True
+                    and "flashlight" not in pv["8.1"]["rerun"])
+        ok &= check("per-versi: file 9.1 basi -> rerun HANYA 9.1 (granularitas per-versi)",
+                    pv["9.1"]["layers"]["flashlight"]["reuse"] is False
+                    and "flashlight" in pv["9.1"]["rerun"]
+                    and "module lebih baru" in pv["9.1"]["layers"]["flashlight"]["reason"])
+        # File per-versi absen -> rerun beralasan (bukan diam-diam reuse "cakupan cocok").
+        ok &= check("per-versi: file lapis absen -> rerun 'belum ada'",
+                    pv["9.1"]["layers"]["static"]["reuse"] is False
+                    and "belum ada" in pv["9.1"]["layers"]["static"]["reason"])
+
+        # Cakupan salah: file 9.1 yang isinya meninjau 8.1 -> rerun (tiap file harus bercakupan
+        # PERSIS versinya sendiri, kalau tidak ia bukti versi lain yang menyamar).
+        _pv("adversarial", "9.1", 2000, versions_in_file=["8.1"])
+        pv2 = mod.plan_per_version(reports, "mymod", ["9.1"], newest, "mymod.php", ruleset, tag_map)
+        ok &= check("per-versi: cakupan salah (file 9.1 meninjau 8.1) -> rerun",
+                    pv2["9.1"]["layers"]["adversarial"]["reuse"] is False
+                    and "cakupan kurang: 9.1" in pv2["9.1"]["layers"]["adversarial"]["reason"])
+
+        # Provenance image per-versi: tag file != tag berlaku -> rerun versi ITU saja (bukti
+        # core lain), sementara versi dengan tag benar tetap reuse.
+        _pv("e2e", "8.1", 2000)
+        p91 = mod.per_version_path(reports, "mymod", "e2e", "9.1")
+        p91.write_text(json.dumps({"versions": {"9.1": {"pass": True, "tag": "beda-tag"}}}),
+                       encoding="utf-8")
+        os.utime(p91, (2000, 2000))
+        pv3 = mod.plan_per_version(reports, "mymod", ["8.1", "9.1"], newest, "mymod.php",
+                                   ruleset, tag_map)
+        ok &= check("per-versi: tag image 8.1 benar -> reuse", pv3["8.1"]["layers"]["e2e"]["reuse"] is True)
+        ok &= check("per-versi: tag image 9.1 beda -> rerun (bukti core lain)",
+                    pv3["9.1"]["layers"]["e2e"]["reuse"] is False
+                    and "image berbeda" in pv3["9.1"]["layers"]["e2e"]["reason"])
+
+        # CLI: mode per-versi berbentuk beda & DETERMINISTIK (input sama -> byte identik).
+        r1 = subprocess.run(["uv", "run", str(MOD_PATH), str(mdir), "--reports-dir", str(reports),
+                             "--versions", "8.1,9.1", "--per-version"], capture_output=True, text=True)
+        r2 = subprocess.run(["uv", "run", str(MOD_PATH), str(mdir), "--reports-dir", str(reports),
+                             "--versions", "8.1,9.1", "--per-version"], capture_output=True, text=True)
+        ok &= check("CLI per-versi: exit 0 & bentuk mode/per_version",
+                    r1.returncode == 0 and '"mode": "per-version"' in r1.stdout
+                    and '"per_version"' in r1.stdout)
+        ok &= check("CLI per-versi: deterministik (dua run byte identik)", r1.stdout == r2.stdout)
+        r_canon = subprocess.run(["uv", "run", str(MOD_PATH), str(mdir), "--reports-dir", str(reports),
+                                  "--versions", "8.1,9.1"], capture_output=True, text=True)
+        ok &= check("CLI mode kanonik TAK memancarkan per_version (nol regresi bentuk)",
+                    r_canon.returncode == 0 and '"per_version"' not in r_canon.stdout
+                    and '"layers"' in r_canon.stdout)
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

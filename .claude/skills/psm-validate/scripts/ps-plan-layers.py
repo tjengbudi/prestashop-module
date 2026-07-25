@@ -171,6 +171,53 @@ def plan_layer(path, requested, src_mtime, src_path, provenance=None):
     return {"reuse": True, "reason": "lebih baru dari module & cakupan versi cocok", "path": str(p)}
 
 
+def per_version_path(reports_dir, module_name, layer, ver):
+    """Path file lapis PER-VERSI — `<reports>/<module>-<lapis>-<versi>.json`.
+
+    Diturunkan dari (folder laporan, module, lapis, versi) di dalam skrip, tak pernah dari
+    daftar yang diketik pemanggil: gerbang identitas file lapis kanonik (ps-run-layer.layer_file)
+    berlaku sama di sini — bukti tak bisa mendarat di file module/lapis/versi lain. Segmen versi
+    selalu ada, jadi tak pernah bentrok dengan nama kanonik `<module>-<lapis>.json`.
+    """
+    return Path(reports_dir) / f"{module_name}-{layer}-{ver}.json"
+
+
+def prov_for(layer, versions, ruleset, tag_map):
+    """Provenance (INPUT KEDUA) satu lapis atas himpunan versi ini — lihat plan_layer.
+
+    Satu pemilik untuk "input kedua lapis apa": mode kanonik & mode per-versi memanggil fungsi
+    yang SAMA, jadi keduanya tak bisa mendrift. static -> ruleset; flashlight/e2e -> image (tag
+    yang diharapkan diresolve lewat ps-flashlight-run, bukan disalin); adversarial -> None
+    (judgment model belum punya jejak yang bisa dibandingkan).
+    """
+    if layer == "static":
+        return {"kind": "ruleset", **ruleset}
+    if layer in ("flashlight", "e2e"):
+        return {"kind": "image", "expect": {v: fl.resolve_tag(tag_map, v) for v in versions}}
+    return None
+
+
+def plan_per_version(reports_dir, module_name, requested, src_mtime, rel, ruleset, tag_map):
+    """Vonis reuse/rerun tiap (lapis, versi) atas file per-versi, tiap versi DINILAI SENDIRI.
+
+    Inti siklus version-first: file per-versi 9.1 yang basi tak menyeret file 8.1 yang segar ke
+    rerun — beda dengan file kanonik satu-untuk-semua-versi yang satu patch source membasikannya
+    serentak. Tiap file per-versi mestinya bercakupan PERSIS {versi}-nya; plan_layer([versi])
+    menuntut itu (cakupan kurang/lebih -> rerun beralasan). Deterministik: urutan versi mengikuti
+    `requested`, urutan lapis mengikuti LAYERS.
+    """
+    out = {}
+    for ver in requested:
+        layers = {}
+        for layer in LAYERS:
+            path = per_version_path(reports_dir, module_name, layer, ver)
+            layers[layer] = plan_layer(path, [ver], src_mtime, rel,
+                                       provenance=prov_for(layer, [ver], ruleset, tag_map))
+        out[ver] = {"layers": layers,
+                    "rerun": [l for l in LAYERS if not layers[l]["reuse"]]}
+    return out
+
+
 def _e2e_scenario_notes(module_dir):
     """Catatan spec authored yang DILEWATI (JSON rusak / tanpa expect_*) — milik ps-e2e-run.
 
@@ -211,6 +258,10 @@ def main():
                                       "dengan target sekarang; tag di-bump = bukti dari core lain.")
     ap.add_argument("--extra-tag-map", help="Tag TAMBAHAN di atas peta yang berlaku — MENAMBAH, "
                                             "bukan mengganti. Teruskan yang sama seperti ke Lapis 2/4.")
+    ap.add_argument("--per-version", action="store_true",
+                    help="Vonis file lapis PER-VERSI `<module>-<lapis>-<versi>.json` (tiap versi "
+                         "dinilai sendiri) alih-alih file kanonik. Untuk siklus konvergensi "
+                         "version-first: patch demi satu versi tak menyeret versi lain ke rerun.")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     args = ap.parse_args()
 
@@ -243,22 +294,23 @@ def main():
     # Tag yang berlaku SEKARANG untuk tiap versi target. Diresolve lewat pemilik aturannya
     # (ps-flashlight-run), bukan disalin ke sini — implementasi ketiga yang mendrift akan
     # membuat gerbang ini menolak reuse yang sah, atau menerima bukti dari core yang lain.
+    # Input kedua tiap lapis dibangun oleh prov_for (satu pemilik) — mode kanonik & per-versi
+    # memanggilnya sama persis, jadi vonis reuse keduanya tak bisa mendrift.
     tag_map = fl.parse_tag_map(args.tag_map, args.extra_tag_map)
-    image_prov = {"kind": "image", "expect": {v: fl.resolve_tag(tag_map, v) for v in requested}}
-    # Tiap lapis punya input KEDUA-nya sendiri: ruleset memproduksi vonis Lapis 1, image
-    # memproduksi vonis Lapis 2 & 4. Lapis 3 (judgment model) belum punya jejak yang bisa
-    # dibandingkan — biarkan None sampai kontraknya mencatat sesuatu, jangan mengarang.
-    prov_of = {"static": {"kind": "ruleset", **ruleset}, "flashlight": image_prov,
-               "e2e": image_prov, "adversarial": None}
-    plans = {}
-    for layer in LAYERS:
-        path = Path(args.reports_dir) / f"{module_dir.name}-{layer}.json"
-        plans[layer] = plan_layer(path, requested, src_mtime, rel,
-                                  provenance=prov_of[layer])
-
-    result = {"module": module_dir.name, "versions": requested,
-              "newest_source": rel, "layers": plans,
-              "rerun": [l for l, p in plans.items() if not p["reuse"]]}
+    if args.per_version:
+        result = {"module": module_dir.name, "versions": requested,
+                  "newest_source": rel, "mode": "per-version",
+                  "per_version": plan_per_version(args.reports_dir, module_dir.name, requested,
+                                                  src_mtime, rel, ruleset, tag_map)}
+    else:
+        plans = {}
+        for layer in LAYERS:
+            path = Path(args.reports_dir) / f"{module_dir.name}-{layer}.json"
+            plans[layer] = plan_layer(path, requested, src_mtime, rel,
+                                      provenance=prov_for(layer, requested, ruleset, tag_map))
+        result = {"module": module_dir.name, "versions": requested,
+                  "newest_source": rel, "layers": plans,
+                  "rerun": [l for l, p in plans.items() if not p["reuse"]]}
 
     # Spec E2E authored adalah satu-satunya input yang ditulis TANGAN, dan satu-satunya
     # yang mengangkat Lapis 4 di atas smoke-only. Validasinya murah, tapi dulu hanya
