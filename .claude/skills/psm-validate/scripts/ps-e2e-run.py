@@ -207,9 +207,17 @@ def host_port_from_domain(ps_domain, default=DEFAULT_HOST_PORT):
     return default
 
 
-def publish_spec(ps_domain):
-    """Spesifikasi publish port docker: '<host>:80' agar PS terjangkau dari host."""
-    return f"{host_port_from_domain(ps_domain)}:{CONTAINER_HTTP_PORT}"
+def host_from_domain(ps_domain, default="localhost"):
+    """Ambil komponen host dari PS_DOMAIN 'shop.local:9100' -> 'shop.local'. Kosong -> default.
+
+    PS_DOMAIN dipakai PrestaShop untuk membangun URL absolut (link, cookie domain), jadi host
+    yang di-set operator adalah domain yang dikira toko itu miliknya. Lapis 4 harus men-drive
+    host YANG SAMA — kalau tidak, ia menguji toko yang dikonfigurasi berbeda dari yang di-boot.
+    Hanya PORT yang mengambang (bebas-bind); host dipertahankan.
+    """
+    if not ps_domain:
+        return default
+    return ps_domain.rsplit(":", 1)[0] if ":" in ps_domain else ps_domain
 
 
 def pick_free_host_port(preferred=0):
@@ -872,10 +880,11 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
     # tak rebutan bind. Satu retry menutup jendela race (TOCTOU): bila docker gagal bind
     # karena tabrakan port, pilih port ephemeral baru lalu ulang sekali.
     preferred_port = host_port_from_domain(ps_domain)
+    host = host_from_domain(ps_domain)  # host dipertahankan; hanya port yang mengambang
     session, err, ps_domain_eff = None, None, None
     for attempt in range(2):
         host_port = pick_free_host_port(preferred_port if attempt == 0 else 0)
-        ps_domain_eff = f"localhost:{host_port}"
+        ps_domain_eff = f"{host}:{host_port}"
         publish = f"{host_port}:{CONTAINER_HTTP_PORT}"
         if mode == "compose":
             session, err = fl._bring_up_compose(module_dir, full_ver, image_ref, db_image,
@@ -1013,7 +1022,9 @@ def main():
                     help="Cara menghidupkan DB+flashlight (default: auto)")
     ap.add_argument("--db-image", default=fl.DEFAULT_DB_IMAGE, help=f"Image server DB (default: {fl.DEFAULT_DB_IMAGE})")
     ap.add_argument("--ps-domain", default=fl.DEFAULT_PS_DOMAIN,
-                    help=f"PS_DOMAIN flashlight = URL yang di-drive Playwright (default: {fl.DEFAULT_PS_DOMAIN})")
+                    help=f"PS_DOMAIN flashlight — HOST yang di-drive Playwright; PORT-nya dipilih "
+                         f"dinamis per sesi (bebas-bind) sehingga port di sini hanya preferensi "
+                         f"(default: {fl.DEFAULT_PS_DOMAIN})")
     ap.add_argument("--admin-path", default=DEFAULT_ADMIN_PATH, help=f"Folder BO flashlight (default: {DEFAULT_ADMIN_PATH})")
     ap.add_argument("--admin-email", default=DEFAULT_ADMIN_EMAIL, help="Email admin BO (best-effort login)")
     ap.add_argument("--admin-password", default=DEFAULT_ADMIN_PASSWORD, help="Password admin BO (best-effort login)")

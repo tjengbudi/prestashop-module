@@ -232,11 +232,15 @@ def main():
     ok &= check("extra menang atas base utk versi yang sama",
                 mod.fl.parse_tag_map("9.1=a", "9.1=b") == {"9.1": "b"})
 
-    # --- host_port_from_domain / publish_spec ---
+    # --- host_port_from_domain / host_from_domain ---
     ok &= check("port 'localhost:8000' -> 8000", mod.host_port_from_domain("localhost:8000") == 8000)
     ok &= check("port tanpa ':' -> default 8000", mod.host_port_from_domain("localhost") == 8000)
     ok &= check("port host lain -> 9999", mod.host_port_from_domain("example.com:9999") == 9999)
-    ok &= check("publish_spec -> '8000:80'", mod.publish_spec("localhost:8000") == "8000:80")
+    # Host DIPERTAHANKAN, cuma port yang mengambang: PS_DOMAIN yang di-set operator adalah
+    # domain yang dikira toko miliknya; Lapis 4 harus men-drive host yang sama.
+    ok &= check("host 'shop.local:9100' -> 'shop.local'", mod.host_from_domain("shop.local:9100") == "shop.local")
+    ok &= check("host tanpa port -> apa adanya", mod.host_from_domain("shop.local") == "shop.local")
+    ok &= check("host kosong -> localhost", mod.host_from_domain("") == "localhost")
 
     # --- pick_free_host_port (port dinamis: dua sesi paralel tak rebutan bind) ---
     import socket as _sock
@@ -709,6 +713,26 @@ def main():
         ok &= check("console error TIDAK dituang ke browser_notes (kanal cakupan bersih)",
                     not any("console" in n.lower() for n in r["browser_notes"]))
         ok &= check("default headed False diteruskan ke drive_engine", captured["headed"] is False)
+
+        # WIRING host-preservasi: fungsi host_from_domain teruji sendiri, tapi run-path harus
+        # BENAR-BENAR memakainya. Mutasi run-path ke "localhost:{port}" lolos senyap tanpa ini
+        # (kelas "jalur tanpa cakupan"). Tangkap ps_domain yang diteruskan ke bring-up (host
+        # dari config, port dinamis) — dan res["ps_domain"] yang dilihat base_urls Playwright.
+        seen_domain = {}
+        mod.fl._bring_up_compose = lambda md, fv, ir, db, dom, ot, pub=None: (
+            seen_domain.update(dom=dom) or ({"ps_container": "x", "mode": "compose"}, None))
+        rh = mod.run_one_version(Path("/tmp"), "m", "9.1", "9.1.4-nginx", ["chromium"],
+                                 [mod.universal_smoke()], requested_browsers=["chromium"],
+                                 orchestrator="auto", db_image="mariadb:lts",
+                                 ps_domain="shop.mycorp.local:8000", admin_path="admin-dev",
+                                 admin_email="a", admin_password="b", startup_timeout=1,
+                                 op_timeout=1, nav_timeout=1000, allow_pull=False)
+        ok &= check("host config dipertahankan di PS_DOMAIN yang di-boot (bukan dipaksa localhost)",
+                    seen_domain.get("dom", "").startswith("shop.mycorp.local:"))
+        ok &= check("host config sampai ke res['ps_domain'] (yang jadi base URL Playwright)",
+                    rh["ps_domain"].startswith("shop.mycorp.local:"))
+        ok &= check("port tetap mengambang (bukan port config 8000 yang dipublish mentah)",
+                    rh["ps_domain"] != "shop.mycorp.local:8000" or ":" in rh["ps_domain"])
         # WIRING produsen->agregat. Mutasi "res['authored_assertions'] -> res['_unused']" SEMULA
         # LOLOS SENYAP: count_authored_assertions punya test, e2e_layer punya test, tapi tak ada
         # yang menguji run_one_version benar-benar MENGEMIT angkanya — persis mode "jalur tanpa

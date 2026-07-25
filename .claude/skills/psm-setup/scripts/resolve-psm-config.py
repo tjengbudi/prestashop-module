@@ -44,10 +44,10 @@ PSM_DEFAULTS = {
     # skrip uji membangun DB+flashlight berpasangan; nilai di bawah menyetel caranya.
     "psm_flashlight_orchestrator": "auto",        # auto | compose | manual
     "psm_flashlight_db_image": "mariadb:lts",     # image server DB untuk flashlight
-    "psm_flashlight_ps_domain": "localhost:8000",  # PS_DOMAIN container flashlight
+    "psm_flashlight_ps_domain": "localhost:8000",  # PS_DOMAIN container; Lapis 4 pakai host-nya, port mengambang (bebas-bind)
     "psm_flashlight_startup_timeout": "180",      # maks detik tunggu container healthy
     # Setelan Lapis 4 (browser E2E) psm-validate — dikonsumsi ps-e2e-run.py; base URL
-    # memakai ulang psm_flashlight_ps_domain (bukan key baru). Selaras DEFAULT_BROWSERS skrip.
+    # memakai ulang HOST psm_flashlight_ps_domain (port dipilih dinamis). Selaras DEFAULT_BROWSERS.
     "psm_e2e_enabled": "true",                    # gerbang Lapis 4; "false" utk melewati
     "psm_e2e_browsers": "chromium,firefox",       # engine Playwright dipisah koma
     "psm_modules_dir": "{project-root}/modules",
