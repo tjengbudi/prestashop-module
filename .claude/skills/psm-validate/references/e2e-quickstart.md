@@ -173,8 +173,9 @@ melihat gambar. Cacat visual yang kamu yakini, tulis ke situ SEBELUM agregat jal
   bind. Host dipertahankan karena PrestaShop membangun URL absolut dari `PS_DOMAIN`; hanya port
   yang mengambang. Port terpilih dicatat di hasil per-versi (`ps_domain`). Karena itu tabrakan
   port sudah jarang; tapi run yang di-kill paksa tetap bisa meninggalkan container/network
-  yatim. Bersihkan (satu prefix `psm-fl` menangkap kedua orkestrator — compose & manual):
-  `docker ps -aq --filter name=psm-fl | xargs -r docker rm -f && docker network ls --filter name=psm-fl -q | xargs -r docker network rm`.
+  yatim (`psm-fl`). Bersihkan dengan `uv run scripts/ps-flashlight-run.py --cleanup-orphans` — ia hanya
+  menghapus yang proses pemiliknya sudah mati (label `psm.owner-pid`), jadi run sesi lain yang
+  sedang jalan dilewati, bukan dibunuh; yang dilewati dilaporkan beserta alasannya.
 - **URL di temuan bukan alamat yang bisa dikunjungi.** `location` temuan `goto` adalah URL
   penuh dengan port ephemeral run itu, dan containernya sudah dibongkar saat kamu membaca
   laporan — URL itu mengidentifikasi **halaman** yang gagal, bukan tempat untuk dibuka ulang.

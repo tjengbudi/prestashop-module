@@ -63,7 +63,10 @@ SERIAL_LAYERS = {
 
 # Flag yang dimiliki skrip ini. Diteruskan lagi lewat passthrough = dua sumber kebenaran
 # untuk hal yang sama, dan anak akan menimpa apa yang sudah dijamin di sini.
-RESERVED_PASSTHROUGH = ("--versions", "-o", "--output")
+# `--cleanup-orphans` bukan milik skrip ini tapi MENGGANTI pekerjaan anak: tiap anak akan
+# menjalankan pembersihan destruktif alih-alih memvalidasi, lalu keluar 0 — dan operator cuma
+# diberitahu "versi tak berbukti", tak pernah bahwa mode lain yang jalan.
+RESERVED_PASSTHROUGH = ("--versions", "-o", "--output", "--cleanup-orphans")
 
 DEFAULT_JOBS = 3  # tiap job mem-boot container PS + DB (Lapis 4 plus engine browser)
 

@@ -19,6 +19,11 @@ membangun DB + flashlight berpasangan:
     flashlight) pada network yang sama; hanya butuh CLI `docker`.
   - `auto` (default)       : compose bila tersedia, jika tidak manual.
 
+Tiap container/network dicap label kepemilikan (`psm.run`/`psm.owner-pid`/`psm.owner-host`).
+Run normal membongkar miliknya sendiri; run yang di-kill paksa meninggalkan artefak yatim —
+`--cleanup-orphans` menghapus HANYA yang proses pemiliknya sudah mati, jadi run sesi lain
+yang sedang jalan dilewati (dilaporkan beserta alasannya), bukan dibunuh.
+
 Env runtime flashlight yang dibaca: MYSQL_HOST/PORT/USER/PASSWORD/DATABASE + PS_DOMAIN
 (bukan DB_SERVER/DB_NAME — itu milik image produksi prestashop/prestashop, diabaikan).
 Kesiapan diukur dari HEALTHCHECK container flashlight (status `healthy`), bukan port.
@@ -36,8 +41,11 @@ Pemetaan tag default mengikuti tag resmi Docker Hub prestashop/prestashop-flashl
 """
 import argparse
 import json
+import os
+import pathlib
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -310,6 +318,7 @@ def _compose_file_text(db_image, image_ref, ps_domain, module_dir, publish=None)
         "services:\n"
         "  db:\n"
         f"    image: {db_image}\n"
+        + _compose_labels_yaml(4) +
         "    healthcheck:\n"
         '      test: ["CMD", "healthcheck.sh", "--connect"]\n'
         "      interval: 5s\n"
@@ -322,6 +331,7 @@ def _compose_file_text(db_image, image_ref, ps_domain, module_dir, publish=None)
         f"      MYSQL_DATABASE: {DB_NAME}\n"
         "  ps:\n"
         f"    image: {image_ref}\n"
+        + _compose_labels_yaml(4) +
         "    depends_on:\n"
         "      db:\n"
         "        condition: service_healthy\n"
@@ -335,10 +345,92 @@ def _compose_file_text(db_image, image_ref, ps_domain, module_dir, publish=None)
         + (f'    ports:\n      - "{publish}"\n' if publish else "")
         + "    volumes:\n"
         f"      - {module_dir}:/ps-module-src:ro\n"
+        # Network default compose diberi label yang sama: `docker compose down -v` memang
+        # membereskannya di jalur normal, tapi run yang di-kill paksa meninggalkannya —
+        # dan tanpa label, pembersih tak punya bukti untuk menghapusnya.
+        + "networks:\n"
+        "  default:\n"
+        + _compose_labels_yaml(4)
     )
 
 
 CONTAINER_PREFIX = "psm-fl"  # SATU prefix untuk KEDUA orkestrator — lihat _project_name
+
+# Label kepemilikan — jawaban mesin untuk "run MANA yang memiliki artefak ini".
+# Nama container hanya bisa menjawab "milik psm-validate" (prefix), TAK PERNAH "milik run ini":
+# itu sebabnya perintah pembersih lama (`--filter name=psm-fl | xargs docker rm -f`) ikut
+# membunuh run sesi lain yang sedang jalan. Tiga label ini yang membuat cleanup_orphans() bisa
+# MEMBUKTIKAN kepemilikan sebelum menghapus — prefix cuma menyaring kandidat, label yang memvonis.
+LABEL_RUN = "psm.run"                # id run, unik per proses
+LABEL_OWNER_PID = "psm.owner-pid"    # PID proses pemilik — probe hidup/mati
+LABEL_OWNER_HOST = "psm.owner-host"  # host penulis label; PID lokal tak bermakna lintas host
+# PID hanya identitas bila DUA konteks ini sama. Hostname saja TIDAK membuktikannya:
+# dua distro WSL2 memakai hostname Windows yang sama dan berbagi satu daemon Docker, tapi
+# PID namespace-nya terpisah — PID 4242 yang hidup di distro A tak terlihat dari distro B,
+# jadi run yang sedang jalan akan divonis "mati" dan dibunuh (kelas arch-9 yang sama, cuma
+# lewat pintu lain). boot-id memisahkan sebelum/sesudah reboot: PID dari boot yang sudah
+# lewat MUSTAHIL masih hidup, jadi artefaknya bisa direklaim alih-alih tersangkut selamanya
+# karena PID-nya kebetulan didaur-ulang proses lain.
+LABEL_OWNER_BOOT = "psm.owner-boot"  # boot-id kernel — beda boot = pemilik pasti sudah mati
+LABEL_OWNER_NS = "psm.owner-ns"      # inode PID namespace — beda ns = PID tak bisa dinilai
+CLEANUP_FLAG = "--cleanup-orphans"   # disulih ke argparse & dikunci gerbang prosa (lihat test)
+RUN_ID = uuid.uuid4().hex[:12]
+OWNER_PID = os.getpid()
+OWNER_HOST = socket.gethostname()
+
+
+def _read_boot_id():
+    """boot-id kernel, atau None bila platform tak menyediakannya (mis. non-Linux)."""
+    try:
+        return pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _read_pid_ns():
+    """Inode PID namespace proses ini, atau None bila tak terbaca."""
+    try:
+        return str(os.stat("/proc/self/ns/pid").st_ino)
+    except OSError:
+        return None
+
+
+OWNER_BOOT = _read_boot_id()
+OWNER_NS = _read_pid_ns()
+
+
+def owner_labels():
+    """Label kepemilikan run INI — satu sumber untuk kedua orkestrator.
+
+    Compose dan manual WAJIB memakai fungsi ini, bukan menuliskan pasangan label sendiri:
+    satu jalur yang tercecer = artefaknya tak bisa dibuktikan mati, lalu bocor selamanya
+    (pembersih menolak menghapus apa yang tak berlabel — lihat cleanup_decision).
+    """
+    lab = {LABEL_RUN: RUN_ID, LABEL_OWNER_PID: str(OWNER_PID), LABEL_OWNER_HOST: OWNER_HOST}
+    # Hanya dicap bila platform ini bisa menghasilkannya — supaya syarat kelengkapan di
+    # cleanup_decision menuntut persis yang bisa ditulis di sini, tak lebih.
+    if OWNER_BOOT:
+        lab[LABEL_OWNER_BOOT] = OWNER_BOOT
+    if OWNER_NS:
+        lab[LABEL_OWNER_NS] = OWNER_NS
+    return lab
+
+
+def _label_flags():
+    """owner_labels() sebagai argumen CLI docker (`--label k=v` berulang)."""
+    flags = []
+    for k, v in owner_labels().items():
+        flags += ["--label", f"{k}={v}"]
+    return flags
+
+
+def _compose_labels_yaml(indent):
+    """owner_labels() sebagai blok `labels:` YAML pada indentasi tertentu."""
+    pad = " " * indent
+    out = f"{pad}labels:\n"
+    for k, v in owner_labels().items():
+        out += f"{pad}  {k}: {json.dumps(v)}\n"
+    return out
 
 
 def _project_name(full_ver):
@@ -379,12 +471,13 @@ def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout
     uid = uuid.uuid4().hex[:8]
     session = {"mode": "manual", "network": f"{CONTAINER_PREFIX}-net-{uid}",
                "db": f"{CONTAINER_PREFIX}-db-{uid}", "ps_container": f"{CONTAINER_PREFIX}-ps-{uid}"}
-    n = subprocess.run(["docker", "network", "create", session["network"]], capture_output=True, text=True)
+    n = subprocess.run(["docker", "network", "create", *_label_flags(), session["network"]],
+                       capture_output=True, text=True)
     if n.returncode != 0:
         return session, f"gagal buat network: {n.stderr.strip()[-200:]}"
     db = subprocess.run(
-        ["docker", "run", "-d", "--name", session["db"], "--network", session["network"],
-         "--network-alias", "db",
+        ["docker", "run", "-d", "--name", session["db"], *_label_flags(),
+         "--network", session["network"], "--network-alias", "db",
          "-e", f"MYSQL_USER={DB_USER}", "-e", f"MYSQL_PASSWORD={DB_PASSWORD}",
          "-e", f"MYSQL_ROOT_PASSWORD={DB_PASSWORD}", "-e", f"MYSQL_DATABASE={DB_NAME}",
          "--health-cmd", "healthcheck.sh --connect", "--health-interval", "5s",
@@ -396,7 +489,8 @@ def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout
     if not ok:
         return session, f"DB tak jadi healthy ({status})"
     ps = subprocess.run(
-        ["docker", "run", "-d", "--name", session["ps_container"], "--network", session["network"],
+        ["docker", "run", "-d", "--name", session["ps_container"], *_label_flags(),
+         "--network", session["network"],
          "-e", f"PS_DOMAIN={ps_domain}", "-e", "MYSQL_HOST=db", "-e", "MYSQL_PORT=3306",
          "-e", f"MYSQL_USER={DB_USER}", "-e", f"MYSQL_PASSWORD={DB_PASSWORD}",
          "-e", f"MYSQL_DATABASE={DB_NAME}",
@@ -435,6 +529,191 @@ def _teardown(session):
                 subprocess.run(["docker", "rm", "-f", c], capture_output=True, text=True)
         if session.get("network"):
             subprocess.run(["docker", "network", "rm", session["network"]], capture_output=True, text=True)
+
+
+def _pid_alive(pid):
+    """True bila proses `pid` masih hidup di host ini.
+
+    Ketidakpastian dibaca sebagai HIDUP: probe yang tak bisa memutuskan (izin, OSError)
+    membuat pembersih melewati artefak itu. Arah gagalnya sengaja: PID daur-ulang cuma
+    menyisakan sampah, sedangkan menebak "mati" berarti membunuh run yang sedang jalan.
+    """
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError, OverflowError, ValueError):
+        # OverflowError (PID di luar jangkauan C) BUKAN OSError: tanpa disebut di sini ia
+        # menembus pemanggil & mematikan seluruh sweep di tengah jalan — sesudah sebagian
+        # artefak terlanjur dihapus tapi belum dilaporkan.
+        return True
+
+
+def cleanup_decision(labels):
+    """(hapus?, alasan) untuk satu artefak — SATU tempat aturan kepemilikan hidup.
+
+    Default TOLAK: hanya `owner-dead` yang menghapus. Tiap alasan lain adalah kalimat jujur
+    tentang APA yang tak bisa dibuktikan, bukan kegagalan.
+    """
+    if not labels.get(LABEL_RUN):
+        return False, "no-owner-label"
+    if labels.get(LABEL_OWNER_HOST) != OWNER_HOST:
+        return False, "foreign-host"      # PID di label tak bermakna di host ini
+    # Konteks PID diperiksa SEBELUM PID-nya sendiri: angka yang sama menunjuk proses berbeda
+    # di boot lain / namespace lain. Syaratnya dituntut hanya untuk konteks yang platform ini
+    # sendiri bisa tulis (lihat owner_labels), jadi artefak kita sendiri tak pernah tersangkut.
+    if OWNER_BOOT:
+        boot = labels.get(LABEL_OWNER_BOOT)
+        if not boot:
+            return False, "incomplete-owner-labels"
+        if boot != OWNER_BOOT:
+            # Mesin sudah reboot sejak artefak dibuat: pemiliknya MUSTAHIL masih hidup, dan
+            # PID-nya kini bisa saja dipakai proses lain — membacanya "hidup" justru salah.
+            return True, "owner-boot-gone"
+    if OWNER_NS:
+        ns = labels.get(LABEL_OWNER_NS)
+        if not ns:
+            return False, "incomplete-owner-labels"
+        if ns != OWNER_NS:
+            return False, "foreign-pid-ns"   # PID namespace lain — liveness tak terbaca dari sini
+    raw = labels.get(LABEL_OWNER_PID) or ""
+    # isdecimal, bukan isdigit: "²".isdigit() True tapi int("²") melempar ValueError — fungsi
+    # yang tugasnya MENGKLASIFIKASI label rusak justru mati oleh salah satunya. pid <= 0 juga
+    # ditolak: os.kill(0, 0) menyasar process group PEMANGGIL dan selalu sukses, jadi "0" akan
+    # dibaca owner-alive selamanya dengan alasan yang bohong.
+    if not raw.isdecimal() or int(raw) <= 0:
+        return False, "bad-owner-pid"
+    if _pid_alive(int(raw)):
+        return False, "owner-alive"       # run sesi lain (atau run ini sendiri) masih jalan
+    return True, "owner-dead"
+
+
+OWNER_LABEL_KEYS = (LABEL_RUN, LABEL_OWNER_PID, LABEL_OWNER_HOST, LABEL_OWNER_BOOT,
+                    LABEL_OWNER_NS)
+
+
+def _list_artifacts(kind):
+    """([{name, labels}], error) artefak psm-fl — container atau network.
+
+    Prefix nama hanya MENYARING kandidat (batasi ke wilayah psm-validate); yang memvonis
+    hapus/lewati tetap label lewat cleanup_decision. Artefak lama tanpa label ikut terjaring
+    justru supaya bisa dilaporkan, bukan supaya bisa dihapus.
+
+    Label diambil per-key lewat `{{.Label "k"}}`, BUKAN dengan mem-parse `{{.Labels}}` yang
+    menggabungkan semua label (termasuk warisan image) jadi satu string dipisah koma: nilai
+    yang memuat koma di sana memecah diri jadi pasangan palsu, dan pasangan palsu bernama
+    `psm.*` berarti kepemilikan bisa dikarang.
+    """
+    name_field = "{{.Names}}" if kind == "container" else "{{.Name}}"
+    fmt = "\t".join([name_field] + [f'{{{{.Label "{k}"}}}}' for k in OWNER_LABEL_KEYS])
+    if kind == "container":
+        cmd = ["docker", "ps", "-a", "--filter", f"name={CONTAINER_PREFIX}", "--format", fmt]
+    else:
+        cmd = ["docker", "network", "ls", "--filter", f"name={CONTAINER_PREFIX}", "--format", fmt]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except (subprocess.SubprocessError, OSError) as e:
+        return [], f"gagal melisting {kind}: {str(e)[-200:]}"
+    if r.returncode != 0:
+        return [], f"gagal melisting {kind}: {(r.stderr or '').strip()[-200:]}"
+    items = []
+    for line in (r.stdout or "").splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        name = parts[0].strip()
+        # `--filter name=` docker adalah pencocokan SUBSTRING: container pihak ketiga bernama
+        # `my-psm-fl-notes` ikut terjaring. Ia takkan pernah dihapus (tak berlabel), tapi tanpa
+        # saringan ini ia muncul di laporan lengkap dengan saran `docker rm -f` — laporan yang
+        # menganjurkan menghapus milik orang lain.
+        if not name.startswith(CONTAINER_PREFIX + "-"):
+            continue
+        labels = {k: v.strip() for k, v in zip(OWNER_LABEL_KEYS, parts[1:]) if v.strip()}
+        items.append({"name": name, "labels": labels})
+    return items, None
+
+
+def _rm_command(kind, name):
+    # `-v` mencerminkan `compose down -v` di jalur teardown normal: container DB membawa
+    # volume anonim dari image-nya, dan tanpa ini tiap orphan meninggalkan volume ratusan MB
+    # yang tak berlabel, tak terlihat di `docker ps`, dan tak bisa direklaim pembersih ini lagi.
+    return (["docker", "rm", "-f", "-v", name] if kind == "container"
+            else ["docker", "network", "rm", name])
+
+
+def _remove_artifact(kind, name):
+    """(status, error): 'removed' | 'already-gone' | 'error'."""
+    try:
+        r = subprocess.run(_rm_command(kind, name), capture_output=True, text=True, timeout=60)
+    except (subprocess.SubprocessError, OSError) as e:
+        return "error", str(e)[-200:]
+    if r.returncode == 0:
+        return "removed", None
+    err = (r.stderr or "").strip()
+    # Balapan normal, bukan kegagalan: run pemilik membongkar sendiri antara kita melisting
+    # dan menghapus. Tanpa cabang ini ia mendarat di `errors` dan membuat run sehat tampak rusak.
+    if "no such" in err.lower():
+        return "already-gone", None
+    return "error", err[-200:] or "gagal menghapus"
+
+
+def cleanup_orphans():
+    """Hapus HANYA jejak run yang terbukti mati di host ini; laporkan sisanya + alasannya.
+
+    Pengganti perintah sapuan berbasis prefix yang dulu didokumentasikan: sapuan itu
+    menghapus atas dasar NAMA, jadi ia ikut membunuh Lapis 2/4 sesi lain yang sedang jalan.
+    Container dulu, baru network — network tak bisa dilepas selama masih ada yang menempel.
+    """
+    result = {"mode": "cleanup-orphans", "host": OWNER_HOST,
+              "removed": [], "skipped": [], "errors": []}
+    if not docker_available():
+        result["status"] = "skipped"
+        result["reason"] = "Docker tidak tersedia — tak ada yang bisa dibersihkan."
+        return result
+    result["status"] = "ran"
+    for kind in ("container", "network"):
+        items, err = _list_artifacts(kind)
+        if err:
+            result["errors"].append({"kind": kind, "error": err})
+            continue
+        for art in items:
+            entry = {"kind": kind, "name": art["name"]}
+            run = art["labels"].get(LABEL_RUN)
+            if run:
+                entry["run"] = run
+            # Satu record aneh tak boleh membatalkan sisa sweep: tanpa penjaga ini, artefak
+            # yang sudah terhapus tak pernah dilaporkan dan network tak pernah diproses.
+            try:
+                remove, reason = cleanup_decision(art["labels"])
+            except Exception as e:  # noqa: BLE001 — label dari luar, apa pun bisa masuk
+                entry["reason"] = "undecidable"
+                entry["error"] = f"{type(e).__name__}: {str(e)[-120:]}"
+                result["errors"].append(entry)
+                continue
+            entry["reason"] = reason
+            if not remove:
+                # Alasan yang butuh keputusan MANUSIA diberi perintah persisnya supaya operator
+                # tak buntu. `owner-alive` sengaja TIDAK: menyodorkan perintah bunuh untuk run
+                # yang sedang jalan adalah persis tindakan yang mode ini ada untuk mencegah.
+                if reason != "owner-alive":
+                    entry["manual_command"] = " ".join(_rm_command(kind, art["name"]))
+                result["skipped"].append(entry)
+                continue
+            status, rerr = _remove_artifact(kind, art["name"])
+            if status == "error":
+                entry["error"] = rerr
+                result["errors"].append(entry)
+            elif status == "already-gone":
+                entry["reason"] = "already-gone"   # pemilik membongkar sendiri saat kita jalan
+                result["skipped"].append(entry)
+            else:
+                result["removed"].append(entry)
+    if result["errors"]:
+        # Exit tetap 0 (artefak yang tak terbukti mati BUKAN kegagalan — kontrak yang disetujui),
+        # tapi konsumen mesin harus bisa membedakan "bersih" dari "ada yang tak tergarap".
+        result["status"] = "partial"
+    return result
 
 
 def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_image,
@@ -519,7 +798,8 @@ def main():
     ap = argparse.ArgumentParser(
         description="Validasi module PrestaShop di Docker flashlight (DB-backed), per versi.",
         epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("module_path", help="Path folder module PrestaShop")
+    ap.add_argument("module_path", nargs="?", help="Path folder module PrestaShop "
+                                                   f"(tak dipakai dengan {CLEANUP_FLAG})")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
     ap.add_argument("--tag-map", default="", help="Peta LENGKAP versi=tag dipisah koma (MENGGANTI default), "
                                                   "mis. '1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx'")
@@ -535,10 +815,30 @@ def main():
                     help="Izinkan unduh image bila belum ada lokal (default: lewati versi itu, degrade jujur). "
                          "Wajib utk pemanggil non-interaktif yang memang mau menarik image.")
     ap.add_argument("--timeout", type=int, default=600, help="Timeout operasi per versi (detik): pull/up/exec")
+    ap.add_argument(CLEANUP_FLAG, action="store_true",
+                    help="Bersihkan container/network yatim sisa run yang di-kill paksa, lalu keluar. "
+                         "HANYA menghapus yang proses pemiliknya sudah mati di host ini "
+                         f"(label {LABEL_OWNER_PID}); run sesi lain yang masih jalan dilewati, "
+                         "bukan dibunuh. Eksklusif: tanpa module_path, tanpa -o (laporan ke stdout).")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
+    if args.cleanup_orphans:
+        # Mode ini eksklusif. Digabung dgn module_path, validasi diam-diam TAK PERNAH jalan
+        # padahal exit 0; digabung dgn -o, laporan pembersih MENIMPA file bukti lapis (agregat
+        # lalu melaporkan "Docker tidak tersedia" — sebab yang dikarang). Keduanya ditolak keras.
+        if args.module_path or args.output:
+            print(f"error: {CLEANUP_FLAG} tak menerima module_path maupun -o/--output "
+                  "(laporan ke stdout; ia tak menjalankan validasi & tak boleh menimpa file lapis)",
+                  file=sys.stderr)
+            return 2
+        print(json.dumps(cleanup_orphans(), indent=2, ensure_ascii=False))
+        return 0  # melewati artefak yang tak terbukti mati BUKAN kegagalan
+
+    if not args.module_path:
+        print(f"error: module_path wajib (kecuali {CLEANUP_FLAG})", file=sys.stderr)
+        return 2
     module_dir = Path(args.module_path).resolve()
     if not module_dir.is_dir():
         print(f"error: bukan folder: {module_dir}", file=sys.stderr)

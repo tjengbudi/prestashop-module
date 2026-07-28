@@ -10,7 +10,9 @@ di-monkeypatch. Jalankan: uv run scripts/tests/test-ps-flashlight-run.py
 """
 import ast
 import importlib.util
+import os
 import re
+import socket
 import sys
 from pathlib import Path
 
@@ -181,13 +183,9 @@ def main():
                 all(s in mod.INSTALL_BLOCK_SH
                     for s in ("PSM_COPY_FAIL", "PSM_NO_PSROOT", "PSM_NO_CONSOLE",
                               "PSM_INSTALL_OK", "PSM_INSTALL_FAIL")))
-    # Perintah pembersih port-leak di SKILL.md menyebut prefix container sebagai LITERAL —
-    # tak bisa disatukan lewat konstanta (itu dokumen), jadi dikunci di sini. Rename
-    # CONTAINER_PREFIX akan membuat perintah itu diam-diam tak cocok apa pun, dan gunanya
-    # justru melepas container pemegang port sesudah run di-kill: ia gagal tepat saat dibutuhkan.
-    _skill = (MOD_PATH.parent.parent / "SKILL.md").read_text(encoding="utf-8")
-    ok &= check("perintah pembersih di SKILL.md memakai CONTAINER_PREFIX yang berlaku",
-                f"name={mod.CONTAINER_PREFIX}" in _skill)
+    # (Gerbang prosa pembersih dulu berdiri DUA kali: sekali di sini utk SKILL.md saja, sekali
+    # di bawah utk kedua dokumen. Yang di sini dilebur ke bawah — satu aturan satu pemilik —
+    # karena keduanya kini menjaga kontrak yang sama & yang bawah mencakupnya penuh.)
 
     # Pemotong log kopel ke AWALAN sentinel fase phpstan; kunci awalannya benar-benar awalan
     # SEMUA sentinel itu, kalau tidak split() mengembalikan seluruh output & log install
@@ -266,22 +264,289 @@ def main():
     ok &= check("nama container jalur manual diturunkan dari CONTAINER_PREFIX yang sama",
                 all(f'f"{{CONTAINER_PREFIX}}-{part}-{{uid}}"' in fl_src
                     for part in ("net", "db", "ps")))
-    # Perintah cleanup hidup di PROSA (SKILL.md gotcha Lapis 2 + quickstart) sementara nama
-    # container hidup di KODE. Verifier menemukan keduanya sudah berpisah sekali; kunci
-    # keduanya ke konstanta yang sama supaya prosa tak bisa mendrift dari kode diam-diam.
+    # Perintah cleanup hidup di PROSA (SKILL.md gotcha Lapis 2 + quickstart) sementara
+    # mekanismenya hidup di KODE. Gerbang ini DIGANTI SECARA SADAR (arch-9): dulu ia mengunci
+    # prosa ke sapuan berbasis NAMA (`--filter name=psm-fl` + `docker rm -f`) dan hanya menuntut
+    # sapuan itu lengkap. Tapi perintah itu memilih korban dari NAMA, jadi ia memang membunuh
+    # container Lapis 2/4 milik sesi lain yang sedang jalan — caveat prosa "pastikan tak ada run
+    # lain" tak bisa menegakkan apa pun. Kontrak baru: prosa WAJIB merutekan ke mode pembersih
+    # yang memvonis lewat label, dan sapuan berbasis nama DILARANG muncul lagi di dokumen mana pun.
     skill_root = MOD_PATH.parent.parent
-    cleanup = f"--filter name={mod.CONTAINER_PREFIX}"
-    # Prefix DAN AKSI remediasi: gerbang lama cuma cek prefix, jadi SKILL.md sempat menjatuhkan
-    # `docker network rm` diam-diam (bukti Docker nyata: network psm-fl-net-* menggantung ->
-    # run compose berikut gagal bind). Verifier ronde-6: cek `docker network ls` VAKUM — hapus
-    # `docker network rm` (sisakan `ls`) tetap lolos. Kunci ke aksi rm-nya, bukan sekadar ls.
-    network_rm = f"docker network ls --filter name={mod.CONTAINER_PREFIX} -q | xargs -r docker network rm"
+    # Dua arah penulisan, bukan satu: `--filter … | xargs docker rm` DAN
+    # `docker rm $(docker ps --filter …)`. Gerbang versi pertama hanya menangkap arah pertama
+    # pada SATU baris — reviewer membuktikan bentuk `$(...)` dan yang dipatahkan `\` lolos,
+    # jadi larangannya bisa dihindari tanpa mengubah maknanya sedikit pun.
+    def _has_sweep(text):
+        flat = re.sub(r"\s+", " ", text.replace("\\\n", " "))
+        pat = rf"--filter name={re.escape(mod.CONTAINER_PREFIX)}"
+        rm = r"docker (?:rm|network rm)"
+        return bool(re.search(rf"{pat}.*?{rm}", flat) or re.search(rf"{rm}.*?{pat}", flat))
+
+    # Larangan yang tak bisa menyala = izin diam-diam. Kontrol positif: perintah lama yang
+    # PERSIS ter-ship dulu HARUS terdeteksi, begitu pula tiap penulisan-ulang yang setara.
+    for _bad in (f"docker ps -aq --filter name={mod.CONTAINER_PREFIX} | xargs -r docker rm -f",
+                 f"docker network ls --filter name={mod.CONTAINER_PREFIX} -q | xargs -r docker network rm",
+                 f"docker rm -f $(docker ps -aq --filter name={mod.CONTAINER_PREFIX})",
+                 f"docker network rm $(docker network ls -q --filter name={mod.CONTAINER_PREFIX})",
+                 f"docker ps -aq --filter name={mod.CONTAINER_PREFIX} \\\n  | xargs -r docker rm -f"):
+        ok &= check("gerbang sapuan tak vakum: bentuk sapuan terdeteksi terlarang",
+                    _has_sweep(_bad))
+    ok &= check("gerbang sapuan tak over-fire: prosa pembersih yang berlaku lolos",
+                not _has_sweep((skill_root / "SKILL.md").read_text(encoding="utf-8")))
+    # Dokumen operator DIKUMPULKAN, bukan didaftar tangan: doc referensi baru yang mengapalkan
+    # sapuan itu takkan terjaring oleh tuple tetap. (.memlog.md & .analysis/ dikecualikan sadar —
+    # keduanya CATATAN SEJARAH yang memang mengutip perintah lama sebagai bukti.)
+    docs = [skill_root / "SKILL.md"] + sorted((skill_root / "references").glob("*.md"))
+    ok &= check(f"gerbang prosa punya subjek ({len(docs)} dokumen operator)", len(docs) >= 2)
+    for doc in docs:
+        rel = doc.relative_to(skill_root)
+        dtext = doc.read_text(encoding="utf-8")
+        ok &= check(f"{rel} TAK memuat sapuan berbasis nama (perintah yang membunuh run sesi lain)",
+                    not _has_sweep(dtext))
     for doc in ("SKILL.md", "references/e2e-quickstart.md"):
         dtext = (skill_root / doc).read_text(encoding="utf-8")
-        ok &= check(f"perintah cleanup di {doc} memakai prefix yang benar-benar dipakai skrip",
-                    cleanup in dtext)
-        ok &= check(f"perintah cleanup di {doc} benar-benar MENGHAPUS network (aksi rm, bukan cuma ls)",
-                    network_rm in dtext)
+        ok &= check(f"{doc} merutekan cleanup ke mode berbasis label ({mod.CLEANUP_FLAG})",
+                    mod.CLEANUP_FLAG in dtext)
+        ok &= check(f"{doc} menyebut label pemilik yang benar-benar dipakai skrip",
+                    mod.LABEL_OWNER_PID in dtext)
+        # Pin prosa->konstanta yang SEMPAT KUHAPUS saat melebur dua gerbang: dokumen masih
+        # menyebut `psm-fl` sebagai literal ketikan, jadi rename CONTAINER_PREFIX membuat
+        # operator meng-grep nama yang tak ada lagi, dgn seluruh suite tetap hijau.
+        ok &= check(f"{doc} menyebut prefix container yang berlaku (pin ke konstanta)",
+                    f"`{mod.CONTAINER_PREFIX}`" in dtext)
+
+    # --- Kepemilikan run: label + keputusan pembersihan (arch-9) ---
+    labels = mod.owner_labels()
+    _core = {mod.LABEL_RUN, mod.LABEL_OWNER_PID, mod.LABEL_OWNER_HOST}
+    _ctx = {k for k, v in ((mod.LABEL_OWNER_BOOT, mod.OWNER_BOOT), (mod.LABEL_OWNER_NS, mod.OWNER_NS)) if v}
+    ok &= check("owner_labels memakai key konstanta (inti + konteks yang platform ini bisa tulis)",
+                set(labels) == _core | _ctx and all(labels.values()))
+    ok &= check("owner_labels: pid = proses ini, host = host ini",
+                labels[mod.LABEL_OWNER_PID] == str(os.getpid())
+                and labels[mod.LABEL_OWNER_HOST] == socket.gethostname())
+    # Artefak yang lolos tanpa label TAK bisa dibuktikan mati, jadi pembersih menolak
+    # menyentuhnya selamanya: satu situs yang tercecer = kebocoran permanen, bukan bug kecil.
+    yml_lab = mod._compose_file_text("mariadb:lts", "img:9.1", "localhost:8000", "/x/mod")
+    ok &= check("compose mencap db, ps, DAN network default (3 blok label)",
+                yml_lab.count(f'{mod.LABEL_RUN}: "{mod.RUN_ID}"') == 3
+                and "networks:\n  default:\n" in yml_lab)
+    # Hitungan situs adalah SENSUS, bukan invarian: tambah satu `docker run` berlabel sambil
+    # menjatuhkan label dari yang lain menjaga angkanya tetap 3. Yang dijaga: TIAP pemanggilan
+    # yang membuat artefak membawa label, berapa pun jumlah situsnya.
+    _creators = [m for m in re.finditer(r'\["docker", "(?:run|network", "create)"', fl_src)]
+    ok &= check(f"tiap pemanggilan docker yang MEMBUAT artefak membawa label ({len(_creators)} situs)",
+                len(_creators) >= 3
+                and all("_label_flags()" in fl_src[m.start():m.start() + 400] for m in _creators))
+    ok &= check("_label_flags menurunkan --label dari owner_labels (bukan literal terpisah)",
+                mod._label_flags() == [x for k, v in labels.items()
+                                       for x in ("--label", f"{k}={v}")])
+
+    # Tabel keputusan — invarian keamanan arch-9: HANYA vonis "pemilik pasti sudah mati" yang
+    # menghapus. Tiap cabang lain menamai apa yang TAK terbukti, dan wajib menolak. Arah gagalnya
+    # sengaja: melewatkan sampah itu murah, menebak "mati" membunuh run yang sedang jalan.
+    orig_alive = mod._pid_alive
+    try:
+        mod._pid_alive = lambda pid: pid == 4242
+        base = dict(mod.owner_labels())
+        live = {**base, mod.LABEL_OWNER_PID: "4242"}
+        dead = {**base, mod.LABEL_RUN: "r2", mod.LABEL_OWNER_PID: "4243"}
+        cases = [
+            ("run sesi lain masih hidup -> owner-alive", live, (False, "owner-alive")),
+            ("pemilik mati -> owner-dead (menghapus)", dead, (True, "owner-dead")),
+            ("tanpa label -> no-owner-label", {}, (False, "no-owner-label")),
+            ("host lain -> foreign-host", {**dead, mod.LABEL_OWNER_HOST: "host-lain"},
+             (False, "foreign-host")),
+            ("pid tak terbaca -> bad-owner-pid", {**dead, mod.LABEL_OWNER_PID: "x1"},
+             (False, "bad-owner-pid")),
+            # "²".isdigit() True tapi int("²") ValueError: penjaga yang salah bikin fungsi
+            # pengklasifikasi label rusak justru MATI oleh label rusak.
+            ("digit Unicode non-desimal -> bad-owner-pid (bukan crash)",
+             {**dead, mod.LABEL_OWNER_PID: "\u00b2"}, (False, "bad-owner-pid")),
+            # os.kill(0, 0) menyasar process group PEMANGGIL & selalu sukses -> "0" akan
+            # dibaca owner-alive selamanya dengan alasan yang bohong.
+            ("pid 0 -> bad-owner-pid (bukan owner-alive palsu)",
+             {**dead, mod.LABEL_OWNER_PID: "0"}, (False, "bad-owner-pid")),
+        ]
+        if mod.OWNER_BOOT:
+            cases += [
+                # Beda boot: seluruh proses boot itu sudah lenyap, jadi PID-nya MUSTAHIL hidup —
+                # dan PID yang sama kini bisa milik proses lain (sumber "owner-alive" abadi).
+                ("boot lain -> owner-boot-gone (direklaim, bukan tersangkut selamanya)",
+                 {**live, mod.LABEL_OWNER_BOOT: "boot-lama"}, (True, "owner-boot-gone")),
+                ("label boot hilang padahal platform menulisnya -> incomplete-owner-labels",
+                 {k: v for k, v in dead.items() if k != mod.LABEL_OWNER_BOOT},
+                 (False, "incomplete-owner-labels")),
+            ]
+        if mod.OWNER_NS:
+            cases += [
+                # Inti temuan reviewer: dua distro WSL2 berbagi hostname + daemon Docker tapi
+                # PID namespace-nya terpisah. Tanpa cabang ini, run HIDUP sesi lain terbaca mati.
+                ("PID namespace lain -> foreign-pid-ns (run hidup sesi lain TAK dibunuh)",
+                 {**dead, mod.LABEL_OWNER_NS: "9999999"}, (False, "foreign-pid-ns")),
+                ("label ns hilang padahal platform menulisnya -> incomplete-owner-labels",
+                 {k: v for k, v in dead.items() if k != mod.LABEL_OWNER_NS},
+                 (False, "incomplete-owner-labels")),
+            ]
+        for case, lab, want in cases:
+            ok &= check(f"cleanup_decision: {case}", mod.cleanup_decision(lab) == want)
+        # PID di luar jangkauan C melempar OverflowError — BUKAN OSError, jadi ia dulu menembus
+        # sampai memutus sweep di tengah, sesudah sebagian artefak terlanjur dihapus. Diuji ke
+        # probe ASLI (yang di dalam blok ini sedang di-monkeypatch), sebab di situ letak penjaganya.
+        try:
+            ok &= check("pid di luar jangkauan C -> probe tak crash & membaca 'hidup' (aman)",
+                        orig_alive(10 ** 25) is True)
+        except Exception as e:
+            ok &= check(f"pid di luar jangkauan C -> probe tak crash (dapat {type(e).__name__})", False)
+
+        calls = []
+        orig_list, orig_rm, orig_docker = mod._list_artifacts, mod._remove_artifact, mod.docker_available
+        try:
+            mod.docker_available = lambda: True
+            inv = {"container": [{"name": "psm-fl-ps-live", "labels": live},
+                                 {"name": "psm-fl-ps-dead", "labels": dead},
+                                 {"name": "psm-fl-ps-legacy", "labels": {}}],
+                   "network": [{"name": "psm-fl-net-dead", "labels": dead}]}
+            mod._list_artifacts = lambda kind: (inv[kind], None)
+            mod._remove_artifact = lambda kind, name: (calls.append((kind, name)), ("removed", None))[1]
+            rep = mod.cleanup_orphans()
+            ok &= check("cleanup_orphans menghapus HANYA jejak pemilik mati",
+                        calls == [("container", "psm-fl-ps-dead"), ("network", "psm-fl-net-dead")])
+            ok &= check("container run hidup DILEWATI (dilaporkan, tak dibunuh)",
+                        any(s["name"] == "psm-fl-ps-live" and s["reason"] == "owner-alive"
+                            for s in rep["skipped"]))
+            # Menyodorkan perintah bunuh untuk run yang SEDANG JALAN adalah persis tindakan yang
+            # mode ini ada untuk mencegah — alasan lain boleh, yang ini tidak.
+            ok &= check("owner-alive TAK diberi manual_command (jangan tawarkan pembunuhan)",
+                        all("manual_command" not in s for s in rep["skipped"]
+                            if s["reason"] == "owner-alive"))
+            ok &= check("artefak lama tanpa label dilewati + diberi perintah manual per-nama",
+                        any(s["name"] == "psm-fl-ps-legacy"
+                            and s.get("manual_command") == "docker rm -f -v psm-fl-ps-legacy"
+                            for s in rep["skipped"]))
+            ok &= check("container dibongkar SEBELUM network (network tak lepas selagi dipakai)",
+                        [k for k, _ in calls] == ["container", "network"])
+            ok &= check("sweep bersih -> status ran", rep["status"] == "ran")
+
+            # Balapan normal: pemilik membongkar sendiri antara listing & penghapusan. Itu bukan
+            # kegagalan — kalau mendarat di `errors`, run yang sehat tampak rusak.
+            mod._remove_artifact = lambda kind, name: ("already-gone", None)
+            rep_gone = mod.cleanup_orphans()
+            ok &= check("artefak lenyap saat balapan -> skipped 'already-gone', bukan error",
+                        rep_gone["errors"] == [] and rep_gone["removed"] == []
+                        and any(s["reason"] == "already-gone" for s in rep_gone["skipped"]))
+
+            # Gagal nyata TETAP exit 0 (kontrak yang disetujui), tapi status harus membedakan
+            # "bersih" dari "ada yang tak tergarap" — kalau tidak, wrapper membaca sukses.
+            mod._remove_artifact = lambda kind, name: ("error", "daemon menolak")
+            rep_err = mod.cleanup_orphans()
+            ok &= check("penghapusan gagal -> status 'partial' (bukan 'ran' yang menyesatkan)",
+                        rep_err["status"] == "partial" and bool(rep_err["errors"]))
+
+            # Satu record aneh tak boleh membatalkan sisa sweep: tanpa penjaga, artefak yang
+            # sudah dihapus tak pernah dilaporkan dan network tak pernah diproses sama sekali.
+            orig_dec = mod.cleanup_decision
+            try:
+                def _boom(labels):
+                    if labels.get(mod.LABEL_RUN) == "r2":
+                        raise RuntimeError("label mustahil")
+                    return orig_dec(labels)
+                mod.cleanup_decision = _boom
+                mod._remove_artifact = lambda kind, name: ("removed", None)
+                rep_boom = mod.cleanup_orphans()
+                ok &= check("record yang meledak -> dicatat 'undecidable', sweep TETAP lanjut",
+                            any(e.get("reason") == "undecidable" for e in rep_boom["errors"])
+                            and len(rep_boom["skipped"]) + len(rep_boom["errors"]) == 4)
+            finally:
+                mod.cleanup_decision = orig_dec
+
+            mod.docker_available = lambda: False
+            rep2 = mod.cleanup_orphans()
+            ok &= check("docker absen -> status skipped + alasan jujur, tak menyentuh apa pun",
+                        rep2["status"] == "skipped" and bool(rep2.get("reason"))
+                        and rep2["removed"] == [])
+        finally:
+            mod._list_artifacts, mod._remove_artifact, mod.docker_available = \
+                orig_list, orig_rm, orig_docker
+    finally:
+        mod._pid_alive = orig_alive
+
+    # Inventaris diuji lewat PERILAKU perintah yang benar-benar dibangun, bukan sensus teks:
+    # cek teks tak bisa membedakan kode dari komentar yang menjelaskannya, dan tetap hijau
+    # saat perintahnya sendiri berubah.
+    _cap = {}
+
+    class _FakeRun:
+        returncode = 0
+        stderr = ""
+        # 3 baris: milik kita, milik pihak ketiga yang namanya cuma MEMUAT prefix, dan tanpa label
+        stdout = ("psm-fl-91-abc-ps-1\trun1\t123\thostx\tboot1\tns1\n"
+                  "my-psm-fl-notes\t\t\t\t\t\n"
+                  "psm-fl-lama\t\t\t\t\t\n")
+
+    _orig_run = mod.subprocess.run
+    try:
+        def _fake(cmd, **kw):
+            _cap["cmd"] = cmd
+            return _FakeRun()
+        mod.subprocess.run = _fake
+        items, lerr = mod._list_artifacts("container")
+        fmt = _cap["cmd"][_cap["cmd"].index("--format") + 1]
+        # Label diambil per-key; mem-parse {{.Labels}} yang dipisah koma membuat nilai ber-koma
+        # (warisan image) memecah diri jadi pasangan palsu — dan pasangan `psm.*` palsu berarti
+        # kepemilikan bisa dikarang, lalu artefak milik run HIDUP terhapus.
+        ok &= check("perintah listing meminta tiap label per-key, bukan {{.Labels}} gabungan",
+                    all(f'.Label "{k}"' in fmt for k in mod.OWNER_LABEL_KEYS)
+                    and "{{.Labels}}" not in fmt)
+        # `--filter name=` docker adalah pencocokan SUBSTRING: container pihak ketiga bernama
+        # `my-psm-fl-notes` ikut terjaring. Ia takkan dihapus (tak berlabel), tapi tanpa saringan
+        # ini laporan menganjurkan operator menghapus milik orang lain.
+        names = [i["name"] for i in items]
+        ok &= check("artefak yang namanya cuma MEMUAT prefix dibuang dari inventaris",
+                    lerr is None and names == ["psm-fl-91-abc-ps-1", "psm-fl-lama"])
+        ok &= check("label ter-zip ke key yang benar (nilai kosong tak jadi label palsu)",
+                    items[0]["labels"][mod.LABEL_RUN] == "run1"
+                    and items[0]["labels"][mod.LABEL_OWNER_HOST] == "hostx"
+                    and items[1]["labels"] == {})
+    finally:
+        mod.subprocess.run = _orig_run
+
+    # _remove_artifact diuji LANGSUNG: test cabang 'already-gone' di atas me-monkeypatch fungsi
+    # ini, jadi deteksi "no such" di dalamnya tak pernah ikut terjalankan di sana (kubuktikan:
+    # mencabut deteksinya lolos senyap) — kelas "jalur tanpa cakupan".
+    class _RmRun:
+        def __init__(self, rc, err=""):
+            self.returncode, self.stderr, self.stdout = rc, err, ""
+
+    _orig_run2 = mod.subprocess.run
+    try:
+        mod.subprocess.run = lambda cmd, **kw: _RmRun(0)
+        ok &= check("_remove_artifact sukses -> ('removed', None)",
+                    mod._remove_artifact("container", "x") == ("removed", None))
+        # Balapan normal: pemilik membongkar sendiri antara listing & penghapusan. Kalau ini
+        # dibaca 'error', run yang SEHAT tampak rusak & status jatuh ke partial tanpa sebab.
+        mod.subprocess.run = lambda cmd, **kw: _RmRun(1, "Error: No such container: x")
+        ok &= check("_remove_artifact 'No such container' -> already-gone, bukan error",
+                    mod._remove_artifact("container", "x") == ("already-gone", None))
+        mod.subprocess.run = lambda cmd, **kw: _RmRun(1, "permission denied")
+        st, err = mod._remove_artifact("container", "x")
+        ok &= check("_remove_artifact gagal nyata -> ('error', pesan)",
+                    st == "error" and "permission denied" in (err or ""))
+    finally:
+        mod.subprocess.run = _orig_run2
+
+    # Container DB membawa volume anonim; tanpa -v tiap orphan meninggalkan volume ratusan MB
+    # yang tak berlabel & tak bisa direklaim pembersih ini lagi (compose down -v mereklaimnya).
+    ok &= check("penghapusan container memakai -v (volume anonim ikut direklaim)",
+                mod._rm_command("container", "x") == ["docker", "rm", "-f", "-v", "x"])
+    # Mode ini eksklusif: digabung module_path validasi diam-diam tak jalan (exit 0), digabung
+    # -o laporan pembersih MENIMPA file bukti lapis lalu agregat mengarang sebab "Docker absen".
+    ok &= check("--cleanup-orphans menolak module_path & -o (tak menimpa bukti lapis)",
+                "if args.module_path or args.output:" in fl_src)
+    # Diteruskan lewat passthrough ps-run-layer, TIAP anak menjalankan pembersihan destruktif
+    # alih-alih memvalidasi lalu keluar 0; operator cuma diberi tahu "versi tak berbukti".
+    _rl = (MOD_PATH.parent / "ps-run-layer.py").read_text(encoding="utf-8")
+    ok &= check("ps-run-layer menolak --cleanup-orphans di passthrough (flag destruktif)",
+                f'"{mod.CLEANUP_FLAG}"' in _rl.split("RESERVED_PASSTHROUGH = ", 1)[1].split(")", 1)[0])
 
     # customization-4: salinan KEEMPAT tag map hidup di PROSA e2e-quickstart (perintah
     # `docker pull` operator + baris "Verified vs flashlight"). Tiga salinan lain dijaga;
