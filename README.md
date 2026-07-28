@@ -11,3 +11,5 @@ Mulai cepat:
 3. Pastikan Docker terpasang untuk uji di `prestashop-flashlight`
 
 Delapan skill: **psm-agent-expert** (agent hub) + enam workflow (**validate**, **cross-version**, **scaffold**, **plan**, **develop**, **optimize**) + **psm-setup**. Satu codebase module, lolos di 1.7.x / 8.x / 9.x.
+
+Skill-nya mengikuti Agent Skills open standard, jadi bukan cuma Claude Code: **opencode** membacanya tanpa konfigurasi apa pun dan **pi** lewat `.pi/settings.json` — detail & status **droid** di [Harness lain](docs/psm/README.md#harness-lain-opencode-pi-droid).
