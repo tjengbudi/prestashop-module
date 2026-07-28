@@ -68,19 +68,12 @@ Skill `psm-*` mengikuti **Agent Skills open standard** — frontmatter hanya `na
 |---|---|---|
 | **Claude Code** | Kanonik | — pohon `.claude/skills/` adalah sumber kebenaran |
 | **opencode** | Terpasang | **Nol konfigurasi.** opencode membaca `.claude/skills/*/SKILL.md` secara native (project + `~/.claude/skills/` global) |
-| **pi** | Terpasang | `.pi/settings.json` menunjuk balik ke pohon yang sama (lihat di bawah) |
+| **pi** | Terpasang | Satu baris di `.pi/settings.json` + konfirmasi trust — [langkah 4 panduan instal](install.md#4-sambungkan-harness-ke-pohon-skill) |
 | **droid** | Belum | Butuh symlink per-skill ke `.factory/skills/`; ada hambatan yang belum diuji (lihat di bawah) |
 
-**pi** tidak membaca `.claude/skills/` sendiri — dia butuh ditunjuk lewat array `skills` di settings:
+**pi** tidak memindai `.claude/skills/` sendiri — dia harus ditunjuk lewat array `skills` di `.pi/settings.json`, dan project-nya harus dipercaya (`/trust`) sebelum settings itu dibaca sama sekali. Perintahnya terdaftar sebagai `/skill:<nama>` (mis. `/skill:psm-validate`), bukan `/psm-validate`. Mekanik lengkapnya ada di [panduan instal](install.md#4-sambungkan-harness-ke-pohon-skill) — sengaja satu salinan supaya tak mendrift.
 
-```json
-// .pi/settings.json
-{
-  "skills": ["/home/budi/dev/prestashop-module/.claude/skills"]
-}
-```
-
-Path sengaja **absolut** agar tidak ambigu terhadap basis relatif pi. Konsekuensinya file ini machine-specific: repo pindah folder atau di-clone orang lain → path mati dan harus disesuaikan. Menunjuk seluruh folder berarti pi juga melihat semua skill bmad di pohon itu, bukan cuma delapan `psm-*`.
+Menunjuk seluruh folder berarti pi juga melihat semua skill bmad di pohon itu, bukan cuma delapan `psm-*`.
 
 **droid** belum disiapkan. Dia hanya memindai `<repo>/.factory/skills/`, `~/.factory/skills/`, dan folder kompat `.agent/skills/` — `.claude/skills/` tidak termasuk, jadi butuh symlink per-skill. Dua hal harus diuji lebih dulu:
 
@@ -176,7 +169,8 @@ psm-optimize <module>        # profil (Blackfire/Xdebug) → rencana → terapka
   psm-optimize/          # + ps-hotspot-scan.py, references/optimization-catalog.md
   psm-setup/             # setup skill (module.yaml, merge scripts, resolver config runtime)
 
-.pi/settings.json        # menunjuk pi ke pohon .claude/skills/ (opencode tak perlu apa pun)
+.pi/settings.json        # menunjuk pi ke pohon .claude/skills/ lewat path relatif
+                         # (portabel & aman di-commit; opencode tak perlu apa pun)
 
 skills/reports/
   prestashop-module-builder-plan.md   # rencana & riset lengkap (sumber seed knowledge base)
@@ -196,5 +190,5 @@ _bmad/psm/memory/        # knowledge base bersama (dibuat saat setup, di-seed ol
 - **Image flashlight lama diunduh** → image besar (GB); unduhan pertama per tag versi makan waktu, setelahnya di-cache lokal.
 - **Mau ubah versi target** → jalankan ulang `/psm-setup` atau sunting `psm_target_versions` di `_bmad/config.yaml`.
 - **Mau melewati uji browser E2E** → set `psm_e2e_enabled: 'false'` di section `psm` pada `_bmad/config.yaml` (atau batasi engine via `psm_e2e_browsers`).
-- **Skill `psm-*` tak muncul di pi** → tersangka pertama bukan path, tapi konfirmasi trust pi untuk skill project-level. Kalau tetap kosong, cek path absolut di `.pi/settings.json` masih cocok dengan lokasi repo.
+- **Skill `psm-*` tak muncul di pi** → tersangka pertama bukan path, tapi trust: pi mengabaikan `.pi/settings.json` untuk project yang belum dipercaya (`/trust`). Sesudah itu cek `skills` menunjuk `../.claude/skills`, dan ingat commandnya `/skill:<nama>`. Detail: [panduan instal](install.md#4-sambungkan-harness-ke-pohon-skill).
 - **Skill `psm-*` tak muncul di opencode** → discovery-nya native, jadi biasanya soal izin: cek `permission.skill` di `opencode.json` (default bisa `ask`/`deny`) dan pastikan `tools.skill` tidak dimatikan untuk agent yang kamu pakai.

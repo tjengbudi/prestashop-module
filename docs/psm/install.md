@@ -10,7 +10,10 @@ Module BMad untuk membuat, mengembangkan, meng-cross-version-kan, memvalidasi, d
 
 Sebelum install, pastikan:
 
-- **Claude Code** terpasang dan sudah login ([claude.ai/code](https://claude.ai/code))
+- **Satu harness yang membaca Agent Skills** — pilih salah satu (bisa berdampingan, satu pohon skill dipakai bersama):
+  - **Claude Code** terpasang dan sudah login ([claude.ai/code](https://claude.ai/code)) — jalur kanonik
+  - **pi** — `pi --help`; butuh satu baris konfigurasi (langkah 4)
+  - **opencode** — `opencode --version`; nol konfigurasi, discovery `.claude/skills/` native
 - **Python 3** tersedia — `python3 --version`
 - **uv** tersedia — `uv --version` (dipakai oleh skill workflow; install: `pip install uv`)
 - **Docker** — opsional, tapi diperlukan untuk uji flashlight & E2E browser (`psm-validate`, `psm-optimize`). Bisa dipasang belakangan, tidak memblok instalasi
@@ -19,11 +22,13 @@ Sebelum install, pastikan:
 
 ## Instalasi
 
-### 1. Buka project PrestaShop kamu di Claude Code
+### 1. Buka project PrestaShop kamu di harness pilihanmu
 
 ```bash
 cd /path/ke/project-kamu
-claude .
+claude .      # Claude Code
+# atau: pi    # pi
+# atau: opencode
 ```
 
 > Project ini adalah folder tempat kamu mengembangkan module PrestaShop — bukan folder instalasi PrestaShop-nya.
@@ -60,13 +65,41 @@ rm -rf /tmp/psm-installer
 
 > Bila `.claude/skills/` belum ada: `mkdir -p /path/ke/project-kamu/.claude/skills/`
 
-### 4. Jalankan setup
+### 4. Sambungkan harness ke pohon skill
 
-Di Claude Code, ketik:
+Skill `psm-*` hidup di **satu** pohon: `.claude/skills/`. Tak ada yang perlu disalin per harness — yang berbeda cuma cara tiap harness menemukannya.
+
+| Harness | Yang perlu dikerjakan |
+|---|---|
+| **Claude Code** | Tak ada. `.claude/skills/` memang pohon nativenya. |
+| **opencode** | Tak ada. Membaca `.claude/skills/*/SKILL.md` secara native (project + `~/.claude/skills/`). |
+| **pi** | Satu baris di `.pi/settings.json` (di bawah) + konfirmasi trust. |
+
+**pi** tidak memindai `.claude/skills/` sendiri; ia harus ditunjuk:
+
+```json
+// .pi/settings.json  — dibuat di root project, di samping .claude/
+{
+  "skills": ["../.claude/skills"]
+}
+```
+
+Path **relatif**, bukan absolut: pi me-resolve path di `.pi/settings.json` relatif terhadap folder `.pi` itu sendiri, jadi `../.claude/skills` benar di mesin mana pun dan file ini aman di-commit. (Path absolut juga didukung, tapi membuatnya machine-specific: repo pindah folder atau di-clone orang lain → path mati.)
+
+Lalu jalankan `pi` di root project. pi akan **menanyakan trust** untuk project yang punya settings project-level; setujui, atau simpan keputusannya dengan `/trust` supaya tak ditanya lagi. Tanpa trust, `.pi/settings.json` diabaikan dan skill `psm-*` tak akan muncul. Mode non-interaktif (`-p`, `--mode json/rpc`) tak pernah menampilkan prompt trust — pakai `--approve` atau simpan keputusan trust lebih dulu.
+
+> Menunjuk seluruh folder berarti pi juga melihat skill BMad lain di pohon itu, bukan cuma delapan `psm-*`.
+
+### 5. Jalankan setup
+
+Panggil skill setup — sintaksnya berbeda per harness:
 
 ```
-/psm-setup
+/psm-setup          # Claude Code
+/skill:psm-setup    # pi (skill terdaftar sebagai command /skill:<nama>)
 ```
+
+Di harness yang tak punya command eksplisit, sebut saja maksudnya (mis. "jalankan psm-setup") — skill dipilih model dari `description`-nya. Contoh perintah di sisa dokumen ini memakai sintaks Claude Code; padankan dengan harness-mu.
 
 Skill akan:
 - Menanyakan nama kamu, bahasa komunikasi, dan preferensi folder
@@ -179,8 +212,14 @@ KB diperbarui otomatis saat psm-agent-expert menemukan info baru. Tidak perlu di
 
 ## Troubleshooting
 
-**`/psm-setup` tidak dikenali**
+**`/psm-setup` tidak dikenali (Claude Code)**
 → Pastikan `npx bmad-method install --action update --custom-source ...` sudah selesai dan restart Claude Code. Skill harus ada di `.claude/skills/psm-setup/`.
+
+**Skill `psm-*` tak muncul di pi**
+→ Tersangka pertama bukan path, tapi **trust**: pi mengabaikan `.pi/settings.json` untuk project yang belum dipercaya. Jalankan `pi` interaktif dan setujui promptnya, atau `/trust` untuk menyimpannya. Sesudah itu baru cek `skills` di `.pi/settings.json` benar-benar menunjuk pohonnya (`../.claude/skills` dari `.pi/`). Ingat commandnya `/skill:psm-setup`, bukan `/psm-setup`.
+
+**Skill `psm-*` tak muncul di opencode**
+→ Discovery-nya native, jadi biasanya soal izin: cek `permission.skill` di `opencode.json` (default bisa `ask`/`deny`) dan pastikan `tools.skill` tak dimatikan untuk agent yang kamu pakai.
 
 **`npx bmad-method` tidak ditemukan**
 → Pastikan Node.js dan npm terpasang: `node --version`. Install Node.js dari [nodejs.org](https://nodejs.org) jika belum ada.
