@@ -193,6 +193,8 @@ Tanya apa saja soal PrestaShop cross-version, brainstorm fungsi e-commerce, atau
 | psm-module-context | `/psm-module-context` | Rawat konteks per-module lintas sesi + rekonsiliasi |
 | psm-setup | `/psm-setup` | Install & konfigurasi module ini |
 
+Tabel ini sengaja ringkas. Deskripsi lengkap, kapan memanggil, contoh invokasi, dan artefak yang dihasilkan tiap skill ada di [Referensi per skill](README.md#referensi-per-skill).
+
 ---
 
 ## Knowledge base
