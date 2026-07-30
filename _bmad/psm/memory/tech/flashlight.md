@@ -22,6 +22,6 @@ Target dinaikkan dari 9.0→**9.1** (stable kini 9.1.4, rilis 6/3/2026). Tag `9.
 - "Validate a module with the PrestaShop coding standard" — jalankan PHPStan lvl5 + coding standard di dalam container. → [[validator-rules]].
 - Compose: flashlight + MySQL.
 
-Detail operasional ada di skill psm-validate (`{project-root}/skills/psm-validate/SKILL.md`).
+Detail operasional ada di skill psm-validate (`{project-root}/.claude/skills/psm-validate/SKILL.md`).
 
 Sumber: flashlight README (Docker Hub). Status & tag diverifikasi 2026-07-08.
