@@ -88,7 +88,7 @@ Path **relatif**, bukan absolut: pi me-resolve path di `.pi/settings.json` relat
 
 Lalu jalankan `pi` di root project. pi akan **menanyakan trust** untuk project yang punya settings project-level; setujui, atau simpan keputusannya dengan `/trust` supaya tak ditanya lagi. Tanpa trust, `.pi/settings.json` diabaikan dan skill `psm-*` tak akan muncul. Mode non-interaktif (`-p`, `--mode json/rpc`) tak pernah menampilkan prompt trust — pakai `--approve` atau simpan keputusan trust lebih dulu.
 
-> Menunjuk seluruh folder berarti pi juga melihat skill BMad lain di pohon itu, bukan cuma delapan `psm-*`.
+> Menunjuk seluruh folder berarti pi juga melihat skill BMad lain di pohon itu, bukan cuma sembilan `psm-*`.
 
 ### 5. Jalankan setup
 
@@ -178,12 +178,13 @@ Tanya apa saja soal PrestaShop cross-version, brainstorm fungsi e-commerce, atau
 
 ---
 
-## Delapan skill
+## Sembilan skill
 
 | Skill | Perintah | Fungsi |
 |---|---|---|
 | psm-agent-expert | `/psm-agent-expert` | Konsultasi + kurator KB + routing workflow |
 | psm-scaffold | `/psm-scaffold` | Buat module baru dari nol |
+| psm-ideate | `/psm-ideate` | Gali & rawat backlog ide untuk memperdalam module (dilanjutkan psm-plan) |
 | psm-plan | `/psm-plan` | Rencanakan fitur tanpa menerapkan (dilanjutkan psm-develop) |
 | psm-develop | `/psm-develop` | Tambah fitur ke module existing |
 | psm-cross-version | `/psm-cross-version` | Jadikan satu codebase kompatibel 1.7/8/9 |

@@ -8,7 +8,7 @@ Module BMad untuk membuat, mengembangkan, meng-cross-version-kan, memvalidasi, d
 
 ## Apa isinya
 
-Satu agent konsultan + enam workflow + satu setup skill, berbagi knowledge base PrestaShop yang hidup.
+Satu agent konsultan + tujuh workflow + satu setup skill, berbagi knowledge base PrestaShop yang hidup.
 
 | Skill | Peran | Panggil saat |
 |---|---|---|
@@ -16,6 +16,7 @@ Satu agent konsultan + enam workflow + satu setup skill, berbagi knowledge base 
 | **psm-validate** | Validasi module di 1.7/8/9 (flashlight) + review adversarial e-commerce | "validasi module", "audit module", sebelum rilis |
 | **psm-cross-version** | Buat module existing kompatibel 1.7/8/9 sekaligus | "buat module compatible 1.7 8 9", module lama mau jalan di versi baru |
 | **psm-scaffold** | Bikin module PrestaShop baru cross-version dari nol | "bikin module baru" |
+| **psm-ideate** | Gali & rawat backlog ide untuk memperdalam module dalam domainnya sendiri; ide terpilih dilanjutkan psm-plan | "perkaya module ini", "kembangkan module lebih jauh", "backlog ide module" |
 | **psm-plan** | Rencanakan fungsi e-commerce module existing tanpa menerapkan; hasilnya dilanjutkan psm-develop | "rencanakan fungsi module", "buat rencana pengembangan module" |
 | **psm-develop** | Tambah fungsi e-commerce ke module existing tanpa regresi | "tambah fitur ke module", "kembangkan module" |
 | **psm-optimize** | Percepat module via cache/service tanpa memecah kompatibilitas | "optimasi module", "percepat module" |
@@ -73,7 +74,7 @@ Skill `psm-*` mengikuti **Agent Skills open standard** — frontmatter hanya `na
 
 **pi** tidak memindai `.claude/skills/` sendiri — dia harus ditunjuk lewat array `skills` di `.pi/settings.json`, dan project-nya harus dipercaya (`/trust`) sebelum settings itu dibaca sama sekali. Perintahnya terdaftar sebagai `/skill:<nama>` (mis. `/skill:psm-validate`), bukan `/psm-validate`. Mekanik lengkapnya ada di [panduan instal](install.md#4-sambungkan-harness-ke-pohon-skill) — sengaja satu salinan supaya tak mendrift.
 
-Menunjuk seluruh folder berarti pi juga melihat semua skill bmad di pohon itu, bukan cuma delapan `psm-*`.
+Menunjuk seluruh folder berarti pi juga melihat semua skill bmad di pohon itu, bukan cuma sembilan `psm-*`.
 
 **droid** belum disiapkan. Dia hanya memindai `<repo>/.factory/skills/`, `~/.factory/skills/`, dan folder kompat `.agent/skills/` — `.claude/skills/` tidak termasuk, jadi butuh symlink per-skill. Dua hal harus diuji lebih dulu:
 
@@ -165,6 +166,8 @@ psm-optimize <module>        # profil (Blackfire/Xdebug) → rencana → terapka
   psm-validate/          # + ps-static-scan.py, ps-flashlight-run.py, uji E2E, ps-rules.json
   psm-cross-version/     # + references/version-safe-patterns.md
   psm-scaffold/          # + ps-scaffold.py (generator kerangka)
+  psm-ideate/            # + ps-idea-backlog.py (backlog ide per-module + sync ke rencana)
+  psm-plan/              # perencanaan tanpa apply; artefak dilanjutkan psm-develop
   psm-develop/           # + ps-module-inventory.py, references/ecommerce-function-catalog.md
   psm-optimize/          # + ps-hotspot-scan.py, references/optimization-catalog.md
   psm-setup/             # setup skill (module.yaml, merge scripts, resolver config runtime)

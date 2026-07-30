@@ -24,6 +24,7 @@ Bertindak sebagai pendamping perencanaan module PrestaShop: operator (Budi) memu
 3. Resume: bila `<module-path>/.psm-develop-plan.md` ada, baca untuk melanjutkan atau merevisi dari keadaan terakhir. **Rekonsiliasi dulu, jangan percaya status buta** — dua cek deterministik dari `uv run <skills-dir>/psm-develop/scripts/ps-module-inventory.py <module-path>`: `--pair-check` → drift .md↔.json (json hilang, status beda, item hilang; `no_markers` = .md lama tanpa marker `Status:` — hanya pada kasus itu regenerasi/backfill dari naratif `.md`), lalu `--reconcile <module-path>/.psm-develop-plan.json` → item ber-status "diterapkan" yang buktinya hilang (mis. Budi git-revert). Koreksi status di kedua artefak sebelum merancang di atasnya.
 4. **Augment katalog bila ada.** Bila `{project-root}/_bmad/psm/memory/ecommerce/function-catalog.md` ada, baca untuk fungsi tambahan di luar katalog inti. Bila belum, lanjut.
    **Breaking change versi target.** Bila `{project-root}/_bmad/psm/memory/tech/breaking-changes-<major>.md` ada untuk major di `psm_target_versions`, baca sebelum merancang — ia memuat batas versi **minor** (mis. Hummingbird/Bootstrap 5 di 9.1) yang tak bisa dilihat static scan, yang memetakan versi ke major key.
+   **Backlog ide.** Bila `<module-path>/.psm-ideas.md` ada, baca ide berstatus `dipilih` — itu maksud yang sudah ditimbang Budi di sesi penggalian, lengkap dengan catatan dampak & titik sisipnya (`uv run <skills-dir>/psm-ideate/scripts/ps-idea-backlog.py list --module-path <module-path> --status dipilih`). Ide `ditolak` jangan ditawarkan ulang tanpa alasan baru. Backlog diproduksi **psm-ideate**; skill ini membacanya, tak menulisinya.
 
 ## Pahami module existing
 
@@ -36,6 +37,8 @@ Petakan apa yang sudah ada sebelum merancang apa pun. Jalankan dua skrip determi
 ## Rancang fungsi & rencana
 
 Tawarkan fungsi e-commerce yang relevan dengan maksud Budi memakai `<skills-dir>/psm-develop/references/ecommerce-function-catalog.md` (peta fungsi per domain; patuhi aturan menambah-ke-existing di bagian akhirnya). Untuk fungsi terpilih, rancang implementasi version-safe dengan `<skills-dir>/psm-cross-version/references/version-safe-patterns.md` sebagai rujukan teknis lintas versi.
+
+**Pilih lensa sesuai maksud.** Bila Budi ingin memperdalam module dalam topiknya sendiri ("perkaya module ini", "kembangkan bankwire jadi QR payment") — bukan menambah fungsi lintas domain — pakai **Lensa adjacency** di katalog itu: kenali domain module dari bukti inventaris (hook terdaftar, nama tabel, controller), posisikan di keluarga fungsi domainnya bila ada, lalu gali lima arahnya. Katalog lintas-domain tetap dipakai saat maksudnya masih terbuka. Bila penggaliannya melahirkan lebih banyak ide daripada yang muat di satu siklus, tawarkan **psm-ideate** untuk memarkirnya sebagai backlog — jangan menumpuknya di rencana, yang sekali pakai per siklus.
 
 Tulis rencana ke kedua artefak (skema kanonik `items[]` + kontrak marker: lihat `--help` ps-module-inventory.py):
 - `.psm-develop-plan.md`: seksi `## <function>` per fungsi, dibuka baris `Status: direncanakan` (marker yang dibaca `--pair-check`), lalu file & titik sisip, hook/tabel/service yang ditambah, perubahan per versi, dan alasan. Naratif untuk Budi, dapat direvisi, sumber resume.
