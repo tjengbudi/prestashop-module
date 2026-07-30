@@ -86,12 +86,17 @@ def test_marketplace_json_content():
         marketplace = json.loads(
             (tmp / ".claude-plugin" / "marketplace.json").read_text()
         )
-        assert marketplace["name"] == "bmad-exc"
+        # Nama marketplace & plugin adalah module-code APA ADANYA, tanpa prefix
+        # "bmad-": module code itu sendiri yang jadi identitas (psm, bmb, exc),
+        # dan prefix hardcoded akan salah untuk module non-BMad seperti `psm`,
+        # yang seluruh artefaknya bernama psm-* dan tak pernah bmad-psm.
+        # Prefix skill-folder tetap bebas — dipakai apa adanya di `skills`.
+        assert marketplace["name"] == "exc", marketplace["name"]
         plugin = marketplace["plugins"][0]
-        assert plugin["name"] == "bmad-exc"
-        assert plugin["skills"] == ["./bmad-exc-tools"]
-        assert plugin["description"] == "A test module"
-        assert plugin["version"] == "1.0.0"
+        assert plugin["name"] == "exc", plugin["name"]
+        assert plugin["skills"] == ["./bmad-exc-tools"], plugin["skills"]
+        assert plugin["description"] == "A test module", plugin["description"]
+        assert plugin["version"] == "1.0.0", plugin["version"]
 
 
 def test_does_not_overwrite_existing_scripts():
