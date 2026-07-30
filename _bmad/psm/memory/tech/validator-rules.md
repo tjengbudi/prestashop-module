@@ -1,6 +1,8 @@
 # Aturan Validator PrestaShop
 
-Ringkasan. Ruleset lengkap (regex per rule) ada di `{project-root}/skills/psm-validate/assets/ps-rules.json` — rujuk ke sana untuk deteksi, file ini untuk gambaran. Diseed 2026-06-29.
+Ringkasan. Ruleset lengkap (regex per rule) ada di `{project-root}/.claude/skills/psm-validate/assets/ps-rules.json` — rujuk ke sana untuk deteksi, file ini untuk gambaran. Diseed 2026-06-29.
+
+`affects` tiap rule menerima **major** (`1.7`/`8`/`9`) maupun **minor** (`9.1`, `8.2`) sejak 2026-07-30, jadi aturan khas-minor tak memblok minor tetangganya. Konsekuensi untuk pemanggil: sebut minor di `--versions` (`9.1`, bukan `9`) — target telanjang melewati aturan khas-minor dan Lapis 1 jadi tak konklusif (`minor_rules_skipped`).
 
 ## Wajib struktur
 - `ps_versions_compliancy` ada di main file (error bila tidak). → [[composer-structure]].
@@ -14,7 +16,7 @@ guzzle, swiftmailer, league/tactician-bundle, sensio/framework-extra-bundle, ano
 `Attribute`, `HookDispatcher`, `Tools::jsonEncode/jsonDecode`, `Tools::addonsRequest`, `Validate::isPasswd`, `PrestaShopAutoload` (PS9), `FrameworkBundleAdminController` (warning PS9). → [[breaking-changes-8]], [[breaking-changes-9]].
 
 ## Hook dihapus (error PS9)
-Login admin legacy, produk legacy, `displaySearch` (warning 9.1+). → [[hooks]].
+Login admin legacy, produk legacy. Khas 9.1 (warning): `displaySearch` (deprecated 9.1, **dihapus** di Hummingbird), `$HOOK_DISPLAYORDERDETAIL` → `displayOrderDetail`. → [[hooks]].
 
 ## Konstanta dihapus
 `_PS_SMARTY_DIR_`/`_PS_TCPDF_*`/`_PS_SWIFT_DIR_` (PS8), `PS_LEGACY_IMAGES`/`PS_HIGHT_DPI` (PS9).
@@ -24,6 +26,7 @@ Login admin legacy, produk legacy, `displaySearch` (warning 9.1+). → [[hooks]]
 
 ## Smarty
 Variabel tak di-escape → error sejak v5.14.1. Pakai `{$var|escape:'html':'UTF-8'}` atau `{$var nofilter}`.
+Nama theme di-hardcode (`/themes/classic/…`, `/themes/hummingbird/…`) → **error khas 9.1**: theme default instalasi baru 9.1 bukan lagi Classic, jadi path tetap itu putus. Resolve lewat `Context::getContext()->shop->theme_name` / `_THEME_DIR_`. → [[cross-version-patterns]].
 
 ## Cek lokal vs web
 - Web Validator butuh login akun seller (PrestaShop Account) → tak bisa otomatis tanpa kredensial.

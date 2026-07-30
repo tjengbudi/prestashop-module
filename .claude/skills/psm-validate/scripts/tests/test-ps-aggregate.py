@@ -197,6 +197,35 @@ def main():
                 len(notes_nonstr) == 1 and "bukan string" in notes_nonstr[0])
     ok &= check("_version_matches: token non-string di-coerce (tak meledak)",
                 mod._version_matches(8, "8.1") is True)
+    # REGRESI minor-key: dulu kecocokan diputus lewat MAJOR saja, jadi temuan yang
+    # reviewer batasi eksplisit ke 9.0 ikut memblok 9.1 (dan sebaliknya). Benar untuk
+    # bentuk major, salah begitu minor disebut — dan minor kini bisa disebut.
+    ok &= check("_version_matches: '9.0' TIDAK cocok utk 9.1 (dulu cocok lewat major)",
+                mod._version_matches("9.0", "9.1") is False)
+    ok &= check("_version_matches: '9.1' TIDAK cocok utk 9.0",
+                mod._version_matches("9.1", "9.0") is False)
+    ok &= check("_version_matches: major telanjang '9' tetap cocok utk 9.1 & 9.0",
+                mod._version_matches("9", "9.1") and mod._version_matches("9", "9.0"))
+    ok &= check("_version_matches: '9.1' cocok utk target lebih spesifik 9.1.4",
+                mod._version_matches("9.1", "9.1.4") is True)
+    ok &= check("_version_matches: major beda tetap tak cocok",
+                mod._version_matches("8.1", "9.1") is False)
+    ok &= check("_version_matches: dua-komponen 1.7 tak tertukar dgn 1.6",
+                mod._version_matches("1.7.8", "1.7.8.11")
+                and not mod._version_matches("1.7", "1.6.1"))
+    # Aturan khas-minor yang tak dinilai = cakupan HILANG, bentuk yang sama dgn
+    # rules_evaluated 0 — cuma sebagian. Kalau agregat diam, "bersih di 9" terbaca
+    # tuntas padahal aturan Hummingbird tak pernah dijalankan.
+    st_skip = static_result({"9": []})
+    st_skip["versions"]["9"]["minor_rules_skipped"] = ["9.1"]
+    lay_skip = mod.static_layer(st_skip, "9")
+    ok &= check("minor_rules_skipped terisi -> tak konklusif + note sebut minornya",
+                lay_skip["conclusive"] is False
+                and "9.1" in lay_skip.get("inconclusive_note", ""))
+    st_full = static_result({"9.1": []})
+    st_full["versions"]["9.1"]["minor_rules_skipped"] = []
+    ok &= check("minor_rules_skipped kosong -> tetap konklusif (gerbang tak kelebihan sapu)",
+                mod.static_layer(st_full, "9.1")["conclusive"] is True)
     # REGRESI determinism-4: BENTUK container digerbang sebelum nilai field. Dulu
     # payload salah-bentuk -> AttributeError -> exit 1 = kode vonis-gagal (file rusak
     # terbaca "module gagal"). Sekarang pelanggaran skema bersih (exit 2).

@@ -197,9 +197,24 @@ def main():
         # REGRESI: tipe ELEMEN yang dibaca kode scan, bukan cuma container
         ok &= check("affects [9] angka -> pelanggaran (dulu lolos & rule diam-diam tak menyala)",
                     len(_one({**base, "pattern": "x", "affects": [9]})) == 1)
-        ok &= check("affects ['9.1'] versi penuh -> pelanggaran (domain = major key)",
-                    len(_one({**base, "pattern": "x", "affects": ["9.1"]})) == 1)
         ok &= check("affects ['9'] major key -> lolos", _one({**base, "pattern": "x", "affects": ["9"]}) == [])
+        # Domain kini MEMUAT minor satu tingkat: perilaku yang beda antar-minor (Hummingbird
+        # di 9.1 tapi bukan 9.0) mustahil ditulis selama domainnya major-only — penulis
+        # aturan terpaksa memilih antara ditolak skema atau temuan palsu di minor tetangga.
+        ok &= check("affects ['9.1'] minor key -> lolos (perilaku khas-minor bisa ditulis)",
+                    _one({**base, "pattern": "x", "affects": ["9.1"]}) == [])
+        ok &= check("affects ['1.7.8'] minor dari major dua-komponen -> lolos",
+                    _one({**base, "pattern": "x", "affects": ["1.7.8"]}) == [])
+        # ...tapi gerbangnya tetap gerbang: yang di luar domain masih ditolak, karena
+        # alasannya tak berubah — key yang tak pernah punya pasangan = rule mati diam.
+        ok &= check("affects ['9.1.4'] patch -> pelanggaran (norm_versions tak pernah emit patch)",
+                    len(_one({**base, "pattern": "x", "affects": ["9.1.4"]})) == 1)
+        ok &= check("affects ['7.1'] minor dari major TAK dikenal -> pelanggaran",
+                    len(_one({**base, "pattern": "x", "affects": ["7.1"]})) == 1)
+        ok &= check("affects ['9.x'] bukan angka -> pelanggaran",
+                    len(_one({**base, "pattern": "x", "affects": ["9.x"]})) == 1)
+        ok &= check("affects ['PS9'] -> pelanggaran (bentuk bebas tetap ditolak)",
+                    len(_one({**base, "pattern": "x", "affects": ["PS9"]})) == 1)
         ok &= check("affects [] KOSONG -> pelanggaran (lolos cek tipe tapi rule tak pernah menyala)",
                     len(_one({**base, "pattern": "x", "affects": []})) == 1)
         ok &= check("files [123] -> pelanggaran (dulu TypeError di rglob -> exit 1)",
@@ -292,12 +307,25 @@ def main():
     schema = rules_doc["_meta"]["schema"]
     ok &= check("_meta.schema: severity sepakat dgn validator (error|warning, tanpa info)",
                 "error|warning" in schema and "|info" not in schema)
-    ok &= check("_meta.schema: domain affects didokumentasikan (major key)",
-                "MAJOR KEY" in schema and "1.7 | 8 | 9" in schema)
+    ok &= check("_meta.schema: domain affects didokumentasikan (major + minor key)",
+                "MAJOR KEY" in schema and "1.7 | 8 | 9" in schema
+                and "MINOR KEY" in schema and "minor_rules_skipped" in schema)
+    # Dulu daftar major diketik ulang di sini — copy ketiga dari domain yang sama.
+    # Pakai pemiliknya, supaya test tak bisa lolos atas definisi yang beda dari skrip.
     ok &= check("ruleset sendiri patuh domain affects & enum severity",
-                all(a in ("1.7", "8", "9") and r["severity"] in ("error", "warning")
+                all(_scan_mod.is_domain_key(a) and r["severity"] in ("error", "warning")
                     for g, items in rules_doc.items() if g != "_meta"
                     for r in items for a in r["affects"]))
+    # Aturan khas-minor cuma menyala bila psm_target_versions menyebut minor-nya. Ruleset
+    # yang menyebut minor di luar target default = aturan yang tak pernah jalan di jalur
+    # kanonik — drift yang senyap justru karena tiap bagiannya sah sendiri-sendiri.
+    default_keys = {k for _, keys in
+                    _scan_mod.norm_versions(_scan_mod.DEFAULT_TARGETS.split(",")) for k in keys}
+    orphan_minor = sorted({a for g, items in rules_doc.items() if g != "_meta"
+                           for r in items for a in r["affects"]
+                           if a not in _scan_mod.MAJOR_KEYS and a not in default_keys})
+    ok &= check(f"aturan minor selaras psm_target_versions default ({orphan_minor or 'bersih'})",
+                not orphan_minor)
 
     # --- determinism-2 (analyze 2026-07-17-1024): "folder mana yang BUKAN source module"
     # punya satu pemilik (is_skipped) tapi dulu cuma satu call site. Dua seam lain
@@ -462,6 +490,30 @@ def main():
         ok &= check("CLI: -o ber-token {project-root} -> exit 2 error input (bukan tulis junk dir)",
                     rc_tok.returncode == 2 and "belum diresolve di -o" in rc_tok.stderr
                     and "Traceback" not in rc_tok.stderr)
+
+        # Gerbang minor end-to-end. Aturan khas-9.1 (theme di-hardcode) TIDAK boleh
+        # menyala di 9.0 — kalau menyala, minor key cuma kosmetik dan module yang sah
+        # di 9.0 diblok. Sebaliknya, target telanjang '9' harus MELAPORKAN aturan yang
+        # tak dinilai; kalau diam, "bersih di 9" menyembunyikan cakupan yang hilang.
+        themed = make_module(t6, "thememod", GOOD_MAIN.replace("'goodmod'", "'thememod'"),
+                             tpl="<img src=\"/themes/classic/assets/x.png\">")
+        res91, rc91 = run_scan(themed, "9.1")
+        res90, rc90 = run_scan(themed, "9.0")
+        res9, _ = run_scan(themed, "9")
+        ok &= check("aturan khas-9.1 (smarty-hardcoded-theme) menyala di 9.1 & memblok",
+                    "smarty-hardcoded-theme" in [f["id"] for f in res91["versions"]["9.1"]["findings"]]
+                    and rc91 == 1)
+        ok &= check("aturan khas-9.1 TIDAK menyala di 9.0 (minor bukan sekadar kosmetik)",
+                    "smarty-hardcoded-theme" not in [f["id"] for f in res90["versions"]["9.0"]["findings"]]
+                    and rc90 == 0)
+        ok &= check("9.1 dinilai penuh -> minor_rules_skipped kosong",
+                    res91["versions"]["9.1"]["minor_rules_skipped"] == [])
+        ok &= check("9.0 & '9' melaporkan aturan 9.1 tak dinilai (cakupan hilang tak didiamkan)",
+                    "9.1" in res90["versions"]["9.0"]["minor_rules_skipped"]
+                    and "9.1" in res9["versions"]["9"]["minor_rules_skipped"])
+        ok &= check("keys per versi: '9.1' -> major+minor, '9' -> major saja",
+                    res91["versions"]["9.1"]["keys"] == ["9", "9.1"]
+                    and res9["versions"]["9"]["keys"] == ["9"])
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

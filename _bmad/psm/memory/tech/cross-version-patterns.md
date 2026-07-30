@@ -33,7 +33,7 @@ Bungkus jadi helper privat (`isPs8Plus()`), jangan sebar cek versi.
 - **Diskon baru & multi-shipment** di balik feature flag (default OFF, masih WIP) + skema DB berubah (`9.1.0.sql`). Module yang menyentuh promo/carrier: jangan bangun di atasnya sekarang, tapi hindari asumsi "satu order = satu shipment".
 - PHP 8.5 didukung (8.1–8.4 tetap jalan) — `require.php` module tak wajib naik.
 
-**Catatan gerbang:** static scan psm-validate memetakan versi ke major key (`1.7`/`8`/`9`), jadi aturan yang khas-9.1 belum bisa dipisahkan dari 9.0 di Lapis 1. Beda 9.0/9.1 dibuktikan di Lapis 2/4 (image `9.1.4-nginx`) atau review manual — jangan anggap Lapis 1 bersih berarti aman di Hummingbird.
+**Catatan gerbang:** sejak 2026-07-30 static scan psm-validate mengenal **minor key** (`9.1`, `8.2`) di samping major (`1.7`/`8`/`9`), jadi aturan khas-9.1 bisa menyala di 9.1 tanpa memblok 9.0 — `hook-displaysearch`, `hook-orderdetail-var`, dan `smarty-hardcoded-theme` sudah berbentuk aturan, bukan cuma prosa di sini. Konsekuensinya: **sebut minor-nya di `--versions`** (`9.1`, bukan `9`); target telanjang tak menilai aturan khas-minor, dan itu dilaporkan sebagai `minor_rules_skipped` yang membuat Lapis 1 tak konklusif. Yang masih di luar jangkauan Lapis 1 — perilaku runtime Hummingbird, layout Bootstrap 5 — tetap dibuktikan di Lapis 2/4 (image `9.1.4-nginx`) atau review manual.
 
 ## Checklist cross-version-safe
 - [ ] `ps_versions_compliancy` range benar

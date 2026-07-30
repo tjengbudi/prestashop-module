@@ -69,7 +69,7 @@ dan terbaca, bukan pengecekan versi tersebar tak beraturan.
 - **Smarty (.tpl)** lewat `$this->display(__FILE__, 'views/templates/hook/x.tpl')` aman lintas versi untuk output hook module — prefer ini.
 - Twig hanya untuk controller Symfony modern. Hindari mencampur kecuali perlu.
 - Escape variabel Smarty: `{$var|escape:'html':'UTF-8'}` (Validator error bila tak di-escape sejak v5.14.1); `{$var nofilter}` bila memang sengaja mentah.
-- Jangan pakai `_PS_SMARTY_DIR_` (dihapus PS8). Jangan hardcode nama theme (Validator error PS9.1+).
+- Jangan pakai `_PS_SMARTY_DIR_` (dihapus PS8). Jangan hardcode nama theme (Validator error PS9.1+ — lihat bagian minor di bawah).
 
 ## Persistence (data)
 
@@ -94,3 +94,15 @@ dan terbaca, bukan pengecekan versi tersebar tak beraturan.
 - `PrestaShopAutoload` (PS9) → composer autoload + `prestashop/autoload`.
 - `PS_LEGACY_IMAGES`, `PS_HIGHT_DPI` (PS9) → hapus.
 - Untuk API yang berbeda total antar versi, sediakan shim privat di module yang mencabangkan implementasi.
+
+## Batas versi MINOR: 9.0 vs 9.1
+
+Prinsip "cabangkan per major" tak cukup di sini: **theme, bukan nomor versi, yang menentukan** apa yang tersedia. Hummingbird jadi default instalasi baru 9.1, sementara toko yang di-upgrade dari 9.0 tetap Classic — jadi dua toko 9.1 bisa berperilaku beda. Jangan pakai `version_compare(_PS_VERSION_, '9.1', '>=')` untuk memutuskan hal-hal theme; tanyakan theme-nya.
+
+- **Nama theme jangan di-hardcode** (`/themes/classic/…`): resolve lewat `Context::getContext()->shop->theme_name` atau `_THEME_DIR_`. `Theme::getDefaultTheme()` tak lagi mengembalikan `"classic"` di 9.1.
+- **`displaySearch` dihapus di Hummingbird** (deprecated 9.1). Jangan andalkan; sediakan jalur tanpa hook itu.
+- **`$HOOK_DISPLAYORDERDETAIL` → `displayOrderDetail`** untuk 9.1+.
+- **Bootstrap 4.0.0-alpha.5 → 5.3.3** di Hummingbird: `.no-gutters`→`.g-0`, `.ml-*/.mr-*`→`.ms-*/.me-*`, `.custom-control`→`.form-check`, `.btn-block`→`.d-grid`, `.badge-*`→`.bg-*`, `.sr-only`→`.visually-hidden`, `data-toggle`→`data-bs-toggle`. Template yang menargetkan Hummingbird wajib direview, bukan diterjemahkan buta.
+- **jQuery deprecated** di Hummingbird (hilang di PS10) → Vanilla JS + Bootstrap 5 native.
+
+Deteksi Lapis 1 untuk poin-poin ini ada sebagai aturan `affects: ["9.1"]` di ruleset psm-validate — tapi hanya menyala bila `--versions` menyebut minor-nya (`9.1`, bukan `9`). Sisanya (layout Bootstrap 5, perilaku runtime Hummingbird) hanya terbukti di Lapis 2/4 dengan image 9.1.

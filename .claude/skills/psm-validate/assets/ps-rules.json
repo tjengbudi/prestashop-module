@@ -1,7 +1,7 @@
 {
   "_meta": {
-    "description": "Aturan kompatibilitas module PrestaShop lintas versi, di-embed agar psm-validate akurat tanpa knowledge base. Sumber: devdocs.prestashop-project.org (core-updates 8.0/9.0), validator.prestashop.com/changelog, flashlight README.",
-    "schema": "Setiap rule: id, severity (error|warning — HANYA dua ini; ps-aggregate memblok pada error, menghitung warning, dan menolak token lain), affects (daftar MAJOR KEY versi terpengaruh: 1.7 | 8 | 9 — bentuk versi penuh spt '9.1' TAK pernah cocok), kind (dependency|class|method|hook|constant|function|structure|smarty|compliancy), message, fix, files (daftar glob, opsional; __MAIN__ = main module file). Rule pola: pattern (regex dicocokkan ke isi file; negate_pattern opsional) — wajib untuk kind selain structure|compliancy. Rule struktural (kind structure|compliancy dirutekan ke scan_structure_rule): expect salah satu dari present (juga butuh pattern) | index_php_each_dir | composer_prepend_autoloader_false | compliancy_covers_target. Aturan tambahan dari knowledge base diteruskan lewat --extra-rules (MENAMBAH); ps-static-scan menolak pelanggaran skema dgn exit 2."
+    "description": "Aturan kompatibilitas module PrestaShop lintas versi, di-embed agar psm-validate akurat tanpa knowledge base. Sumber: devdocs.prestashop-project.org (core-updates 8.0/9.0/9.1), validator.prestashop.com/changelog, flashlight README.",
+    "schema": "Setiap rule: id, severity (error|warning — HANYA dua ini; ps-aggregate memblok pada error, menghitung warning, dan menolak token lain), affects (daftar KEY VERSI terpengaruh: MAJOR KEY 1.7 | 8 | 9, atau MINOR KEY satu tingkat di bawahnya spt '9.1'/'8.2' untuk perilaku yang beda antar-minor — patch spt '9.1.4' TAK pernah cocok. Minor key hanya menyala bila versi target menyebut minor-nya: rule affects ['9.1'] tak dinilai untuk target '9', dan ps-static-scan melaporkan itu di minor_rules_skipped supaya cakupan yang hilang tak terbaca bersih), kind (dependency|class|method|hook|constant|function|structure|smarty|compliancy), message, fix, files (daftar glob, opsional; __MAIN__ = main module file). Rule pola: pattern (regex dicocokkan ke isi file; negate_pattern opsional) — wajib untuk kind selain structure|compliancy. Rule struktural (kind structure|compliancy dirutekan ke scan_structure_rule): expect salah satu dari present (juga butuh pattern) | index_php_each_dir | composer_prepend_autoloader_false | compliancy_covers_target. Aturan tambahan dari knowledge base diteruskan lewat --extra-rules (MENAMBAH); ps-static-scan menolak pelanggaran skema dgn exit 2."
   },
   "forbidden_dependencies_ps9": [
     {
@@ -194,12 +194,23 @@
       "id": "hook-displaysearch",
       "severity": "warning",
       "affects": [
-        "9"
+        "9.1"
       ],
       "kind": "hook",
       "pattern": "displaySearch\\b",
-      "message": "Hook displaySearch deprecated untuk module compatible PS 9.1+.",
-      "fix": "Pakai mekanisme pencarian modern."
+      "message": "Hook displaySearch deprecated di PS 9.1 dan DIHAPUS di theme Hummingbird (default instalasi baru 9.1).",
+      "fix": "Jangan andalkan displaySearch untuk 9.1+; sediakan jalur pencarian lain. Di 9.0/Classic ia masih ada."
+    },
+    {
+      "id": "hook-orderdetail-var",
+      "severity": "warning",
+      "affects": [
+        "9.1"
+      ],
+      "kind": "hook",
+      "pattern": "HOOK_DISPLAYORDERDETAIL",
+      "message": "Variable hook $HOOK_DISPLAYORDERDETAIL digantikan hook displayOrderDetail di PS 9.1.",
+      "fix": "Daftarkan & implementasikan hook displayOrderDetail alih-alih membaca variabel template lama."
     }
   ],
   "removed_constants": [
@@ -333,6 +344,23 @@
       "negate_pattern": "nofilter|escape|\\|",
       "message": "Variabel Smarty tampak tidak di-escape (Validator: error sejak v5.14.1).",
       "fix": "Tambahkan modifier escape, mis. {$var|escape:'html':'UTF-8'} atau {$var nofilter} bila memang sengaja."
+    },
+    {
+      "id": "smarty-hardcoded-theme",
+      "severity": "error",
+      "affects": [
+        "9.1"
+      ],
+      "kind": "smarty",
+      "pattern": "['\"/]themes/(classic|hummingbird)\\b",
+      "files": [
+        "*.tpl",
+        "*.php",
+        "*.js",
+        "*.css"
+      ],
+      "message": "Nama theme di-hardcode (Validator: error PS 9.1+). Instalasi baru 9.1 default ke Hummingbird sementara upgrade dari 9.0 tetap Classic — path theme literal pecah di salah satunya.",
+      "fix": "Baca theme aktif secara dinamis (Context::getContext()->shop->theme_name / Theme::getDefaultTheme() yang di 9.1 tak lagi return 'classic'), jangan tulis nama theme di path."
     }
   ]
 }

@@ -18,6 +18,11 @@ import sys
 from pathlib import Path
 
 DEFAULT_RULES = Path(__file__).resolve().parent.parent / "assets" / "ps-rules.json"
+# Cerminan `psm_target_versions` (psm-setup). Konstanta, bukan literal di argparse:
+# aturan khas-minor hanya menyala bila target menyebut minor-nya, jadi test perlu
+# membandingkan ruleset terhadap daftar ini — dan menyalinnya ke test bikin copy
+# yang bisa menyimpang diam-diam dari yang benar-benar dipakai CLI.
+DEFAULT_TARGETS = "1.7.8,8.1,9.1"
 SCANNED_SUFFIXES = {".php", ".tpl", ".json", ".yml", ".yaml", ".js", ".html", ".twig"}
 # Folder yang bukan source module. Satu definisi, dipakai-ulang ps-plan-layers.py.
 SKIP_DIRS = {"vendor", "node_modules", ".git"}
@@ -42,15 +47,61 @@ RULE_GROUPS = [
 ]
 
 
+def key_major(key):
+    """Major dari sebuah affects-key: '9.1' -> '9', '1.7.8' -> '1.7', '9' -> '9'.
+
+    `1.7` diperlakukan sebagai satu major karena begitulah PrestaShop menomori
+    cabangnya: 1.6 dan 1.7 dua dunia berbeda, sementara 1.7.8 minor dari 1.7.
+    """
+    key = str(key).strip()
+    return "1.7" if key.startswith("1.7") else key.split(".")[0]
+
+
+def is_domain_key(key):
+    """True bila `key` sah sebagai `affects`: major, atau minor `<major>.<angka>`.
+
+    Digerbang lewat BENTUK, bukan daftar minor tertutup. Daftar yang di-hardcode
+    basi tiap rilis PrestaShop lalu menolak aturan yang sah — persis kelas drift
+    yang bikin `psm_target_versions` harus disinkronkan di banyak tempat. Yang
+    tetap dijaga adalah alasan gerbang ini ada: minor HARUS bercabang dari major
+    yang dikenal ruleset, sehingga 'PS9'/'9.x'/'nine' tetap ditolak alih-alih
+    diam-diam tak pernah menyala.
+
+    Satu tingkat minor saja ('9.1', bukan '9.1.4'): itu granularitas yang
+    dihasilkan norm_versions dari versi target, jadi key yang lebih dalam tak
+    akan pernah punya pasangan — bentuk kegagalan-diam yang sama.
+    """
+    if not isinstance(key, str):
+        return False
+    key = key.strip()
+    if key in MAJOR_KEYS:
+        return True
+    major = key_major(key)
+    if major not in MAJOR_KEYS:
+        return False
+    return re.fullmatch(r"\.\d+", key[len(major):]) is not None
+
+
 def norm_versions(targets):
-    """Petakan versi penuh (1.7.8.11, 8.1, 9.1) ke major key (1.7, 8, 9)."""
+    """Petakan versi target ke SEMUA affects-key yang berlaku baginya: major + minor.
+
+    '9.1' -> ('9', '9.1'); '1.7.8.11' -> ('1.7', '1.7.8'); '9' -> ('9',).
+
+    Dulu ini cuma menghasilkan major, jadi beda perilaku antar-minor mustahil
+    ditulis sebagai aturan: `affects: ["9.1"]` ditolak skema, sementara menulisnya
+    `["9"]` membuatnya menyala juga di 9.0 (temuan palsu). Hummingbird/Bootstrap 5
+    yang hadir di 9.1 tapi tidak di 9.0 adalah kasus nyatanya.
+
+    Target tanpa komponen minor ('9') cuma menghasilkan major — aturan khas-minor
+    tak menyala baginya. Itu dilaporkan lewat `minor_rules_skipped`, tidak didiamkan.
+    """
     out = []
     for t in targets:
         t = t.strip()
-        if t.startswith("1.7"):
-            out.append((t, "1.7"))
-        else:
-            out.append((t, t.split(".")[0]))
+        major = key_major(t)
+        rest = t[len(major):].lstrip(".")
+        first = rest.split(".")[0] if rest else ""
+        out.append((t, (major, f"{major}.{first}") if first.isdigit() else (major,)))
     return out
 
 
@@ -217,9 +268,11 @@ def scan_structure_rule(rule, module_dir, main_file, target_ver=None):
 
 STRUCT_EXPECTS = {"present", "index_php_each_dir", "composer_prepend_autoloader_false",
                   "compliancy_covers_target"}
-# Domain `affects`: major key yang dihasilkan norm_versions — bukan versi penuh.
-# Ditegakkan di sini DAN didokumentasikan di ps-rules.json _meta.schema.
+# Domain `affects`: key yang dihasilkan norm_versions — major, atau minor satu
+# tingkat di bawahnya ('9.1'). Ditegakkan lewat is_domain_key DAN didokumentasikan
+# di ps-rules.json _meta.schema.
 MAJOR_KEYS = ("1.7", "8", "9")
+DOMAIN_HINT = f"major ({'|'.join(MAJOR_KEYS)}) atau minor satu tingkat (mis. 9.1, 8.2)"
 
 
 def _check_regex(notes, rid, field, value):
@@ -280,16 +333,16 @@ def validate_extra_rules(extra, label="extra-rules"):
                     notes.append(f"{rid}: 'affects' bertipe {type(r['affects']).__name__}, harus list")
                 elif not r["affects"]:
                     # Container KOSONG = seam yang sama dgn elemen salah-tipe: lolos cek
-                    # tipe, lalu `major not in []` selalu benar -> rule tak pernah menyala.
+                    # tipe, lalu `key not in []` selalu benar -> rule tak pernah menyala.
                     notes.append(f"{rid}: 'affects' kosong — rule tak akan pernah menyala; "
-                                 f"sebut versi terpengaruh ({'|'.join(MAJOR_KEYS)})")
+                                 f"sebut versi terpengaruh ({DOMAIN_HINT})")
                 else:
                     for a in r["affects"]:
                         if not isinstance(a, str):
                             notes.append(f"{rid}: affects {a!r} bukan string — tulis sebagai teks "
-                                         f"({'|'.join(MAJOR_KEYS)}); rule tak akan pernah menyala")
-                        elif a not in MAJOR_KEYS:
-                            notes.append(f"{rid}: affects '{a}' bukan major key — sah: {', '.join(MAJOR_KEYS)}"
+                                         f"({DOMAIN_HINT}); rule tak akan pernah menyala")
+                        elif not is_domain_key(a):
+                            notes.append(f"{rid}: affects '{a}' di luar domain — sah: {DOMAIN_HINT}"
                                          " (rule diam-diam tak pernah dipakai)")
             if "files" in r:
                 if not isinstance(r["files"], list):
@@ -330,7 +383,9 @@ def main():
     ap = argparse.ArgumentParser(description="Pindai module PrestaShop terhadap aturan kompatibilitas lintas versi.",
                                  epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module_path", help="Path folder module PrestaShop")
-    ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma (default: 1.7.8,8.1,9.1)")
+    ap.add_argument("--versions", default=DEFAULT_TARGETS,
+                    help=f"Versi target dipisah koma (default: {DEFAULT_TARGETS}). Sebut minor-nya "
+                         "(9.1, bukan 9) — aturan khas-minor tak dinilai untuk target telanjang.")
     ap.add_argument("--rules", default=str(DEFAULT_RULES), help="Path ps-rules.json (default: assets/ps-rules.json)")
     ap.add_argument("--extra-rules", help="Path JSON aturan TAMBAHAN (skema sama ps-rules.json) — "
                                           "di-merge ke ruleset; --rules MENGGANTI, ini MENAMBAH. "
@@ -397,7 +452,7 @@ def main():
     # yang SAMA dilihat dari arah sebaliknya — SETIAP aturan dilewati, hasilnya 0 error, lalu
     # terbaca konklusif lolos. Module ber-eval() pernah dinyatakan siap-rilis di `--versions 1.6`
     # begitu. Ketiadaan aturan bukan bukti, jadi ini kekeliruan pemanggil (exit 2), bukan vonis.
-    off_domain = [full for full, major in versions if major not in MAJOR_KEYS]
+    off_domain = [full for full, keys in versions if keys[0] not in MAJOR_KEYS]
     if off_domain:
         print(f"error: versi target di luar domain ruleset: {', '.join(off_domain)}", file=sys.stderr)
         print(f"  ruleset ini hanya menilai major: {', '.join(MAJOR_KEYS)}", file=sys.stderr)
@@ -421,12 +476,20 @@ def main():
             if p.name != "index.php"]
     overall_errors = 0
 
-    for full_ver, major in versions:
+    for full_ver, keys in versions:
         # Berapa aturan yang BENAR-BENAR dinilai di versi ini. Gerbang domain di atas menjaga
         # major yang tak dikenal ruleset bawaan, tapi `--rules` MENGGANTI ruleset: file KB yang
         # cuma menyebut major "9" membuat target 8.1 lolos gerbang lalu dinilai nol aturan.
         # Agregat butuh angkanya untuk membedakan "bersih" dari "tak dinilai".
-        applicable = [r for r in all_rules if major in r.get("affects", [])]
+        kset = set(keys)
+        applicable = [r for r in all_rules if kset & set(r.get("affects", []))]
+        # Aturan khas-MINOR yang tak dinilai karena targetnya ditulis telanjang ('9' bukan
+        # '9.1'): cakupan yang HILANG, bentuk yang sama dgn rules_evaluated == 0 — cuma
+        # sebagian. Didiamkan, ia jadi "bersih di 9" yang sebenarnya berarti "aturan
+        # Hummingbird tak pernah dijalankan". Dihitung di sini, digerbang di agregat.
+        skipped = sorted({a for r in all_rules for a in r.get("affects", [])
+                          if isinstance(a, str) and a not in kset
+                          and key_major(a) == keys[0] and a not in MAJOR_KEYS})
         v_findings = []
         for rule in applicable:
             if rule["kind"] in ("structure", "compliancy"):
@@ -443,8 +506,9 @@ def main():
         warns = sum(1 for f in v_findings if f["severity"] == "warning")
         overall_errors += errs
         result["versions"][full_ver] = {
-            "major": major, "errors": errs, "warnings": warns,
+            "major": keys[0], "keys": list(keys), "errors": errs, "warnings": warns,
             "rules_evaluated": len(applicable),
+            "minor_rules_skipped": skipped,
             "pass": errs == 0, "findings": v_findings,
         }
 

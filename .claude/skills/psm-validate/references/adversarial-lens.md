@@ -45,7 +45,9 @@ Aturan kembalian yang ditegakkan skrip agregat (pelanggaran = exit 2, bukan voni
 - `severity` hanya `error` atau `warning`. Token lain (`critical`, `high`, `blocker`)
   ditolak — dan seandainya lolos, tak akan pernah memblok.
 - Tiap entri `versions` harus resolve ke salah satu versi target: tulis sebagai string
-  (`"8.1"`, atau bentuk major `"8"`), bukan angka.
+  (`"8.1"`, atau bentuk major `"8"`), bukan angka. Bentuk major menjangkau semua minor
+  di bawahnya; bentuk minor **tidak** menjangkau minor tetangganya — `"9.0"` tak lagi
+  ikut memblok 9.1 (dan sebaliknya), jadi batasi ke minor hanya bila memang khas minor itu.
 - `findings` harus list of object.
 
 `versions` top-level = cakupan yang kamu tinjau (beda dari `versions` per temuan =

@@ -26,6 +26,34 @@ def _literal_const(path, name):
     raise AssertionError(f"konstanta {name} tak ditemukan di {path}")
 
 
+def _argparse_default(path, flag):
+    """Nilai `default=` sebuah add_argument, dibaca lewat AST TANPA mengimpor skripnya.
+
+    Dibandingkan per-NILAI, bukan per-teks: default boleh ditulis literal telanjang
+    ATAU lewat konstanta top-level (ps-static-scan memakai DEFAULT_TARGETS karena
+    test lain perlu merujuk daftar target yang benar-benar dipakai CLI). Pencocokan
+    string mentah dulu menganggap konstanta-bernama sebagai drift — persis kebalikan
+    dari yang dijaga: satu sumber kebenaran.
+    """
+    src = Path(path).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument"):
+            continue
+        if not any(isinstance(a, ast.Constant) and a.value == flag for a in node.args):
+            continue
+        for kw in node.keywords:
+            if kw.arg != "default":
+                continue
+            if isinstance(kw.value, ast.Constant):
+                return kw.value.value
+            if isinstance(kw.value, ast.Name):
+                return _literal_const(path, kw.value.id)
+            return None
+    return None
+
+
 MOD_PATH = Path(__file__).resolve().parent.parent / "ps-flashlight-run.py"
 spec = importlib.util.spec_from_file_location("ps_flashlight_run", MOD_PATH)
 mod = importlib.util.module_from_spec(spec)
@@ -621,8 +649,8 @@ def main():
         scripts_dir = Path(__file__).resolve().parent.parent
         drifted = [name for name in ("ps-flashlight-run.py", "ps-e2e-run.py",
                                      "ps-static-scan.py", "ps-plan-layers.py")
-                   if f'"--versions", default="{D["psm_target_versions"]}"'
-                   not in (scripts_dir / name).read_text(encoding="utf-8")]
+                   if _argparse_default(scripts_dir / name, "--versions")
+                   != D["psm_target_versions"]]
         ok &= check(f"drift: --versions default tiap skrip == psm_target_versions ({drifted or 'selaras'})",
                     drifted == [])
 

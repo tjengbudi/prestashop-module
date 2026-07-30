@@ -58,6 +58,10 @@ def load_sibling(path, name):
 
 
 pl = load_sibling(Path(__file__).resolve().parent / "ps-plan-layers.py", "ps_plan_layers")
+# Domain key versi (`affects`) punya satu pemilik: ps-static-scan. _version_matches di
+# bawah membutuhkannya, dan menulis ulang "apa itu major" di sini persis kelas duplikasi
+# yang sudah dihilangkan dari file ini sekali (lihat load_sibling).
+ss = load_sibling(Path(__file__).resolve().parent / "ps-static-scan.py", "ps_static_scan")
 
 
 def compute_ready(versions, required):
@@ -221,6 +225,15 @@ def static_layer(static, full_ver):
     elif evaluated == 0:
         notes.append("nol aturan dinilai di versi ini — ruleset yang dipakai tak menyebut "
                      "major-nya, jadi 0 error di sini bukan lolos")
+    # Cakupan yang hilang SEBAGIAN: target ditulis telanjang ('9') sementara ruleset punya
+    # aturan khas-minor ('9.1'). rules_evaluated tetap positif, jadi cek di atas tak
+    # menangkapnya — tapi aturan Hummingbird memang tak pernah jalan. Bentuk kegagalan
+    # yang sama, cuma tak total; ia layak kanal yang sama, bukan didiamkan.
+    skipped = v.get("minor_rules_skipped")
+    if isinstance(skipped, list) and skipped:
+        notes.append(f"aturan khas-minor tak dinilai ({', '.join(str(s) for s in skipped)}) — "
+                     "versi target ditulis tanpa komponen minor; sebut minor-nya "
+                     "(mis. 9.1, bukan 9) agar aturan itu ikut menyala")
     # `is not True`, bukan `is False`: string "false" dan key yang absen sama-sama bukan bukti.
     if static.get("main_file_found") is not True:
         notes.append("main module file tak resolve — aturan ber-`files: __MAIN__` tak dinilai")
@@ -497,23 +510,29 @@ def e2e_layer(e2e, full_ver):
     return layer
 
 
-def _major(ver):
-    """Petakan versi ke major key: 1.7.8.11 -> 1.7, 8.1 -> 8, 9.1 -> 9."""
-    ver = str(ver).strip()
-    return "1.7" if ver.startswith("1.7") else ver.split(".")[0]
-
-
 def _version_matches(entry, full_ver):
-    """Temuan berlaku utk full_ver bila entri sama persis ATAU semajor.
+    """Temuan berlaku utk full_ver bila entri semajor DAN prefix-komponen target.
 
-    Model bisa menulis 'versions' dalam bentuk penuh (8.1) atau major (8);
-    keduanya harus resolve supaya temuan error tak diam-diam terlewat.
+    Model bisa menulis 'versions' dalam bentuk penuh (8.1) atau major (8); keduanya
+    harus resolve supaya temuan error tak diam-diam terlewat.
+
+    Dulu ini melebur keduanya lewat kesamaan MAJOR saja, yang benar untuk major-form
+    dan SALAH begitu reviewer menyebut minor: '9.0' dan '9.1' semajor, jadi temuan
+    yang eksplisit dibatasi ke 9.0 ikut memblok 9.1 — dan sebaliknya. Kini major harus
+    sama (menjaga '1.7' tetap atomik, jadi '1' tak menyapu 1.7.x) DAN komponen yang
+    dua-duanya sebutkan harus cocok — itu yang memisahkan minor yang bertentangan
+    sambil membiarkan '8' resolve ke '8.1'. Domain key-nya sama dgn `affects`
+    ps-static-scan, jadi definisinya diambil dari sana, bukan ditulis ulang.
     Token non-string (mis. 8 alih-alih "8") di-coerce, bukan meledak: crash =
     exit 1 yang bertabrakan dgn kode vonis-gagal (validate_adversarial yang
     melaporkannya keras sbg pelanggaran skema).
     """
-    entry = str(entry).strip()
-    return entry == full_ver or _major(entry) == _major(full_ver)
+    a, b = str(entry).strip(), str(full_ver).strip()
+    if ss.key_major(a) != ss.key_major(b):
+        return False
+    pa, pb = a.split("."), b.split(".")
+    n = min(len(pa), len(pb))
+    return n > 0 and pa[:n] == pb[:n]
 
 
 def validate_adversarial(adversarial, target_versions):
