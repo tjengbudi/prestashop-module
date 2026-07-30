@@ -23,6 +23,7 @@ Bertindak sebagai pendamping perencanaan module PrestaShop: operator (Budi) memu
 2. Tentukan module yang direncanakan (path folder) dan fungsi yang diinginkan dari permintaan Budi. Bila ambigu, tanya satu pertanyaan.
 3. Resume: bila `<module-path>/.psm-develop-plan.md` ada, baca untuk melanjutkan atau merevisi dari keadaan terakhir. **Rekonsiliasi dulu, jangan percaya status buta** — dua cek deterministik dari `uv run <skills-dir>/psm-develop/scripts/ps-module-inventory.py <module-path>`: `--pair-check` → drift .md↔.json (json hilang, status beda, item hilang; `no_markers` = .md lama tanpa marker `Status:` — hanya pada kasus itu regenerasi/backfill dari naratif `.md`), lalu `--reconcile <module-path>/.psm-develop-plan.json` → item ber-status "diterapkan" yang buktinya hilang (mis. Budi git-revert). Koreksi status di kedua artefak sebelum merancang di atasnya.
 4. **Augment katalog bila ada.** Bila `{project-root}/_bmad/psm/memory/ecommerce/function-catalog.md` ada, baca untuk fungsi tambahan di luar katalog inti. Bila belum, lanjut.
+   **Breaking change versi target.** Bila `{project-root}/_bmad/psm/memory/tech/breaking-changes-<major>.md` ada untuk major di `psm_target_versions`, baca sebelum merancang — ia memuat batas versi **minor** (mis. Hummingbird/Bootstrap 5 di 9.1) yang tak bisa dilihat static scan, yang memetakan versi ke major key.
 
 ## Pahami module existing
 
