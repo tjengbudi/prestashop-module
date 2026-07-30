@@ -88,7 +88,7 @@ Path **relatif**, bukan absolut: pi me-resolve path di `.pi/settings.json` relat
 
 Lalu jalankan `pi` di root project. pi akan **menanyakan trust** untuk project yang punya settings project-level; setujui, atau simpan keputusannya dengan `/trust` supaya tak ditanya lagi. Tanpa trust, `.pi/settings.json` diabaikan dan skill `psm-*` tak akan muncul. Mode non-interaktif (`-p`, `--mode json/rpc`) tak pernah menampilkan prompt trust — pakai `--approve` atau simpan keputusan trust lebih dulu.
 
-> Menunjuk seluruh folder berarti pi juga melihat skill BMad lain di pohon itu, bukan cuma sembilan `psm-*`.
+> Menunjuk seluruh folder berarti pi juga melihat skill BMad lain di pohon itu, bukan cuma sepuluh `psm-*`.
 
 ### 5. Jalankan setup
 
@@ -178,7 +178,7 @@ Tanya apa saja soal PrestaShop cross-version, brainstorm fungsi e-commerce, atau
 
 ---
 
-## Sembilan skill
+## Sepuluh skill
 
 | Skill | Perintah | Fungsi |
 |---|---|---|
@@ -190,6 +190,7 @@ Tanya apa saja soal PrestaShop cross-version, brainstorm fungsi e-commerce, atau
 | psm-cross-version | `/psm-cross-version` | Jadikan satu codebase kompatibel 1.7/8/9 |
 | psm-validate | `/psm-validate` | Validasi & audit kompatibilitas (4 lapis) |
 | psm-optimize | `/psm-optimize` | Optimasi performa module |
+| psm-module-context | `/psm-module-context` | Rawat konteks per-module lintas sesi + rekonsiliasi |
 | psm-setup | `/psm-setup` | Install & konfigurasi module ini |
 
 ---
@@ -204,10 +205,10 @@ _bmad/psm/memory/
                   # hooks.md, services-di.md, persistence.md, composer-structure.md,
                   # validator-rules.md, flashlight.md
   ecommerce/      # function-catalog.md, elicitation-lenses.md, adversarial-checks.md
-  projects/       # <module>.md (state per module), _budi-prefs.md (preferensi pribadi)
+  projects/       # <module>.md (profil per module)
 ```
 
-KB diperbarui otomatis saat psm-agent-expert menemukan info baru. Tidak perlu dikelola manual.
+KB diperbarui otomatis saat psm-agent-expert menemukan info baru. Tidak perlu dikelola manual. Kecuali `projects/`: isinya **tak** di-seed di first run — tiap `<module>.md` lahir lewat `psm-module-context` saat module itu dikerjakan, dan direkonsiliasi terhadap kode oleh workflow yang menyentuhnya.
 
 ---
 

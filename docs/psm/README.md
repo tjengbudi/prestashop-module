@@ -8,7 +8,7 @@ Module BMad untuk membuat, mengembangkan, meng-cross-version-kan, memvalidasi, d
 
 ## Apa isinya
 
-Satu agent konsultan + tujuh workflow + satu setup skill, berbagi knowledge base PrestaShop yang hidup.
+Satu agent konsultan + delapan workflow + satu setup skill, berbagi knowledge base PrestaShop yang hidup.
 
 | Skill | Peran | Panggil saat |
 |---|---|---|
@@ -20,6 +20,7 @@ Satu agent konsultan + tujuh workflow + satu setup skill, berbagi knowledge base
 | **psm-plan** | Rencanakan fungsi e-commerce module existing tanpa menerapkan; hasilnya dilanjutkan psm-develop | "rencanakan fungsi module", "buat rencana pengembangan module" |
 | **psm-develop** | Tambah fungsi e-commerce ke module existing tanpa regresi | "tambah fitur ke module", "kembangkan module" |
 | **psm-optimize** | Percepat module via cache/service tanpa memecah kompatibilitas | "optimasi module", "percepat module" |
+| **psm-module-context** | Rawat konteks per-module lintas sesi (konvensi, keputusan, fakta terkonsiliasi, jurnal) | "konteks module", "catat konvensi module" |
 | **psm-setup** | Pasang & konfigurasi module ke project | "setup psm", sekali di awal |
 
 ---
@@ -74,7 +75,7 @@ Skill `psm-*` mengikuti **Agent Skills open standard** — frontmatter hanya `na
 
 **pi** tidak memindai `.claude/skills/` sendiri — dia harus ditunjuk lewat array `skills` di `.pi/settings.json`, dan project-nya harus dipercaya (`/trust`) sebelum settings itu dibaca sama sekali. Perintahnya terdaftar sebagai `/skill:<nama>` (mis. `/skill:psm-validate`), bukan `/psm-validate`. Mekanik lengkapnya ada di [panduan instal](install.md#4-sambungkan-harness-ke-pohon-skill) — sengaja satu salinan supaya tak mendrift.
 
-Menunjuk seluruh folder berarti pi juga melihat semua skill bmad di pohon itu, bukan cuma sembilan `psm-*`.
+Menunjuk seluruh folder berarti pi juga melihat semua skill bmad di pohon itu, bukan cuma sepuluh `psm-*`.
 
 **droid** belum disiapkan. Dia hanya memindai `<repo>/.factory/skills/`, `~/.factory/skills/`, dan folder kompat `.agent/skills/` — `.claude/skills/` tidak termasuk, jadi butuh symlink per-skill. Dua hal harus diuji lebih dulu:
 
@@ -170,6 +171,7 @@ psm-optimize <module>        # profil (Blackfire/Xdebug) → rencana → terapka
   psm-plan/              # perencanaan tanpa apply; artefak dilanjutkan psm-develop
   psm-develop/           # + ps-module-inventory.py, references/ecommerce-function-catalog.md
   psm-optimize/          # + ps-hotspot-scan.py, references/optimization-catalog.md
+  psm-module-context/    # + ps-module-context.py (konteks per-module + rekonsiliasi)
   psm-setup/             # setup skill (module.yaml, merge scripts, resolver config runtime)
 
 .pi/settings.json        # menunjuk pi ke pohon .claude/skills/ lewat path relatif
@@ -181,7 +183,8 @@ skills/reports/
 _bmad/psm/memory/        # knowledge base bersama (dibuat saat setup, di-seed oleh agent)
   tech/                  # breaking changes, hooks, services, persistence, dll
   ecommerce/             # katalog fungsi, lensa elicitation, checklist adversarial
-  projects/              # state per module yang dikerjakan
+  projects/              # profil per module — diproduksi psm-module-context,
+                         # sengaja tak di-seed di first run
 ```
 
 ---

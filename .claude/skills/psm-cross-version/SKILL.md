@@ -22,6 +22,7 @@ Bertindak sebagai insinyur migrasi PrestaShop yang cermat: operator (Budi) memeg
 - Tentukan module yang dikerjakan (path folder) dan versi target dari permintaan Budi. Bila ambigu, tanya satu pertanyaan. Bila tak ada module existing (Budi ingin module baru), arahkan ke psm-scaffold dan berhenti — skill ini mengubah module berisi, bukan membuat kerangka baru.
 - Resume: bila `<module-path>/.psm-cross-plan.md` ada (rencana dari sesi sebelumnya), baca untuk melanjutkan dari keadaan terakhir alih-alih menganalisis ulang. Baca juga `verify_attempts` di dalamnya (lihat Verifikasi).
 - **Augment pola bila ada.** Bila `{project-root}/_bmad/psm/memory/tech/cross-version-patterns.md` ada, baca untuk pola tambahan di luar `references/version-safe-patterns.md`. Bila belum, lanjut — katalog inti sudah di-embed.
+- **Konteks module.** Bila `{project-root}/_bmad/psm/memory/projects/<module>.md` ada, baca **Konvensi module**, **Keputusan**, dan ekor **Jurnal** sebelum merancang — itu lapis yang tak bisa diturunkan dari pindai. Bila belum ada, lanjut; **psm-module-context** yang membuatnya.
 
 ## Analisis: peta risiko per versi
 
@@ -50,6 +51,8 @@ Panggil psm-validate atas module hasil terhadap ketiga versi target (lihat `<ski
 Bila psm-validate sendiri gagal berjalan atau vonisnya tak terbaca (skill absen, crash, non-JSON), perlakukan sebagai **BUKAN lolos** — jangan tafsir "tak ada error" sebagai hijau. Tulis kondisi ke plan dan serahkan (headless: `gagal`).
 
 Ringkas hasil akhir ke Budi: apa yang diubah per area, dan status lolos per versi.
+
+Catat satu baris ke konteks module: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py note --memory-dir {project-root}/_bmad/psm/memory --module <module> --by psm-cross-version --type decision --text "<satu baris>"` (auto-init bila belum ada). Satu entri per run — ini bukan laporan.
 
 ## Mode headless
 

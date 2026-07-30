@@ -24,6 +24,7 @@ Bertindak sebagai pendamping pengembangan module PrestaShop: operator (Budi) mem
 3. Resume: bila `<module-path>/.psm-develop-plan.md` ada, baca untuk melanjutkan dari keadaan terakhir. **Rekonsiliasi dulu, jangan percaya status buta** — dua cek deterministik dari `uv run scripts/ps-module-inventory.py <module-path>`: `--pair-check` → drift .md↔.json (json hilang, status beda, item hilang; `no_markers` = .md lama tanpa marker `Status:` — hanya pada kasus itu regenerasi/backfill dari naratif `.md`), lalu `--reconcile <module-path>/.psm-develop-plan.json` → item ber-status "diterapkan" yang buktinya hilang (mis. Budi git-revert). Keputusan atas drift milikmu: koreksi status di kedua artefak sebelum lanjut. Baca juga `verify_attempts` saat resume (lihat Verifikasi).
 4. **Augment katalog bila ada.** Bila `{project-root}/_bmad/psm/memory/ecommerce/function-catalog.md` ada, baca untuk fungsi tambahan di luar `references/ecommerce-function-catalog.md`. Bila belum, lanjut — katalog inti sudah di-embed.
    **Breaking change versi target.** Bila `{project-root}/_bmad/psm/memory/tech/breaking-changes-<major>.md` ada untuk major di `psm_target_versions`, baca sebelum merancang — ia memuat batas versi **minor** (mis. Hummingbird/Bootstrap 5 di 9.1) yang tak bisa dilihat static scan, yang memetakan versi ke major key.
+5. **Konteks module.** Bila `{project-root}/_bmad/psm/memory/projects/<module>.md` ada, baca **Konvensi module**, **Keputusan**, dan ekor **Jurnal** sebelum merancang — itu lapis yang tak bisa diturunkan dari inventaris. Bila belum ada, lanjut; **psm-module-context** yang membuatnya.
 
 ## Pahami module existing
 
@@ -32,6 +33,8 @@ Petakan apa yang sudah ada sebelum menambah apa pun. Jalankan dua skrip determin
 - `uv run <skills-dir>/psm-validate/scripts/ps-static-scan.py <module-path> --versions <target>` → peta API berisiko per versi, supaya fungsi baru tak menambah masalah lama.
 
 **Gerbang target.** Bila folder module hilang atau inventaris emit `looks_like_module: false` (aturan pastinya di skrip), arahkan Budi ke **psm-scaffold** dan berhenti; jangan merancang di atas ketiadaan. Bila skrip inventaris exit non-zero, tampilkan error apa adanya dan minta klarifikasi (headless: status `gagal`, lihat Mode headless).
+
+Rekonsiliasi dulu: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py reconcile --memory-dir {project-root}/_bmad/psm/memory --module <module> --inventory <inventaris.json>` (rc=1 = drift klaim vs bukti; keputusan atas drift milikmu).
 
 Sisamu: menilai *di mana titik sisip aman*.
 
@@ -55,7 +58,7 @@ Perbaiki konflik dulu, lalu tampilkan rencana ke Budi dan **minta persetujuan se
 
 Sebelum menyentuh file, pastikan `<module-path>` di repo git dengan working tree bersih (`git status`) — itu satu-satunya jaring undo untuk operasi tak-mudah-dibalik ini. Bila tidak, peringatkan Budi / tawarkan backup folder sebelum lanjut (headless: jangan terapkan diam tanpa jaring undo — buat backup folder otomatis lalu catat path-nya ke memlog, atau bila tak bisa kembalikan `butuh intervensi`).
 
-Setelah disetujui, terapkan sesuai rencana pada module di tempat. Tambah, jangan rusak — patuhi **Aturan menambah-ke-existing** di `references/ecommerce-function-catalog.md`. Tandai status tiap fungsi saat diterapkan di **kedua** artefak rencana — baris `Status:` di `.md` (dibaca `--pair-check`), field `status` di `.json` (dibaca `--reconcile`) — agar gerbang drift saat resume membaca status terkini.
+Setelah disetujui, terapkan sesuai rencana pada module di tempat. Tambah, jangan rusak — patuhi **Aturan menambah-ke-existing** di `references/ecommerce-function-catalog.md`. Tandai status tiap fungsi saat diterapkan di **kedua** artefak rencana — baris `Status:` di `.md` (dibaca `--pair-check`), field `status` di `.json` (dibaca `--reconcile`) — agar gerbang drift saat resume membaca status terkini. Berdampingan dengan penandaan itu, klaim tiap hook/tabel/class/file yang baru hidup ke konteks module: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py claim --memory-dir {project-root}/_bmad/psm/memory --module <module> --kind <hook|table|class|file> --key <ident> --status live --by psm-develop` (auto-init bila belum ada).
 
 ## Verifikasi (gerbang wajib)
 
@@ -68,6 +71,8 @@ Bila ada error tersisa, **pisahkan dulu terhadap baseline** `ps-static-scan` dar
 Bila psm-validate sendiri gagal berjalan atau vonisnya tak terbaca (skill absen, crash, non-JSON), perlakukan sebagai **BUKAN lolos** — jangan tafsir "tak ada error" sebagai hijau. Tulis kondisi ke plan dan serahkan (headless: `gagal`).
 
 Ringkas ke Budi: fungsi apa yang ditambahkan, dan status lolos per versi. Setelah lolos, tawarkan satu commit untuk perubahan run ini (pesan menyebut fungsi yang ditambah) agar jaring undo run berikutnya mulai bersih (headless: jangan commit — catat ke memlog bahwa tree memuat perubahan ter-apply belum di-commit, dan sertakan fakta itu di return).
+
+Catat satu baris ke konteks module: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py note --memory-dir {project-root}/_bmad/psm/memory --module <module> --by psm-develop --type decision --text "<satu baris>"` (auto-init bila belum ada). Satu entri per run — ini bukan laporan.
 
 ## Mode headless
 

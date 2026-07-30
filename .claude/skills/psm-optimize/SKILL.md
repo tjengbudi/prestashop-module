@@ -21,12 +21,15 @@ Bertindak sebagai insinyur performa PrestaShop yang berbasis bukti: operator (Bu
 1. Muat config resolved via `uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri).
 2. Tentukan module yang dioptimasi (path folder) dari permintaan Budi. Bila ambigu, tanya satu pertanyaan.
 3. Resume: bila `<module-path>/.psm-optimize-plan.md` ada, baca untuk melanjutkan dari keadaan terakhir. **Rekonsiliasi dulu, jangan percaya status buta:** jalankan ulang `ps-hotspot-scan.py`, bandingkan jumlah kandidat dengan blok baseline, dan cek item ber-status "diterapkan" terhadap kode (Budi bisa saja git-revert); koreksi status plan sebelum lanjut (headless: catat koreksi ke memlog). Baca juga `verify_attempts` (lihat Verifikasi).
+4. **Konteks module.** Bila `{project-root}/_bmad/psm/memory/projects/<module>.md` ada, baca **Konvensi module**, **Keputusan**, dan ekor **Jurnal** sebelum merancang — itu lapis yang tak bisa diturunkan dari inventaris. Bila belum ada, lanjut; **psm-module-context** yang membuatnya.
 
 ## Profil: ukur titik lambat
 
 Ukur sebelum mengubah apa pun — optimasi tanpa bukti adalah tebakan. Petakan struktur dengan `uv run <skills-dir>/psm-develop/scripts/ps-module-inventory.py <module-path>` (hook, ObjectModel, controller) dan surface kandidat hotspot dengan `uv run scripts/ps-hotspot-scan.py <module-path>` (lihat `--help`) — JSON berisi situs query/ObjectModel di dalam loop (kandidat N+1) dan method hook berat. Keduanya cuma butuh `<module-path>` dan tak saling bergantung.
 
 **Gerbang target.** Scan kosong atas target yang salah berbentuk persis seperti sukses. Bila `<module-path>` bukan module berisi — folder kosong/tanpa `.php`, atau inventaris tak menemukan versi/hook/file — berhenti dan minta klarifikasi alih-alih menyimpulkan ramping; bila salah satu skrip exit non-zero, tampilkan error apa adanya (headless: `gagal`); exit "sudah ramping" di bawah hanya sah setelah gerbang ini lolos.
+
+Rekonsiliasi dulu: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py reconcile --memory-dir {project-root}/_bmad/psm/memory --module <module> --inventory <inventaris.json>` (rc=1 = drift klaim vs bukti; keputusan atas drift milikmu).
 
 Jika tak ada hotspot nyata setelah kamu menilai kandidat (scan kosong, atau semua kandidat ternyata bukan N+1) dan profiler tak menunjukkan hotspot berarti, hentikan bersih: laporkan "module sudah ramping, tak ada peluang berbukti" sebelum gerbang rencana — itu hasil sukses, bukan kegagalan yang harus dipaksakan. Untuk profil runtime, gunakan flashlight dengan Blackfire (`BLACKFIRE_ENABLED=true`) atau Xdebug (`XDEBUG_ENABLED=true`) — lihat `<skills-dir>/psm-validate/SKILL.md` untuk cara spin flashlight — lalu ringkas output mentahnya via `uv run scripts/ps-profile-summary.py <file>` (lihat `--help`) → JSON `{wall_time_ms, memory_kb, sql_count}`; jangan ekstrak angka dengan tangan — before/after harus semetode agar perbandingannya sah. Tanpa profiler, andalkan kandidat dari hotspot-scan dan sebut bahwa angka baseline runtime tak terukur.
 
@@ -53,6 +56,8 @@ Dua bukti diperlukan, karena lolos validate saja bisa menyembunyikan perubahan y
 Bila psm-validate sendiri gagal berjalan atau vonisnya tak terbaca (skill absen, crash, non-JSON), perlakukan sebagai **BUKAN lolos** — jangan tafsir "tak ada error" sebagai hijau. Tulis kondisi ke plan dan serahkan (headless: `gagal`).
 
 Ringkas ke Budi: apa yang dioptimasi, sebelum/sesudah per metrik, dan status lolos per versi. Setelah lolos, tawarkan satu commit untuk perubahan run ini (pesan menyebut optimasi yang diterapkan) agar jaring undo run berikutnya mulai bersih (headless: jangan commit — catat ke memlog bahwa tree memuat perubahan ter-apply belum di-commit, dan sertakan fakta itu di return).
+
+Catat satu baris ke konteks module: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py note --memory-dir {project-root}/_bmad/psm/memory --module <module> --by psm-optimize --type note --text "<satu baris>"` (auto-init bila belum ada). Satu entri per run — ini bukan laporan.
 
 ## Mode headless
 

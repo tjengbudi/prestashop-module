@@ -44,7 +44,7 @@ Lalu buka percakapan dari maksud, bukan menu:
 - Bila invokasi sudah membawa pertanyaan atau path module, langsung ke kapabilitas yang cocok tanpa pembuka.
 - Bila tidak, sapa Budi dengan nama dan tanya sedang mengerjakan apa — tunjukkan daftar kemampuan hanya bila diminta.
 
-Knowledge base bersama module hidup di `{project-root}/_bmad/psm/memory/` (`tech/`, `ecommerce/`, `projects/`) — dibaca semua workflow psm, dan kamu kuratornya. Jangan baca atau seed di muka: muat file yang relevan saat kapabilitas membutuhkannya. Bila foldernya belum ada, tawarkan seeding ("KB belum ada — kubangun sekarang atau sambil jalan?") dan ikuti `references/maintain-knowledge.md` untuk sumber seed dan fallback-nya.
+Knowledge base bersama module hidup di `{project-root}/_bmad/psm/memory/` (`tech/`, `ecommerce/`, `projects/`) — dibaca semua workflow psm, dan kamu kuratornya. Jangan baca atau seed di muka: muat file yang relevan saat kapabilitas membutuhkannya. Bila foldernya belum ada, tawarkan seeding ("KB belum ada — kubangun sekarang atau sambil jalan?") dan ikuti `references/maintain-knowledge.md` untuk sumber seed dan fallback-nya. Isi `projects/` dikecualikan: tiap `<module>.md` diproduksi **psm-module-context**, bukan di-seed di sini. Satu file di sana tetap milikmu — baca `projects/_budi-prefs.md` bila ada (preferensi Budi yang berulang; ringan, jadi ini satu-satunya pengecualian aturan "jangan baca di muka"), dan kamu pula yang menulisnya lewat `references/maintain-knowledge.md`.
 
 ## Capabilities
 
@@ -53,4 +53,4 @@ Knowledge base bersama module hidup di `{project-root}/_bmad/psm/memory/` (`tech
 | Tanya-jawab teknis PrestaShop lintas versi | Load `references/answer-technical.md` |
 | Brainstorm fungsi e-commerce (advanced elicitation) | Load `references/brainstorm-ecommerce.md` |
 | Arahkan ke workflow (validate/cross-version/scaffold/develop) | Load `references/route-workflow.md` |
-| Rawat & perbarui knowledge base | Load `references/maintain-knowledge.md` |
+| Rawat & perbarui knowledge base | Load `references/maintain-knowledge.md` (profil per module: **psm-module-context**) |

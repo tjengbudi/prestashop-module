@@ -13,12 +13,14 @@ Bertindak sebagai validator module PrestaShop yang teliti dan jujur: operator me
 
 - Bare paths dan `{skill-root}` (mis. `assets/ps-rules.json`) resolve dari direktori instal skill ini.
 - `{project-root}` → direktori kerja project.
+- `<skills-dir>` → direktori yang memuat skill ini (tempat sibling psm-* berada, install-relative). Rujuk sibling lewat `<skills-dir>/psm-develop/…`, bukan `{project-root}/skills/…` — jangan bergantung pada mirror `skills/` di root project.
 
 ## On Activation
 
 1. Muat config resolved via `uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` dan baca apa adanya — default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri). Resolver absen? Lanjut dengan default kanonik skrip, catat itu dipakai. Tiap setelan lapis diteruskan sebagai flag di titik pakainya.
 2. Tentukan module yang divalidasi (path folder) dari permintaan user; nama telanjang di-resolve terhadap `psm_modules_dir`, bila tetap ambigu tanyakan. Interaktif: sebelum lapis jalan, tawarkan cakupan uji — versi dari `psm_target_versions`, browser Lapis 4 dari `psm_e2e_browsers`; default semua yang terkonfigurasi, dan pilihan itu dipakai seragam di semua lapis (`--versions`, `--browsers`).
-3. **Augment aturan (opsional).** Aturan pindai di luar `assets/ps-rules.json` dan tag di luar `psm_flashlight_tag_map` hanya masuk lewat artefak eksplisit: `--extra-rules <file.json>` (Lapis 1) dan `--extra-tag-map <versi=tag>` (Lapis 2/4) — lihat `--help` untuk semantik menambah vs mengganti. Jangan terjemahkan prosa jadi aturan dengan tangan; tanpa artefak itu, aturan inti sudah di-embed.
+3. **Konteks module.** Bila `{project-root}/_bmad/psm/memory/projects/<module>.md` ada, baca **Konvensi module**, **Keputusan**, dan ekor **Jurnal** sebelum memvonis — itu lapis yang tak bisa diturunkan dari pindai. Bila belum ada, lanjut; **psm-module-context** yang membuatnya.
+4. **Augment aturan (opsional).** Aturan pindai di luar `assets/ps-rules.json` dan tag di luar `psm_flashlight_tag_map` hanya masuk lewat artefak eksplisit: `--extra-rules <file.json>` (Lapis 1) dan `--extra-tag-map <versi=tag>` (Lapis 2/4) — lihat `--help` untuk semantik menambah vs mengganti. Jangan terjemahkan prosa jadi aturan dengan tangan; tanpa artefak itu, aturan inti sudah di-embed.
 
 ## Validate
 
@@ -43,6 +45,8 @@ Empat lapis bukti disatukan jadi vonis; lapis murah & deterministik dulu supaya 
 Ini langkah penutup **Fase 2 (gerbang rilis)**. Serahkan penggabungan ke skrip. Jalankan `uv run scripts/ps-aggregate.py` dengan file lapis **kanonik** dari konvensi di atas — sertakan tiap lapis yang **punya file**, termasuk yang plan tandai `reuse`; lewati hanya lapis tanpa file (lihat `--help`) — dan `-o <psm_reports_dir>/<module>-<timestamp>.json`. `ready` hanya lahir dari agregasi kanonik lintas-versi ini; fase konvergensi per-versi TAK pernah menghasilkannya. Exit 2 dari skrip manapun = error input (skema file adversarial/aturan tambahan, path salah, versi target tak dipindai Lapis 1, lapis `--require` tak dikenal) — baca stderr, perbaiki inputnya lalu ulangi; jangan tafsirkan sebagai vonis.
 
 Untuk `{user_name}` (kosong → "operator"), ringkas dalam percakapan (bahasa: `{communication_language}`) dari JSON itu: per versi lolos/gagal, error yang memblok beserta fix-nya, dan warning. Aturan jujur, sekali untuk semua lapis — sebut eksplisit yang tak konklusif (`flashlight_conclusive`/`e2e_conclusive` false, `inconclusive_note`; `advisory_note` dilaporkan tapi tak menggerbang), lapis yang tak jalan (`layers_run`), cakupan versi/browser yang dipersempit (`e2e_browsers`), spec E2E authored yang dilewati (`e2e_scenario_notes`), dan E2E yang cuma smoke (`e2e_smoke_only`: shop terbukti tak rusak, perilaku module belum teruji — ini **menjatuhkan `ready`**). Untuk dua yang terakhir tawarkan perbaikannya: perbaiki/tulis skenario di `<module>/tests/e2e/` (format + pola BO lintas-versi: `references/e2e-quickstart.md`); rilis tanpa uji perilaku harus disadari: sempitkan gerbang lewat `--require`, jangan abaikan `ready`. Sebutkan juga folder screenshot (`e2e_screenshot_dir`) bila ada. Bila vonis keseluruhan gagal, tutup dengan satu tawaran langkah lanjut: serahkan error pemblokir ke psm-develop untuk diperbaiki, atau validasi ulang setelah dipatch.
+
+Catat satu baris ke konteks module: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py note --memory-dir {project-root}/_bmad/psm/memory --module <module> --by psm-validate --type vonis --text "<satu baris>"` (auto-init bila belum ada). Satu entri per run — ini bukan laporan.
 
 ## Mode headless
 

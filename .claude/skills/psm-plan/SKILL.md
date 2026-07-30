@@ -25,6 +25,7 @@ Bertindak sebagai pendamping perencanaan module PrestaShop: operator (Budi) memu
 4. **Augment katalog bila ada.** Bila `{project-root}/_bmad/psm/memory/ecommerce/function-catalog.md` ada, baca untuk fungsi tambahan di luar katalog inti. Bila belum, lanjut.
    **Breaking change versi target.** Bila `{project-root}/_bmad/psm/memory/tech/breaking-changes-<major>.md` ada untuk major di `psm_target_versions`, baca sebelum merancang — ia memuat batas versi **minor** (mis. Hummingbird/Bootstrap 5 di 9.1) yang tak bisa dilihat static scan, yang memetakan versi ke major key.
    **Backlog ide.** Bila `<module-path>/.psm-ideas.md` ada, baca ide berstatus `dipilih` — itu maksud yang sudah ditimbang Budi di sesi penggalian, lengkap dengan catatan dampak & titik sisipnya (`uv run <skills-dir>/psm-ideate/scripts/ps-idea-backlog.py list --module-path <module-path> --status dipilih`). Ide `ditolak` jangan ditawarkan ulang tanpa alasan baru. Backlog diproduksi **psm-ideate**; skill ini membacanya, tak menulisinya.
+5. **Konteks module.** Bila `{project-root}/_bmad/psm/memory/projects/<module>.md` ada, baca **Konvensi module**, **Keputusan**, dan ekor **Jurnal** sebelum merancang — itu lapis yang tak bisa diturunkan dari inventaris. Bila belum ada, lanjut; **psm-module-context** yang membuatnya.
 
 ## Pahami module existing
 
@@ -33,6 +34,8 @@ Petakan apa yang sudah ada sebelum merancang apa pun. Jalankan dua skrip determi
 - `uv run <skills-dir>/psm-validate/scripts/ps-static-scan.py <module-path> --versions <target>` → baseline API berisiko per versi, supaya rencana tak dibangun di atas masalah lama tanpa menyebutnya.
 
 **Gerbang target.** Bila folder module hilang atau inventaris emit `looks_like_module: false` (aturan pastinya di skrip), arahkan Budi ke **psm-scaffold** dan berhenti; jangan merancang di atas ketiadaan. Bila skrip exit non-zero, tampilkan error apa adanya dan minta klarifikasi (headless: status `gagal`).
+
+Rekonsiliasi dulu: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py reconcile --memory-dir {project-root}/_bmad/psm/memory --module <module> --inventory <inventaris.json>` (rc=1 = drift klaim vs bukti; keputusan atas drift milikmu).
 
 ## Rancang fungsi & rencana
 
@@ -53,6 +56,8 @@ Keputusan cakupan serupa: bila temuan baseline `ps-static-scan` bersinggungan de
 ## Konfirmasi & berhenti
 
 Tampilkan rencana tervalidasi ke Budi dan minta persetujuan. Bila Budi minta revisi, revisi kedua artefak dan validasi ulang sebelum menampilkan lagi. Setelah disetujui, **berhenti** — jangan menyentuh file module, jangan memanggil psm-validate, jangan commit; satu-satunya file yang skill ini tulis adalah pasangan artefak rencana (plus `<module-path>/.memlog.md` di mode headless). Tutup dengan menyarankan **psm-develop** sebagai langkah lanjutan untuk menerapkan rencana: resume-nya membaca pasangan artefak ini apa adanya (psm-develop tetap punya gerbang persetujuannya sendiri sebelum menyentuh file).
+
+Catat satu baris ke konteks module: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py note --memory-dir {project-root}/_bmad/psm/memory --module <module> --by psm-plan --type decision --text "<satu baris>"` (auto-init bila belum ada). Satu entri per run — ini bukan laporan.
 
 ## Mode headless
 

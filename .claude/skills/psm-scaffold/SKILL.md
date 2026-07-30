@@ -28,6 +28,8 @@ Bila folder module tujuan sudah ada, skrip menolak — itu gerbang keputusan, bu
 
 Setelah dibangkitkan, ingatkan Budi menjalankan `composer dump-autoload` di folder module agar autoloader namespace aktif.
 
+Seed konteks module selagi keputusannya masih segar: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py init --memory-dir {project-root}/_bmad/psm/memory --module <nama> --source "psm-scaffold"`, lalu tulis namespace PSR-4 & prefix tabel yang baru dihitung ke seksi **Konvensi module** (prosa, disunting tangan) dan `claim --kind file --key <main file> --status live --by psm-scaffold` untuk kerangkanya. Namespace/prefix bukan Fakta — tak bisa dibuktikan dari inventaris; tempatnya prosa.
+
 ## Tawarkan fungsi e-commerce
 
 Kerangka sengaja telanjang. Tawarkan fungsi e-commerce yang relevan dengan maksud module Budi (mis. untuk module promosi: banner terjadwal, segmentasi; untuk katalog: filter, badge stok) dan, bila disetujui, implementasikan dengan pola version-safe. Gunakan `<skills-dir>/psm-cross-version/references/version-safe-patterns.md` sebagai rujukan teknis lintas versi (hook, controller, template, persistence, service). Bila `{project-root}/_bmad/psm/memory/ecommerce/function-catalog.md` ada, baca untuk katalog fungsi yang lebih kaya; bila belum, andalkan pengetahuan e-commerce umum. Ini judgment — tawarkan, jangan paksakan; Budi yang memilih.
