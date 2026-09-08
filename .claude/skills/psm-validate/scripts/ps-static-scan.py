@@ -179,6 +179,83 @@ def iter_files(module_dir, glob_filters):
             yield p
 
 
+# Pasangan pembuka/penutup komentar per keluarga file. Kunci = suffix; `line` = komentar
+# sampai akhir baris, `block` = pasangan (buka, tutup).
+_COMMENT_SYNTAX = {
+    ".php":  {"line": ("//", "#"), "block": (("/*", "*/"),), "quotes": "'\""},
+    ".js":   {"line": ("//",),     "block": (("/*", "*/"),), "quotes": "'\"`"},
+    ".tpl":  {"line": (),          "block": (("{*", "*}"),), "quotes": ""},
+    ".twig": {"line": (),          "block": (("{#", "#}"),), "quotes": ""},
+    ".html": {"line": (),          "block": (("<!--", "-->"),), "quotes": ""},
+    ".yml":  {"line": ("#",),      "block": (), "quotes": "'\""},
+    ".yaml": {"line": ("#",),      "block": (), "quotes": "'\""},
+}
+
+
+def blank_comments(text, suffix):
+    """Ganti ISI KOMENTAR dengan spasi, pertahankan panjang & jumlah baris.
+
+    Kenapa ada: pattern rule mencocokkan baris MENTAH, jadi komentar migrasi seperti
+    `// legacy: Tools::jsonEncode dihapus di PS9, pakai json_encode` menghasilkan temuan
+    severity=error yang MEMBLOK — padahal ia justru jejak migrasi yang benar. Audiens skill
+    ini adalah module yang sedang dibawa lintas 1.7/8/9 (sering oleh psm-cross-version),
+    tempat komentar semacam itu dan cabang legacy ter-comment memang hidup. Temuan static
+    selalu konklusif dan SKILL.md melarang model menilai ulang vonis skrip, jadi false
+    positive di sini menjatuhkan `ready` tanpa jalan keluar.
+
+    Panjang dipertahankan (bukan baris dibuang) supaya nomor baris temuan tetap menunjuk
+    baris yang benar, dan `snippet` tetap diambil dari teks ASLI supaya operator membaca
+    kode sungguhan, bukan spasi.
+
+    ISI STRING SENGAJA TIDAK DIKOSONGKAN — hanya dilacak supaya `//` di dalam
+    `"http://x"` tak salah dibaca sebagai pembuka komentar. Aturan `kind=hook` mencocokkan
+    nama hook yang memang hidup DI DALAM string (`registerHook('actionAdmin...')`), dan
+    `smarty-hardcoded-theme` mencocokkan kutipnya sendiri; mengosongkan string akan
+    mematikan keduanya. Konsekuensi jujur: pola yang muncul di dalam literal string tetap
+    dilaporkan. Heredoc/nowdoc PHP juga tak dilacak.
+    """
+    syn = _COMMENT_SYNTAX.get(suffix)
+    if not syn:
+        return text
+    out = list(text)
+    i, n = 0, len(text)
+    quotes, quote_ch = syn["quotes"], None
+    while i < n:
+        ch = text[i]
+        if quote_ch:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote_ch:
+                quote_ch = None
+            i += 1
+            continue
+        if ch in quotes:
+            quote_ch = ch
+            i += 1
+            continue
+        hit = None
+        for op, cl in syn["block"]:
+            if text.startswith(op, i):
+                end = text.find(cl, i + len(op))
+                hit = n if end == -1 else end + len(cl)
+                break
+        if hit is None:
+            for op in syn["line"]:
+                if text.startswith(op, i):
+                    end = text.find("\n", i)
+                    hit = n if end == -1 else end
+                    break
+        if hit is None:
+            i += 1
+            continue
+        for j in range(i, hit):
+            if out[j] != "\n":
+                out[j] = " "
+        i = hit
+    return "".join(out)
+
+
 def scan_pattern_rule(rule, module_dir, main_file):
     """Rule berbasis regex -> daftar temuan {file, line, snippet}."""
     findings = []
@@ -195,12 +272,16 @@ def scan_pattern_rule(rule, module_dir, main_file):
             text = fpath.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for i, line in enumerate(text.splitlines(), 1):
+        # Dicocokkan atas teks TANPA komentar, dilaporkan dari teks ASLI: nomor baris tetap
+        # menunjuk baris yang benar (panjang dipertahankan) dan snippet tetap kode sungguhan.
+        scan_text = blank_comments(text, fpath.suffix.lower())
+        raw_lines = text.splitlines()
+        for i, line in enumerate(scan_text.splitlines(), 1):
             if pattern.search(line) and not (negate and negate.search(line)):
                 findings.append({
                     "file": str(fpath.relative_to(module_dir)),
                     "line": i,
-                    "snippet": line.strip()[:160],
+                    "snippet": (raw_lines[i - 1] if i <= len(raw_lines) else line).strip()[:160],
                 })
     return findings
 
@@ -391,11 +472,17 @@ def main():
                                           "di-merge ke ruleset; --rules MENGGANTI, ini MENAMBAH. "
                                           "Untuk aturan dari knowledge base tanpa menyalin ruleset inti.")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
+    ap.add_argument("--reports-dir", help="Folder laporan. Nama file lapis DITURUNKAN di sini "
+                                          "(<module>-static.json, atau <module>-static-<versi>.json "
+                                          "dengan --per-version) alih-alih diketik lewat -o.")
+    ap.add_argument("--per-version", action="store_true",
+                    help="Dengan --reports-dir: tulis file lapis PER-VERSI. Butuh --versions "
+                         "tepat satu versi — file per-versi bercakupan persis satu versi.")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
     bad = unresolved_path_args([("--rules", args.rules), ("--extra-rules", args.extra_rules),
-                                ("-o", args.output)])
+                                ("-o", args.output), ("--reports-dir", args.reports_dir)])
     if bad:
         for name, val in bad:
             print(f"error: token '{{project-root}}' belum diresolve di {name}: {val!r} — resolve "
@@ -445,6 +532,29 @@ def main():
         all_rules.extend(rules.get(grp, []))
 
     versions = norm_versions(args.versions.split(","))
+
+    # Nama file lapis DITURUNKAN, tak diketik. Cermin layer_file()/per_version_file() di
+    # ps-run-layer.py, yang docstring-nya menegaskan nama itu tak boleh diketik pemanggil:
+    # segmen module yang salah ketik menulis bukti ke himpunan bukti module LAIN, dan
+    # ps-aggregate mengkredit vonisnya ke sana tanpa satu gerbang pun menyadarinya.
+    if args.reports_dir:
+        if args.output:
+            print("error: --reports-dir dan -o saling eksklusif — pilih nama turunan ATAU "
+                  "path yang kamu ketik sendiri", file=sys.stderr)
+            return 2
+        if args.per_version and len(versions) != 1:
+            print(f"error: --per-version butuh TEPAT satu versi (diberi {len(versions)}): file "
+                  "per-versi bercakupan persis satu versi, dan plan menolak cakupan lebih",
+                  file=sys.stderr)
+            return 2
+        # norm_versions -> [(full_ver, keys)]; yang masuk nama file adalah versi penuhnya,
+        # sama seperti per_version_file() di ps-run-layer.py.
+        suffix = f"-{versions[0][0]}" if args.per_version else ""
+        args.output = str(Path(args.reports_dir) / f"{module_dir.name}-static{suffix}.json")
+    elif args.per_version:
+        print("error: --per-version butuh --reports-dir (nama file diturunkan dari sana)",
+              file=sys.stderr)
+        return 2
 
     # Gerbang domain di sisi TARGET — cerminan gerbang `affects` di sisi ATURAN.
     # validate_extra_rules sudah menolak rule ber-affects di luar MAJOR_KEYS dengan alasan

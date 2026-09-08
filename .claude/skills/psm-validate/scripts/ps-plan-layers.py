@@ -26,6 +26,10 @@ import sys
 from pathlib import Path
 
 LAYERS = ("static", "flashlight", "adversarial", "e2e")
+# Lapis yang PUNYA bentuk per-versi. flashlight/e2e dijalankan & disatukan ps-run-layer.py;
+# static ditulis per-versi oleh pemanggil lewat -o. `adversarial` sengaja TAK di sini: ia
+# satu review lintas-versi di Fase 2 (ps-run-layer menolaknya, agregat cuma baca kanonik).
+PER_VERSION_LAYERS = ("static", "flashlight", "e2e")
 
 # Default kanonik psm_reports_dir, bentuk TANPA token (relatif cwd project). SKILL.md
 # menjanjikan "resolver absen -> lanjut dengan default kanonik skrip", tapi --reports-dir
@@ -218,6 +222,28 @@ def plan_per_version(reports_dir, module_name, requested, src_mtime, rel, rulese
     return out
 
 
+def per_version_rollup(per_version):
+    """Roll-up gerbang Fase 2: `all_reuse` + matriks (lapis, versi) yang masih rerun.
+
+    Mode kanonik selalu punya roll-up `rerun` top-level; mode per-versi dulu tidak, jadi
+    model meng-union sampai 4 lapis x N versi boolean DENGAN TANGAN di tiap iterasi loop
+    konvergensi — hitung/banding murni dengan satu jawaban benar, dan justru gerbang yang
+    memutuskan boleh-tidaknya sweep rilis mahal dimulai.
+
+    `per_version_capable` menandai cara tiap entri diproduksi: `ps-run-layer.py` hanya
+    menjalankan/menyatukan lapis PER-VERSI (flashlight, e2e); `static` ditulis per-versi oleh
+    pemanggil lewat `-o`, sedangkan `adversarial` sama sekali tak punya bentuk per-versi —
+    ia satu review lintas-versi di Fase 2. Tanpa penanda ini, perbedaan itu cuma hidup di
+    prosa yang harus diingat model di akhir run panjang.
+    """
+    matrix = []
+    for ver, entry in per_version.items():
+        for layer in entry["rerun"]:
+            matrix.append({"layer": layer, "version": ver,
+                           "per_version_capable": layer in PER_VERSION_LAYERS})
+    return {"all_reuse": not matrix, "rerun_matrix": matrix}
+
+
 def _e2e_scenario_notes(module_dir):
     """Catatan spec authored yang DILEWATI (JSON rusak / tanpa expect_*) — milik ps-e2e-run.
 
@@ -247,6 +273,7 @@ def main():
     ap.add_argument("--reports-dir", default=DEFAULT_REPORTS_DIR,
                     help=f"Folder laporan (psm_reports_dir; default kanonik: {DEFAULT_REPORTS_DIR})")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
+    ap.add_argument("--config", help="JSON hasil resolve-psm-config.py — setelan keluarga (tag map, image DB, ps-domain, orchestrator, timeout, versi, browser) diisi dari sini untuk argumen yang tak diberikan eksplisit. Flag eksplisit selalu menang.")
     ap.add_argument("--rules", default=str(ss.DEFAULT_RULES),
                     help="Path ps-rules.json yang akan dipakai Lapis 1 (default: assets/ps-rules.json)")
     ap.add_argument("--extra-rules", help="Path aturan TAMBAHAN yang akan dipakai Lapis 1 — "
@@ -264,6 +291,8 @@ def main():
                          "version-first: patch demi satu versi tak menyeret versi lain ke rerun.")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     args = ap.parse_args()
+    if args.config:
+        fl.apply_config_file(args, ap, args.config)
 
     # customization-3: token {project-root} yang tak terekspansi sampai titik pakai = folder
     # harfiah -> "file lapis belum ada" percaya diri -> rerun semua lapis mahal. Gerbang di
@@ -298,10 +327,11 @@ def main():
     # memanggilnya sama persis, jadi vonis reuse keduanya tak bisa mendrift.
     tag_map = fl.parse_tag_map(args.tag_map, args.extra_tag_map)
     if args.per_version:
+        pv = plan_per_version(args.reports_dir, module_dir.name, requested,
+                              src_mtime, rel, ruleset, tag_map)
         result = {"module": module_dir.name, "versions": requested,
-                  "newest_source": rel, "mode": "per-version",
-                  "per_version": plan_per_version(args.reports_dir, module_dir.name, requested,
-                                                  src_mtime, rel, ruleset, tag_map)}
+                  "newest_source": rel, "mode": "per-version", "per_version": pv,
+                  **per_version_rollup(pv)}
     else:
         plans = {}
         for layer in LAYERS:

@@ -20,6 +20,7 @@ Pembagian kerja: skrip menghitung/menggabung/membandingkan (satu jawaban benar);
 model tinggal menghasilkan temuan adversarial (Lapis 3) & prosa untuk manusia.
 """
 import argparse
+import datetime
 import importlib.util
 import json
 import sys
@@ -668,7 +669,13 @@ def merge_version(full_ver, static, flash, adversarial, e2e):
 def main():
     ap = argparse.ArgumentParser(description="Satukan empat lapis validasi jadi vonis terstruktur.",
                                  epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--static", required=True, help="JSON output ps-static-scan.py")
+    ap.add_argument("--reports-dir", help="Folder laporan. Dengan --module, keempat nama file "
+                                          "lapis kanonik DITURUNKAN (<module>-<lapis>.json) dan lapis "
+                                          "yang filenya absen dilewati — path tak perlu diketik. "
+                                          "Flag lapis eksplisit tetap menang bila diberikan.")
+    ap.add_argument("--module", help="Path folder module. Wajib bersama --reports-dir; juga "
+                                     "menegakkan identitas: file lapis milik module lain ditolak.")
+    ap.add_argument("--static", help="JSON output ps-static-scan.py (wajib kecuali --reports-dir/--module)")
     ap.add_argument("--flashlight", help="JSON output ps-flashlight-run.py (opsional bila dilewati)")
     ap.add_argument("--adversarial", help="JSON temuan adversarial buatan model (opsional)")
     ap.add_argument("--e2e", help="JSON output ps-e2e-run.py (Lapis 4, opsional bila dilewati)")
@@ -682,6 +689,29 @@ def main():
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     args = ap.parse_args()
 
+    # Nama file lapis DITURUNKAN bila folder+module diberi. Mengetik empat path dengan tangan
+    # di akhir run panjang adalah kerja deterministik yang sudah punya satu jawaban benar
+    # (cermin layer_file() di ps-run-layer.py), dan salah ketik segmen module diam-diam
+    # mengkreditkan bukti module lain ke vonis ini.
+    if bool(args.reports_dir) != bool(args.module):
+        print("error: --reports-dir dan --module harus diberikan bersama", file=sys.stderr)
+        sys.exit(2)
+    if args.reports_dir:
+        mod_name = Path(args.module).resolve().name
+        for layer in LAYERS:
+            if getattr(args, layer, None):
+                continue  # flag eksplisit menang
+            cand = Path(args.reports_dir) / f"{mod_name}-{layer}.json"
+            if cand.exists():
+                setattr(args, layer, str(cand))
+        if not args.output:
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
+            args.output = str(Path(args.reports_dir) / f"{mod_name}-{stamp}.json")
+    if not args.static:
+        print("error: --static wajib (atau beri --reports-dir + --module agar diturunkan)",
+              file=sys.stderr)
+        sys.exit(2)
+
     static = load_json(args.static, "static-scan")
     flash = load_json(args.flashlight, "flashlight") if args.flashlight else None
     adversarial = load_json(args.adversarial, "adversarial") if args.adversarial else None
@@ -691,6 +721,19 @@ def main():
     # meledak jadi Traceback + exit 1 dan CI tak bisa membedakannya dari "module punya error
     # pemblokir". static_layer membaca f["id"]/f["severity"]/f["message"] langsung, jadi khusus
     # static kunci itu diwajibkan; lapis lain memakai .get() dan cukup dijaga bentuk containernya.
+    # Gerbang identitas module: ps-aggregate dulu membaca `module` HANYA dari payload static
+    # dan tak pernah membandingkannya dengan lapis lain, jadi satu path salah ketik di folder
+    # yang memuat beberapa module dikreditkan diam-diam ke vonis ini. Ini satu-satunya skrip
+    # yang mengemit `ready`, jadi kelas itu tak boleh punya permukaan di sini.
+    static_module = (static or {}).get("module")
+    if static_module:
+        for payload, label in ((flash, "flashlight"), (adversarial, "adversarial"), (e2e, "e2e")):
+            other = (payload or {}).get("module")
+            if other and other != static_module:
+                print(f"error: file lapis {label} milik module '{other}', bukan '{static_module}' "
+                      "— bukti module lain tak boleh masuk vonis ini", file=sys.stderr)
+                sys.exit(2)
+
     for payload, label, keys in ((static, "static-scan", ("id", "severity", "message")),
                                  (flash, "flashlight", ()), (e2e, "e2e", ())):
         if payload is None:
@@ -830,9 +873,14 @@ def main():
         result["e2e_browsers_run"] = (e2e or {}).get("browsers_available") or []
     # Folder screenshot E2E di-echo agar path artefak visual ('cek web asli') sampai ke laporan
     # gabungan — supaya render bisa ditinjau, bukan cuma diproduksi lalu terlupakan.
+    # Bentuknya DUA: run langsung ps-e2e-run.py mengemit satu string; file lapis hasil merge
+    # ps-run-layer mengemit DAFTAR (satu folder run per invokasi orkestrator — konvergensi
+    # per-versi memang menstempel ulang tiap kali). Dinormalkan ke daftar supaya peninjau
+    # visual menerima SEMUA folder, bukan yang kebetulan pertama.
     e2e_shot_dir = (e2e or {}).get("screenshot_dir")
     if e2e_shot_dir:
-        result["e2e_screenshot_dir"] = e2e_shot_dir
+        dirs = e2e_shot_dir if isinstance(e2e_shot_dir, list) else [e2e_shot_dir]
+        result["e2e_screenshot_dir"] = [d for d in dirs if d]
     out = json.dumps(result, indent=2, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(out, encoding="utf-8")

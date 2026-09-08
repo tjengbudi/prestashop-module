@@ -1023,6 +1023,7 @@ def main():
         epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module_path", help="Path folder module PrestaShop")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
+    ap.add_argument("--config", help="JSON hasil resolve-psm-config.py — setelan keluarga (tag map, image DB, ps-domain, orchestrator, timeout, versi, browser) diisi dari sini untuk argumen yang tak diberikan eksplisit. Flag eksplisit selalu menang.")
     ap.add_argument("--browsers", default=DEFAULT_BROWSERS,
                     help=f"Engine Playwright dipisah koma (default: {DEFAULT_BROWSERS}; didukung: {','.join(SUPPORTED_ENGINES)})")
     ap.add_argument("--tag-map", default="", help="Peta LENGKAP versi=tag dipisah koma (MENGGANTI default)")
@@ -1052,6 +1053,8 @@ def main():
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
+    if args.config:
+        fl.apply_config_file(args, ap, args.config)
 
     module_dir = Path(args.module_path).resolve()
     if not module_dir.is_dir():

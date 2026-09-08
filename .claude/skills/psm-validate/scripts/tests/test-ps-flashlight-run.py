@@ -10,10 +10,12 @@ di-monkeypatch. Jalankan: uv run scripts/tests/test-ps-flashlight-run.py
 """
 import ast
 import importlib.util
+import json
 import os
 import re
 import socket
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -653,6 +655,62 @@ def main():
                    != D["psm_target_versions"]]
         ok &= check(f"drift: --versions default tiap skrip == psm_target_versions ({drifted or 'selaras'})",
                     drifted == [])
+
+    # --config: terjemahan key resolved -> flag punya satu jawaban benar, dan alur per-versi
+    # memanggil skrip lapis O(lapis x versi) kali. Tiap pengulangan tangan satu kesempatan
+    # menjatuhkan --tag-map, yang membuat plan salah menilai provenance.
+    import argparse as _ap
+    with tempfile.TemporaryDirectory() as td:
+        cfgp = Path(td) / "resolved.json"
+
+        def _parser():
+            a = _ap.ArgumentParser()
+            a.add_argument("--versions", default="1.7.8,8.1,9.1")
+            a.add_argument("--tag-map", default="")
+            a.add_argument("--db-image", default=mod.DEFAULT_DB_IMAGE)
+            a.add_argument("--startup-timeout", type=int, default=mod.DEFAULT_STARTUP_TIMEOUT)
+            return a
+
+        cfgp.write_text(json.dumps({
+            "psm_target_versions": "9.1",
+            "psm_flashlight_tag_map": "9.1=9.1.4-nginx",
+            "psm_flashlight_db_image": "mariadb:11",
+            "psm_flashlight_startup_timeout": "240",
+            "psm_tak_dikenal": "diabaikan",
+        }), encoding="utf-8")
+
+        a = _parser(); args = a.parse_args([])
+        mod.apply_config_file(args, a, str(cfgp))
+        ok &= check("--config mengisi argumen yang tak diberikan eksplisit",
+                    args.versions == "9.1" and args.tag_map == "9.1=9.1.4-nginx"
+                    and args.db_image == "mariadb:11")
+        ok &= check("--config mengecor tipe int (timeout dari string config)",
+                    args.startup_timeout == 240 and isinstance(args.startup_timeout, int))
+
+        a2 = _parser(); args2 = a2.parse_args(["--versions", "8.1", "--db-image", "mysql:8"])
+        mod.apply_config_file(args2, a2, str(cfgp))
+        ok &= check("flag eksplisit MENANG atas --config (tak pernah menimpa niat pemanggil)",
+                    args2.versions == "8.1" and args2.db_image == "mysql:8")
+        ok &= check("argumen lain tetap diisi walau sebagian eksplisit",
+                    args2.tag_map == "9.1=9.1.4-nginx")
+
+        a3 = _parser(); args3 = a3.parse_args([])
+        cfgp.write_text(json.dumps({"psm_flashlight_startup_timeout": "bukan-angka"}),
+                        encoding="utf-8")
+        rc = None
+        try:
+            mod.apply_config_file(args3, a3, str(cfgp))
+        except SystemExit as e:
+            rc = e.code
+        ok &= check("nilai int tak valid -> exit 2 berpesan, bukan crash diam-diam", rc == 2)
+
+        rc = None
+        try:
+            mod.apply_config_file(_parser().parse_args([]), _parser(),
+                                  str(Path(td) / "tak-ada.json"))
+        except SystemExit as e:
+            rc = e.code
+        ok &= check("--config absen -> exit 2, bukan diam-diam pakai default", rc == 2)
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

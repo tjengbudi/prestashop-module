@@ -794,6 +794,60 @@ def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_ima
         _teardown(session)
 
 
+# Peta key config resolved -> dest argparse. Satu definisi, dipakai ketiga skrip yang
+# menerima setelan keluarga (flashlight, e2e, plan).
+CONFIG_KEY_TO_DEST = {
+    "psm_target_versions": "versions",
+    "psm_flashlight_tag_map": "tag_map",
+    "psm_flashlight_orchestrator": "orchestrator",
+    "psm_flashlight_db_image": "db_image",
+    "psm_flashlight_ps_domain": "ps_domain",
+    "psm_flashlight_startup_timeout": "startup_timeout",
+    "psm_e2e_browsers": "browsers",
+}
+
+
+def apply_config_file(args, parser, path):
+    """Isi argumen yang TAK diberikan eksplisit dari JSON resolve-psm-config.py.
+
+    Kenapa ada: langkah 1 SKILL.md sudah memuat config resolved, lalu tiap panggilan hilir
+    menyatakannya ulang dengan tangan (`--tag-map` dari psm_flashlight_tag_map, `--db-image`,
+    `--ps-domain`, `--orchestrator`, `--startup-timeout`). Menyalin key resolved ke flag adalah
+    transform dengan satu jawaban benar, dan alur per-versi memanggil skrip lapis O(lapis x
+    versi) kali — tiap pengulangan satu kesempatan menjatuhkan `--tag-map`, yang membuat plan
+    salah menilai provenance dan bukti dari image lain terbaca segar.
+
+    Flag eksplisit SELALU menang: hanya dest yang masih bernilai default parser yang diisi,
+    jadi `--config` tak pernah menimpa niat pemanggil. Key tak dikenal diabaikan diam-diam —
+    resolver boleh menambah key baru tanpa memecah skrip lama.
+    """
+    try:
+        cfg = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"error: gagal baca --config {path}: {e}", file=sys.stderr)
+        sys.exit(2)
+    if not isinstance(cfg, dict):
+        print(f"error: --config {path} bukan objek JSON", file=sys.stderr)
+        sys.exit(2)
+    for key, dest in CONFIG_KEY_TO_DEST.items():
+        if key not in cfg or not hasattr(args, dest):
+            continue
+        if getattr(args, dest) != parser.get_default(dest):
+            continue  # flag eksplisit menang
+        val = cfg[key]
+        if val is None:
+            continue
+        cur = parser.get_default(dest)
+        if isinstance(cur, int) and not isinstance(cur, bool):
+            try:
+                val = int(val)
+            except (TypeError, ValueError):
+                print(f"error: --config: {key}={cfg[key]!r} bukan bilangan", file=sys.stderr)
+                sys.exit(2)
+        setattr(args, dest, val)
+    return args
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Validasi module PrestaShop di Docker flashlight (DB-backed), per versi.",
@@ -801,6 +855,7 @@ def main():
     ap.add_argument("module_path", nargs="?", help="Path folder module PrestaShop "
                                                    f"(tak dipakai dengan {CLEANUP_FLAG})")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
+    ap.add_argument("--config", help="JSON hasil resolve-psm-config.py — setelan keluarga (tag map, image DB, ps-domain, orchestrator, timeout, versi, browser) diisi dari sini untuk argumen yang tak diberikan eksplisit. Flag eksplisit selalu menang.")
     ap.add_argument("--tag-map", default="", help="Peta LENGKAP versi=tag dipisah koma (MENGGANTI default), "
                                                   "mis. '1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx'")
     ap.add_argument("--extra-tag-map", default="", help="Tag TAMBAHAN versi=tag (MENAMBAH di atas peta), "
@@ -823,6 +878,8 @@ def main():
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
+    if args.config:
+        apply_config_file(args, ap, args.config)
 
     if args.cleanup_orphans:
         # Mode ini eksklusif. Digabung dgn module_path, validasi diam-diam TAK PERNAH jalan

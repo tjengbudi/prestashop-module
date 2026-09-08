@@ -418,10 +418,11 @@ def test_merge_rules():
     """Aturan penggabungan bukti per-versi (dulu skrip terpisah, kini milik konsumennya)."""
     ok = True
     a = {"e2e_available": True, "status": "ran", "pass": True, "browsers": ["chromium"],
-         "scenario_notes": ["a"], "screenshot_dir": None,
+         "scenario_notes": ["a"], "screenshot_dir": None, "reason": None,
          "versions": {"9.1": {"pass": True, "findings": []}}}
     b = {"e2e_available": True, "status": "ran", "pass": False, "browsers": ["firefox"],
          "scenario_notes": ["b"], "screenshot_dir": "/shots/run-x",
+         "reason": "Docker tidak tersedia",
          "versions": {"8.1": {"pass": False, "findings": []}}}
     c = {"e2e_available": False, "status": "skipped", "pass": True, "browsers": ["chromium"],
          "scenario_notes": [], "versions": {}}
@@ -438,7 +439,9 @@ def test_merge_rules():
     ok &= check("browsers di-union urut-stabil", top["browsers"] == ["chromium", "firefox"])
     ok &= check("scenario_notes di-union", top["scenario_notes"] == ["a", "b"])
     ok &= check("skalar null dilewati, nilai yang dilaporkan menang",
-                top["screenshot_dir"] == "/shots/run-x")
+                top["reason"] == "Docker tidak tersedia")
+    ok &= check("kunci union: null dilewati, hasilnya tetap daftar",
+                top.get("screenshot_dir") == ["/shots/run-x"])
 
     ok &= check("duplikat versi identik -> sah, satu entri",
                 list(mod.merge_versions_field([a, a]).keys()) == ["9.1"])
@@ -448,17 +451,46 @@ def test_merge_rules():
     return ok
 
 
+def _merged_or_none(payloads):
+    """merge_toplevel yang meledak -> None, supaya assertion bisa melaporkannya sbg FAIL.
+
+    Tanpa ini regresi di kunci union menghentikan seluruh suite dengan traceback dan
+    setiap test sesudahnya diam — kegagalan yang menyamar jadi 'cuma satu yang merah'.
+    """
+    try:
+        return mod.merge_toplevel(payloads, mod.merge_versions_field(payloads))
+    except ValueError:
+        return None
+
+
 def test_scalar_conflict():
-    """Skalar berbeda antar bukti = konflik, BUKAN 'ambil yang pertama'."""
+    """Skalar berbeda antar bukti = konflik, BUKAN 'ambil yang pertama'.
+
+    KECUALI kunci _UNION_KEYS: `screenshot_dir` distempel run-<ts> BARU tiap invokasi
+    orkestrator, dan alur terdokumentasi mengonvergensikan versi satu per satu — jadi
+    stempel berbeda adalah bukti SEHAT dari dua invokasi, bukan dua klaim bertentangan.
+    Dulu ia raise di sini dan menjatuhkan gerbang rilis tanpa input yang bisa diperbaiki.
+    """
     ok = True
     s1 = {"screenshot_dir": "/shots/run-A", "versions": {"9.1": {"pass": True}}}
     s2 = {"screenshot_dir": "/shots/run-B", "versions": {"8.1": {"pass": True}}}
-    ok &= check("dua screenshot_dir BERBEDA -> raise (bukan diam-diam pilih satu)",
-                _raises(mod.merge_toplevel, [s1, s2], mod.merge_versions_field([s1, s2])))
+    merged = _merged_or_none([s1, s2])
+    ok &= check("dua screenshot_dir BERBEDA -> dikumpulkan, nol folder dibuang",
+                merged is not None
+                and merged["screenshot_dir"] == ["/shots/run-A", "/shots/run-B"])
     same = {"screenshot_dir": "/shots/run-A", "versions": {"8.1": {"pass": True}}}
-    ok &= check("screenshot_dir sama -> lolos (kontrol positif)",
+    ok &= check("screenshot_dir sama -> satu entri, tak diduplikasi",
                 mod.merge_toplevel([s1, same], mod.merge_versions_field([s1, same]))
-                ["screenshot_dir"] == "/shots/run-A")
+                ["screenshot_dir"] == ["/shots/run-A"])
+    ok &= check("screenshot_dir null tak jadi entri hampa",
+                mod.merge_toplevel(
+                    [{"screenshot_dir": None, "versions": {"9.1": {}}},
+                     {"screenshot_dir": "/shots/run-A", "versions": {"8.1": {}}}],
+                    {})["screenshot_dir"] == ["/shots/run-A"])
+    ok &= check("kunci skalar LAIN tetap raise (union tak bocor ke semua kunci)",
+                _raises(mod.merge_toplevel,
+                        [{"ps_domain": "a:1", "versions": {"9.1": {}}},
+                         {"ps_domain": "b:2", "versions": {"8.1": {}}}], {}))
     m1 = {"module": "mymod", "versions": {"9.1": {"pass": True}}}
     m2 = {"module": "modul-lain", "versions": {"8.1": {"pass": True}}}
     ok &= check("module berbeda antar bukti -> raise",
@@ -468,6 +500,36 @@ def test_scalar_conflict():
     ok &= check("null bukan klaim tandingan",
                 mod.merge_toplevel([n1, n2], mod.merge_versions_field([n1, n2]))
                 ["reason"] == "Docker tidak tersedia")
+    return ok
+
+
+def test_shot_dirs_survive_separate_invocations():
+    """REPRODUKSI: konvergensi per-versi = N invokasi = N stempel, lalu --merge-only.
+
+    Dulu jalur ini exit 2 'bukti tak konsisten' atas bukti yang sehat, dan tak ada input
+    yang bisa diperbaiki — satu-satunya pemulihan adalah mem-boot ulang Docker+browser
+    semua versi dalam satu invokasi. Diuji lewat merge nyata, bukan fungsi murni saja.
+    """
+    ok = True
+    payloads = []
+    for ver, stamp in (("9.1", "run-20260908-100000"), ("8.1", "run-20260908-101500")):
+        payloads.append({
+            "module": "mymod", "layer": "e2e", "status": "ran", "pass": True,
+            "screenshot_dir": f"/reports/e2e-shots/{stamp}",
+            "versions": {ver: {"pass": True, "conclusive": True,
+                               "screenshot_dir": f"/reports/e2e-shots/{stamp}/{ver}"}},
+        })
+    merged = _merged_or_none(payloads)
+    ok &= check("dua invokasi terpisah -> merge TIDAK meledak",
+                merged is not None and isinstance(merged.get("screenshot_dir"), list))
+    ok &= check("kedua folder run terjangkau peninjau visual",
+                merged is not None
+                and merged["screenshot_dir"] == ["/reports/e2e-shots/run-20260908-100000",
+                                                 "/reports/e2e-shots/run-20260908-101500"])
+    ok &= check("path per-versi berstempel tetap utuh di entri versinya",
+                merged is not None
+                and merged["versions"]["9.1"]["screenshot_dir"].endswith("run-20260908-100000/9.1")
+                and merged["versions"]["8.1"]["screenshot_dir"].endswith("run-20260908-101500/8.1"))
     return ok
 
 
@@ -623,15 +685,31 @@ def test_merge_only():
                     rc == 1 and not (Path(rep) / "mymod-flashlight.json").exists())
 
     # Skalar top-level bertentangan -> bukti tak konsisten -> exit 2 (bukan pilih senyap).
+    # Dipakai ps_domain, BUKAN screenshot_dir: yang terakhir kini kunci union (stempel run
+    # berbeda antar invokasi adalah bukti sehat), jadi memakainya di sini akan menguji
+    # kebalikan dari kontrak yang berlaku.
     with tempfile.TemporaryDirectory() as tmp:
         rep, m = tmp, _mod_dir(tmp)
-        _write_pv(rep, "e2e", "8.1", 100, top={"screenshot_dir": "/a"})
-        _write_pv(rep, "e2e", "9.1", 200, top={"screenshot_dir": "/b"})
+        _write_pv(rep, "e2e", "8.1", 100, top={"ps_domain": "localhost:8000"})
+        _write_pv(rep, "e2e", "9.1", 200, top={"ps_domain": "shop.test:9000"})
         rc, err = _run_main(["--layer", "e2e", "--module", m, "--versions", "8.1,9.1",
                              "--reports-dir", rep, "--merge-only"], FakeChildren())
         ok &= check("merge-only: skalar top-level bertentangan -> exit 2",
                     rc == 2 and "berbeda antar bukti" in err
                     and not (Path(rep) / "mymod-e2e.json").exists())
+
+    # Kontrol positif untuk kelas yang baru dibuka: stempel run berbeda LOLOS dan terkumpul.
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        _write_pv(rep, "e2e", "8.1", 100, top={"screenshot_dir": "/shots/run-A"})
+        _write_pv(rep, "e2e", "9.1", 200, top={"screenshot_dir": "/shots/run-B"})
+        rc, err = _run_main(["--layer", "e2e", "--module", m, "--versions", "8.1,9.1",
+                             "--reports-dir", rep, "--merge-only"], FakeChildren())
+        canon = Path(rep) / "mymod-e2e.json"
+        ok &= check("merge-only: stempel run berbeda -> exit 0 & kedua folder terkumpul",
+                    rc == 0 and canon.exists()
+                    and json.loads(canon.read_text())["screenshot_dir"]
+                        == ["/shots/run-A", "/shots/run-B"])
 
     # File per-versi terpotong (versions bukan object) -> gerbang bentuk -> exit 2 (tak menyelinap).
     with tempfile.TemporaryDirectory() as tmp:
@@ -738,6 +816,8 @@ def main():
                      ("test_freshness_stamp", test_freshness_stamp),
                      ("test_merge_rules", test_merge_rules),
                      ("test_scalar_conflict", test_scalar_conflict),
+                     ("test_shot_dirs_survive_separate_invocations",
+                      test_shot_dirs_survive_separate_invocations),
                      ("test_per_version_persist", test_per_version_persist),
                      ("test_merge_only", test_merge_only),
                      ("test_modes_exclusive_and_passthrough", test_modes_exclusive_and_passthrough),
