@@ -1,0 +1,430 @@
+{
+  "schema_version": 2,
+  "subject": "/home/budi/dev/prestashop-module/.claude/skills/psm-validate",
+  "generated": "2026-09-08",
+  "verdict": "Dua critical yang keduanya PRA-ADA tapi kini duduk di jalur default, dan satu tema yang mendominasi sisanya: konkurensi punya dua pemilik, dan pemilik yang benar (ps-run-layer.py --jobs) justru yang tak terjangkau prosa.",
+  "grade": "poor",
+  "summary": "psm-validate punya tulang punggung yang kuat — vonis sepenuhnya milik skrip, degradasi jujur bertahan di seam yang cacat sekalipun, dan lima lensa independen menemukan NOL intent_gap pada arsitekturnya. Peluang terbesarnya adalah menghapus, bukan menambah: skrip orkestrator sudah memiliki paralelisme multi-versi lengkap dengan jaminan freshness/identity/completeness/isolation, tapi SKILL.md tak pernah menyebut --jobs dan malah menawarkan fan-out subagent ketikan-model sebagai gantinya. Meruntuhkan pilihan mode jadi satu angka --jobs menutup satu critical, tiga high, dan enam medium sekaligus.",
+  "standards": {
+    "canon": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/prompt-quality-canon.md",
+    "principles": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/skill-quality-principles.md",
+    "scripts": "/home/budi/dev/prestashop-module/.claude/skills/bmad-workflow-builder/references/script-standards.md"
+  },
+  "themes": [
+    {
+      "title": "Konkurensi punya dua pemilik, dan yang benar tak terjangkau",
+      "root_cause": "ps-run-layer.py dibangun khusus untuk memiliki eksekusi multi-versi — docstring-nya berjudul 'Kenapa skrip, bukan fan-out subagent' dan mendaftar empat jaminan yang dilepas fan-out ketikan-model. Tapi SKILL.md tak pernah menyebut --jobs sama sekali, dan setiap panggilan terdokumentasi memberinya satu versi, sehingga cabang ThreadPoolExecutor-nya mati di luar test. Pilihan mode subagent lalu mengembalikan kerja itu ke ruang model, membawa serta state tanpa pembawa, afordansi headless palsu, dan paragraf yang membela dirinya sendiri.",
+      "finding_ids": [
+        "enhancement-1",
+        "enhancement-2",
+        "determinism-2",
+        "architecture-3",
+        "determinism-6",
+        "customization-1",
+        "customization-2",
+        "enhancement-5",
+        "enhancement-6",
+        "architecture-4",
+        "enhancement-4",
+        "leanness-4",
+        "customization-3"
+      ],
+      "action": "Runtuhkan pilihan mode jadi satu angka pada satu panggilan: ps-run-layer.py --layer <l> --module M --versions <semua-basi> --per-version --jobs <1|N>. Sekuensial = --jobs 1, fan-out = --jobs N. Lalu buang paragraf Mode eksekusi, buang mode dari tawaran aktivasi dan dari daftar input headless, dan sebut --jobs di langkah refresh Fase 2."
+    },
+    {
+      "title": "Lapis judgment kehilangan ruang bersihnya, dan kanalnya ke vonis bocor",
+      "root_cause": "Nilai delegasi reviewer Lapis 3 selalu KONTEKS BERSIH, bukan kecepatan — tapi ia digerbangkan pada mode fan-out, jadi membalik default eksekusi ikut membalik lapis judgment jadi self-review yang ter-anchor pada output pindai. Di saat yang sama kanal satu-satunya dari judgment model ke vonis (file lapis adversarial) punya dua pembacaan yang keduanya kehilangan temuan: tulis kanonik lalu ditimpa Lapis 3 Fase 2, atau tulis per-versi lalu tak pernah dibaca ps-aggregate.",
+      "finding_ids": [
+        "enhancement-3",
+        "architecture-1",
+        "architecture-2"
+      ],
+      "action": "Lepaskan delegasi reviewer dari mode apa pun — konteks bersih jadi default tanpa syarat, self-review jadi fallback jujur yang disebut di ringkasan. Lalu tetapkan satu file adversarial per fase dan wajibkan read-merge, dan buang adversarial dari konvensi per-versi karena ps-run-layer menolaknya dan ps-aggregate tak membacanya."
+    },
+    {
+      "title": "Identitas bukti diketik, bukan diturunkan",
+      "root_cause": "Dua fungsi Python sudah menurunkan nama file lapis dengan docstring yang menegaskan nama itu 'tak bisa diketik pemanggil' supaya bukti tak mendarat di file module lain — tapi untuk separuh lapis, plus seluruh pemanggilan ps-aggregate, prompt-nya mengetik path dengan tangan dan tak ada gerbang identitas module yang memeriksanya. Mode sekuensial memperburuk kelasnya karena jumlah panggilan tangan naik jadi O(lapis x versi).",
+      "finding_ids": [
+        "determinism-3",
+        "determinism-7",
+        "determinism-8",
+        "determinism-5"
+      ],
+      "action": "Beri ps-aggregate --reports-dir + --module dan turunkan keempat nama kanonik plus nama output di dalam skrip, dengan gerbang identitas (payload yang module-nya beda dari static = exit 2). Tambah --per-version ke ps-static-scan, --config ke tiga skrip lapis, dan all_reuse + rerun_matrix ke output plan per-versi."
+    },
+    {
+      "title": "Entry file membayar mekanika yang sudah hidup di --help dan di cabang yang tak menyala",
+      "root_cause": "SKILL.md 3889 token melawan budget keras 3000 (tier scanner 2500). Bebannya bukan prosa gemuk melainkan penempatan: mekanika dua-fase yang diulang verbatim dari --help skripnya, seluruh bagian headless yang ditagih tiap run interaktif, dan enumerasi field yang menyatakan ulang JSON yang sedang diringkas model.",
+      "finding_ids": [
+        "leanness-1",
+        "leanness-2",
+        "leanness-3",
+        "leanness-5",
+        "leanness-6",
+        "architecture-5"
+      ],
+      "action": "Karve berdasar relevansi: pindahkan Mode headless ke references/headless.md dengan router satu baris yang MEMPERTAHANKAN aturan no-pull, angkat mekanika dua-fase ke reference atau ke --help, dan ganti enumerasi field dengan dua interpretasi non-inferable saja. Hati-hati di :37 — gerbang prosa di test-ps-flashlight-run.py mewajibkan CLEANUP_FLAG, LABEL_OWNER_PID, dan `psm-fl` tetap ada."
+    },
+    {
+      "title": "Pindai statis mengklasifikasi makna dengan regex per-baris",
+      "root_cause": "25 pattern mencocokkan baris mentah tanpa kesadaran komentar atau string, sebagian besar ber-severity error, pada audiens yang justru penuh komentar migrasi dan cabang legacy ter-comment. Temuan static selalu konklusif, dan SKILL.md melarang model menilai ulang vonis skrip — jadi false positive menjatuhkan ready tanpa jalan keluar.",
+      "finding_ids": [
+        "determinism-4"
+      ],
+      "action": "Tambah pra-pass deterministik yang mengosongkan komentar dan isi string sebelum mencocokkan, atau tandai hit dengan context:'comment' dan biarkan ps-aggregate menurunkannya jadi warning."
+    }
+  ],
+  "strengths": [
+    "Vonis sepenuhnya milik skrip di kedua mode — ps-aggregate adalah satu-satunya sumber ready, dan tak ada lensa yang menemukan jalan bagi model untuk memalsukannya.",
+    "Degradasi jujur bertahan bahkan di seam yang cacat: runner tanpa Docker/browser menghasilkan ready:false tanpa mengarang kegagalan module, dan konklusivitas per-lapis dilaporkan terpisah dari pass.",
+    "Gerbang prosa berbasis test (cleanup arch-9) benar-benar menegakkan — ia mengunci SKILL.md ke konstanta skrip sehingga rename tak bisa membuat operator meng-grep nama yang tak ada.",
+    "Kontrak Lapis 3 di adversarial-lens.md sudah siap-degrade: ia mengikat sikap dan bentuk kembalian ke KEDUA jalur peninjau, jadi hanya penggerbangan di SKILL.md yang perlu diperbaiki, bukan kontraknya.",
+    "Nol intent_gap dan nol bad_spec dari lima lensa independen — semua temuan menyerang predikat daun, bukan arsitekturnya."
+  ],
+  "recommendations": [
+    {
+      "rank": 1,
+      "action": "Runtuhkan mode eksekusi jadi --jobs N pada satu panggilan ps-run-layer.py, dan sebut flag itu di langkah refresh Fase 2. Ini menghapus state tanpa pembawa, afordansi headless palsu, paragraf pembela-diri, DAN memberi Lapis 4 satu stempel screenshot per run validasi — yang menutup determinism-1.",
+      "resolves": [
+        "determinism-1",
+        "enhancement-1",
+        "enhancement-2",
+        "determinism-2",
+        "architecture-3",
+        "determinism-6",
+        "customization-1",
+        "customization-2",
+        "enhancement-5",
+        "enhancement-6",
+        "architecture-4",
+        "enhancement-4",
+        "leanness-4",
+        "customization-3"
+      ]
+    },
+    {
+      "rank": 2,
+      "action": "Lepaskan delegasi reviewer Lapis 3 dari mode eksekusi: konteks bersih jadi default tanpa syarat, self-review jadi fallback jujur. BUTUH KEPUTUSAN USER — ini menghidupkan kembali satu subagent yang permintaan aslinya menyuruh dimatikan, dengan alasan mutu yang berbeda dari alasan kecepatan.",
+      "resolves": [
+        "enhancement-3"
+      ]
+    },
+    {
+      "rank": 3,
+      "action": "Tetapkan satu file adversarial per fase dengan read-merge wajib, dan buang adversarial dari konvensi per-versi. Ini menutup satu-satunya jalan bagi temuan severity:error yang sudah dikonfirmasi untuk lenyap diam-diam sebelum vonis.",
+      "resolves": [
+        "architecture-1",
+        "architecture-2"
+      ]
+    },
+    {
+      "rank": 4,
+      "action": "Turunkan identitas bukti di dalam skrip alih-alih mengetiknya di prompt: --reports-dir/--module pada ps-aggregate dengan gerbang identitas, --per-version pada ps-static-scan, --config pada tiga skrip lapis.",
+      "resolves": [
+        "determinism-3",
+        "determinism-7",
+        "determinism-8",
+        "determinism-5"
+      ]
+    },
+    {
+      "rank": 5,
+      "action": "Karve SKILL.md kembali ke bawah budget: Mode headless ke reference, mekanika dua-fase ke --help, enumerasi field jadi dua interpretasi non-inferable. Pertahankan token yang dikunci gerbang prosa.",
+      "resolves": [
+        "leanness-1",
+        "leanness-2",
+        "leanness-3",
+        "leanness-5",
+        "leanness-6",
+        "architecture-5"
+      ]
+    },
+    {
+      "rank": 6,
+      "action": "Beri ps-static-scan pra-pass yang mengosongkan komentar dan string sebelum mencocokkan pattern.",
+      "resolves": [
+        "determinism-4"
+      ]
+    }
+  ],
+  "experience": {
+    "journeys": [
+      {
+        "name": "Operator interaktif memvalidasi satu module lintas 3 versi",
+        "steps": "Muat config → tawarkan cakupan (versi, browser, kini juga mode) → Fase 1 konvergensi per versi → Fase 2 gerbang rilis → agregasi → ringkas. Gesekan terbesar: mode ditanya sebelum lapis mana pun jalan padahal hanya berlaku di Fase 2, dan refresh Fase 2 tak menyebut perintah sehingga pembacaan alaminya satu versi sekali."
+      },
+      {
+        "name": "Sibling skill memanggil psm-validate sebagai gerbang mutu",
+        "steps": "psm-develop/cross-version/optimize/scaffold memanggilnya di fase verifikasi dan membaca ready apa adanya. Gesekan: keempatnya tak meneruskan mode eksekusi, sementara Mode headless menyatakan mengambilnya 'dari argumen/konteks' — parameter tanpa produsen."
+      }
+    ],
+    "headless": "Kontraknya kuat (status/blocked/reason, ready, konklusivitas per-lapis) tapi kini memuat satu parameter menggantung — mode eksekusi — yang tak punya nama flag, tak punya key config, dan tak punya pemanggil yang mengirimnya."
+  },
+  "findings": [
+    {
+      "id": "architecture-1",
+      "lens": "architecture",
+      "severity": "critical",
+      "title": "Kanal cacat visual menulis ke file yang ditimpa gerbang rilis",
+      "location": "references/e2e-quickstart.md:154-165 + SKILL.md:41 vs SKILL.md:31",
+      "evidence": "SKILL.md:41 menyebut file lapis adversarial 'satu-satunya kanal judgment model ke vonis' tapi menamainya hanya lewat konvensi. Reference-nya meng-hardcode nama KANONIK `<psm_reports_dir>/<module>-adversarial.json` dan memperingatkan 'Tambahkan ke findings yang sudah ada — jangan timpa'. Ikuti harfiah, lalu Fase 2 (SKILL.md:31: 'Lapis 1 & Lapis 3 dijalankan sekali lintas-versi langsung ke file kanonik') menjalankan ulang Lapis 3 dan menimpa file itu. Baca sebaliknya — tulis ke file per-versi — dan ia tak pernah sampai ke vonis: ps-aggregate.py menerima SATU --adversarial kanonik (diverifikasi: baris 673, tanpa nargs), dan ps-run-layer.py:59-63 menolak me-merge adversarial (SERIAL_LAYERS, exit 2). Kedua pembacaan diam-diam membuang temuan severity:error, jadi `ready` bisa true di atas cacat visual yang sudah dikonfirmasi peninjau.",
+      "recommendation": "Sebut file target yang tepat per fase di SKILL.md (satu file, satu fase) dan tutup penimpaannya: entah jadikan penulisan Lapis 3 lintas-versi Fase 2 sebagai titik di mana temuan visual dinyatakan ulang, atau wajibkan ia read-merge array findings yang ada. Ganti `<module>-adversarial.json` yang di-hardcode di e2e-quickstart.md dengan pointer ke konvensi SKILL.md supaya keduanya tak bisa drift lagi."
+    },
+    {
+      "id": "determinism-1",
+      "lens": "determinism",
+      "severity": "critical",
+      "title": "Mode sekuensial menghasilkan bukti e2e yang ditolak merge gerbang rilis (konflik screenshot_dir)",
+      "location": "SKILL.md (Fase 1 + Lapis 4) vs scripts/ps-e2e-run.py:428 run_shot_dir + scripts/ps-run-layer.py:143 merge_toplevel",
+      "evidence": "SKILL.md menyuruh model menjalankan Lapis 4 per versi dan, interaktif, meneruskan `--screenshot-dir <psm_reports_dir>/e2e-shots`. `run_shot_dir()` menstempel `run-<YYYYMMDD-HHMMSS>` baru pada SETIAP invokasi orkestrator (idempoten hanya untuk base yang sudah berstempel), jadi tiap panggilan per-versi menulis file per-versi dengan skalar top-level `screenshot_dir` BERBEDA. `--merge-only` Fase 2 lalu kena aturan konflik skalar merge_toplevel. DIREPRODUKSI dengan dua file e2e per-versi sintetis: `error: kunci top-level 'screenshot_dir' berbeda antar bukti versi: [...run-20260908-100000, ...run-20260908-101500] — bukti tak konsisten`, exit 2. Menurut SKILL.md exit 2 = 'error input, perbaiki inputnya' — padahal tak ada input yang bisa diperbaiki; satu-satunya pemulihan adalah menjalankan ulang boot Docker+browser semua versi dalam satu invokasi. Ini menyala di mode fan-out juga, jadi menjadikan sekuensial sebagai default menaruh bahaya pra-ada ini di jalur default tanpa batas subagent yang membuatnya terlihat.",
+      "recommendation": "Beri stempel run satu pemilik: buat `ps-plan-layers.py --per-version` mengemit `run_shot_dir` (distempel sekali per run validasi) di JSON-nya, dan SKILL.md meneruskan nilai berstempel itu ke tiap panggilan Lapis 4 per-versi — `run_shot_dir()` sudah idempoten atas base berstempel jadi anak mempertahankannya. Alternatif lebih lemah tanpa perubahan prompt: pindahkan `screenshot_dir` dari cabang skalar merge_toplevel ke key union-list. Apa pun pilihannya, tambah test yang me-merge dua payload e2e per-versi hasil dua invokasi orkestrator terpisah."
+    },
+    {
+      "id": "enhancement-1",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Buang mode fan-out subagent per-versi seluruhnya — skripnya sudah memiliki paralelisme itu",
+      "location": "SKILL.md:21,33,39,53",
+      "evidence": "Pola over-applied: fan-out subagent dipertahankan sebagai mode pilihan operator untuk kerja yang SUDAH paralel di skrip. scripts/ps-run-layer.py menjalankan dua lapis mahal untuk banyak versi serentak (`--jobs`, default 3, ThreadPoolExecutor baris 312), dan docstring modulnya dibuka dengan bagian berjudul 'Kenapa skrip, bukan fan-out subagent' yang mendaftar empat jaminan yang dilepas fan-out ketikan-model: KESEGARAN, IDENTITAS, KELENGKAPAN, ISOLASI. File yang sama mendeklarasikan static & adversarial sebagai SERIAL_LAYERS karena 'memaralelkan keduanya bukan optimasi'. Jadi mode yang dipertahankan memaralelkan persis dua lapis yang sudah diparalelkan skrip teruji dengan lebih baik. SKILL.md:33 sendiri mengakui mode itu 'tak pernah mengubah vonis' — ia tak membeli apa pun selain wall-clock, yang dibeli --jobs secara deterministik. Biaya mempertahankan: satu pertanyaan aktivasi, satu paragraf, klausa kondisional di Lapis 3, parameter headless tanpa nama (~230 token di empat situs, di SKILL.md yang sudah 889 lewat budget), plus topologi eksekusi kedua yang tiap suntingan mendatang harus tetap benar di bawahnya.",
+      "recommendation": "Hapus opsi fan-out: buang 'dan mode eksekusi (satu per satu, atau fan-out subagent per versi)' dan 'dan **satu per satu**' dari langkah 2, hapus paragraf '**Mode eksekusi.**' di baris 33, buang 'Dalam mode fan-out, ...' dari Lapis 3 (lihat enhancement-3 untuk penggantinya), dan buang 'mode eksekusi' dari baris 53. Yang hilang: tak ada bagi integritas vonis (skill-nya sendiri berkata begitu) dan tak ada bagi kecepatan begitu enhancement-2 mendarat."
+    },
+    {
+      "id": "enhancement-2",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Tambahkan --jobs ke langkah refresh Fase 2 — knob kecepatan deterministik tak terjangkau dari alur terdokumentasi",
+      "location": "SKILL.md:31 (Fase 2), scripts/ps-run-layer.py",
+      "evidence": "`--jobs` tak muncul di SKILL.md maupun references/ mana pun. Lebih buruk, alur terdokumentasi tak pernah mencapai kapabilitas utama ps-run-layer.py: Fase 1 memanggilnya dengan `--versions V` (satu versi), Fase 2 hanya dengan `--merge-only` (tak menjalankan apa pun). Instruksi refresh Fase 2 — 'segarkan tiap (lapis, versi) yang masih rerun' — tak menyebut perintah, jadi pembacaan alaminya satu versi sekali. Ringkasan skripnya sendiri 'Jalankan SATU lapis mahal untuk BANYAK versi serentak', dan `--per-version` + `--versions` multi + `--jobs N` adalah bentuk yang didukung dan ter-unit-test persis untuk refresh Fase 2. Skill ini membangun dan menguji eksekusi multi-versi konkuren, lalu mendokumentasikan alur yang tak bisa memakainya, lalu menawarkan fan-out subagent untuk memulihkan kecepatan yang ditinggalkannya.",
+      "recommendation": "Di kalimat refresh Fase 2, sebut perintahnya: `uv run scripts/ps-run-layer.py --layer <flashlight|e2e> --module <module-path> --versions <versi yang masih rerun> --reports-dir <psm_reports_dir> --per-version --jobs <N>` — satu panggilan mem-boot versi basi secara serentak dan mempersistensi bukti per-versi, lalu panggilan `--merge-only` yang sudah ada tak berubah."
+    },
+    {
+      "id": "enhancement-3",
+      "lens": "enhancement",
+      "severity": "high",
+      "title": "Lepaskan reviewer Lapis 3 dari toggle mode — default sekuensial diam-diam mengubah review adversarial jadi self-review yang ter-anchor",
+      "location": "SKILL.md:39, references/adversarial-lens.md:3-12",
+      "evidence": "Hasil yang tak diminta siapa pun. Baris 39 menggerbangkan reviewer subagent pada fan-out ('Dalam mode fan-out, delegasikan ke satu subagent reviewer'), jadi membalik default ke sekuensial IKUT membalik Lapis 3 jadi selalu-self-review — perubahan pada lapis judgment, bukan sekadar topologi eksekusi. Kontrak Lapis 3 menyatakan tugasnya menemukan 'cacat yang LOLOS pindai statis dan LOLOS install di core asli ... hanya kelihatan lewat penalaran atas alur bisnis'. Di bawah default baru, review itu terjadi di konteks yang SUDAH jenuh oleh output Lapis 1/2/4 untuk tiap versi — konteks terburuk bagi lensa buta: model ter-anchor pada apa yang sudah dilaporkan pindai dan membaca pindai bersih sebagai bukti sehat. Delegasi reviewer TAK PERNAH per-versi dan TAK PERNAH permainan kecepatan — ia delegasi one-shot yang nilainya adalah konteks bersih, jadi ia selamat dari enhancement-1 dengan bersih dan tak bergantung pada fan-out sama sekali. adversarial-lens.md:4 sudah mengikat kontrak ke kedua jalur, jadi file reference sudah siap-degrade; hanya penggerbangan di SKILL.md yang salah.",
+      "recommendation": "Jadikan review konteks-bersih sebagai default tanpa syarat dan self-review sebagai fallback jujur, lepas dari mode eksekusi apa pun: 'Delegasikan ke satu subagent reviewer di bawah kontrak references/adversarial-lens.md — beri path module, versi target, dan selalu file lensa itu; konteks bersih adalah inti lapis ini. Subagent tak tersedia (harness menolak, atau skill ini sendiri sudah berjalan sebagai subagent) → tinjau sendiri di bawah kontrak yang sama dan sebut itu di ringkasan.'"
+    },
+    {
+      "id": "determinism-2",
+      "lens": "determinism",
+      "severity": "high",
+      "title": "Konkurensi milik ps-run-layer tak terjangkau dari kedua mode; fan-out mengimplementasi ulang di ruang model",
+      "location": "scripts/ps-run-layer.py:71 (DEFAULT_JOBS=3), :303 execute/ThreadPoolExecutor vs SKILL.md 'Mode eksekusi'",
+      "evidence": "Setiap invokasi mode-jalan terdokumentasi meneruskan tepat satu versi: Fase 1 `--versions V --per-version`, panggilan lintas-versi Fase 2 adalah `--merge-only` (tak men-spawn), dan Lapis 1/3 ada di SERIAL_LAYERS. Dengan satu versi, `width = max(1, min(jobs, len(plan))) = 1`, jadi `--jobs` inert di tiap panggilan terdokumentasi dan cabang ThreadPoolExecutor mati di luar suite test. `grep -n jobs SKILL.md` tak mengembalikan apa pun. Sementara itu docstring modul skripnya berjudul 'Kenapa skrip, bukan fan-out subagent' dan berargumen bahwa orkestrator HARUS memiliki eksekusi multi-versi supaya memegang freshness/identity/completeness/isolation by construction; opsi pilihan-operator yang baru menyerahkan fan-out yang sama itu kembali ke model.",
+      "recommendation": "Runtuhkan pertanyaan mode jadi angka `--jobs` pada SATU panggilan: `ps-run-layer.py --layer <l> --module M --versions <all-stale> --per-version --jobs <1|N>`. Sekuensial = `--jobs 1`; 'fan-out' = `--jobs N` — nama file per-versi turunan yang sama, stempel screenshot tunggal yang sama (yang sekaligus menutup determinism-1), satu exit code, tak ada kontrak subagent untuk dinyatakan ulang. Paragraf 'Mode eksekusi' lalu menyusut jadi satu kalimat yang menyebut flag itu, dan instruksi subagent-reviewer bertahan hanya untuk Lapis 3."
+    },
+    {
+      "id": "determinism-3",
+      "lens": "determinism",
+      "severity": "high",
+      "title": "Skrip vonis diberi empat path ketikan model plus timestamp karangan, tanpa gerbang identitas module",
+      "location": "scripts/ps-aggregate.py:671-682 + :795 vs SKILL.md 'Vonis dan output'",
+      "evidence": "SKILL.md menyuruh model melakukan tiga kerja deterministik dengan tangan di akhir run panjang: stat empat file untuk memutuskan flag mana disertakan, mengetik ulang empat path `<module>-<lapis>.json`, dan mengarang timestamp (format tak dinyatakan; model tak punya jam). ps-aggregate.py membaca `module` HANYA dari payload static (baris 795) dan tak pernah cross-check field `module` payload flashlight/adversarial/e2e, jadi path salah ketik di reports dir yang memuat file beberapa module diam-diam dikreditkan ke vonis ini. Ini persis kelas yang docstring ps-run-layer.py sebut diciptakan daftar path ketikan, duduk di satu-satunya skrip yang mengemit `ready`.",
+      "recommendation": "Beri ps-aggregate `--reports-dir` + `--module` dan turunkan empat nama kanonik dengan aturan `layer_file()` yang sama seperti ps-run-layer, otomatis melewati lapis yang filenya absen (dicatat di `layers_run`), dan turunkan nama output di dalam skrip. Pertahankan flag eksplisit sebagai override, dan tambah gerbang identitas: payload lapis mana pun yang `module`-nya beda dari static = exit 2, bukan vonis."
+    },
+    {
+      "id": "determinism-4",
+      "lens": "determinism",
+      "severity": "high",
+      "title": "Regex per-baris mengklasifikasi makna PHP/TPL tanpa sadar komentar atau string, dan prompt dilarang mengoreksinya",
+      "location": "scripts/ps-static-scan.py:182-206 scan_pattern_rule + assets/ps-rules.json",
+      "evidence": "`scan_pattern_rule` memecah file jadi baris dan melaporkan temuan di mana pun `pattern.search(line)` kena, hanya dengan `negate_pattern` opsional per-aturan (dipakai tepat satu aturan). Tak satu pun dari 25 pattern sadar-komentar atau sadar-string, dan sebagian besar membawa `severity: error` — mis. `mth-tools-jsonencode`, `const-smarty-dir`, `fn-eval`. Komentar migrasi seperti `// legacy: Tools::jsonEncode dihapus di PS9, pakai json_encode` menghasilkan error pemblokir. Bentuk input itu tak eksotis di sini: audiens skill ini adalah module yang sedang dibawa lintas 1.7/8/9, sering oleh sibling psm-cross-version, yang justru tempat komentar dan cabang legacy ter-comment hidup. Temuan static selalu konklusif, jadi false positive menjatuhkan `pass` dan `ready` — dan SKILL.md menutup jalan keluarnya: 'baca apa adanya, jangan nilai ulang'.",
+      "recommendation": "Tambah pra-pass deterministik yang mengosongkan komentar PHP (`//`, `#`, `/* */`) dan isi string berkutip (dan `{* *}` untuk .tpl) sebelum mencocokkan — transform terdefinisi, bisa di-unit-test, nol judgment. Bila stripping dinilai terlalu invasif untuk sebagian aturan, pertahankan match tapi tandai (`context: \"comment\"`) dan biarkan ps-aggregate menurunkan hit konteks-komentar jadi warning."
+    },
+    {
+      "id": "leanness-1",
+      "lens": "leanness",
+      "severity": "high",
+      "title": "Mekanika dua-fase mengajarkan ulang apa yang sudah dikatakan --help skripnya sendiri",
+      "location": "SKILL.md:27,29,31 (Validate, Fase 1 / Fase 2 — 662 tok)",
+      "evidence": "Empat passage menyatakan ulang mekanika hilir yang hidup di skrip. (a) SKILL.md:27 soal dua bentuk file lapis vs `ps-run-layer.py --help` `--per-version` yang mengatakan hal sama. (b) SKILL.md:31 '(mtime kanonik = bukti tertua...)' vs help `--merge-only` yang identik. (c) SKILL.md:29 '(teruskan --tag-map/--extra-rules yang sama...)' vs `ps-plan-layers.py --help` `--tag-map`. (d) SKILL.md:29 'File per-versi versi lain tak disentuh...' menyatakan ulang payoff yang sudah disebut satu kalimat sebelumnya di :27 dan di help `--per-version`. Entry-nya sudah mendemonstrasikan pola yang benar di :41 ('Cara menulisnya, dan alat lain, ada di reference yang sama'), jadi fixnya adalah bentuk yang file ini sudah pakai.",
+      "recommendation": "Pertahankan inline hanya yang tak bisa didapat model dari `--help`: why institusional ('Karena source module TUNGGAL untuk 1.7/8/9...'), constraint Fase 2, dua nama file yang model memang ketik sendiri, dan loop plan→rerun→fix→replan sebagai satu kalimat tujuan. Buang (a)-(d) dan rutekan satu baris ke `references/run-phases.md` baru atau langsung ke `--help`. Memulihkan ~450-520 tok."
+    },
+    {
+      "id": "leanness-2",
+      "lens": "leanness",
+      "severity": "high",
+      "title": "Seluruh bagian headless dibayar tiap run interaktif untuk cabang yang tak menyala",
+      "location": "SKILL.md:51-55 (## Mode headless — 399 tok)",
+      "evidence": "Baris 51-55 seluruhnya digerbangkan satu kondisi yang dinyatakan klausa pertamanya sendiri: 'Saat dipanggil workflow lain atau dengan --headless'. Tak ada isinya yang berlaku untuk run interaktif — invokasi memlog init/append, aturan no-`--allow-image-pull`, kondisi `blocked`+`reason`, dan kontrak return JSON kecil semuanya milik jalur caller-driven; jalur interaktif punya aturan pelaporannya sendiri di :47. Itu 10% budget file entry, ditagih tiap invokasi tanpa peduli cabang, di file yang sudah ~890 tok lewat batas org.",
+      "recommendation": "Pindahkan `## Mode headless` apa adanya ke `references/headless.md` (ia sudah berdiri sendiri) dan tinggalkan router satu baris di entry, dengan aturan no-pull DIPERTAHANKAN di router — ia satu-satunya klausa yang berkonsekuensi nyata bila reference tak pernah dibuka. Memulihkan ~370 tok."
+    },
+    {
+      "id": "architecture-2",
+      "lens": "architecture",
+      "severity": "high",
+      "title": "File adversarial per-versi punya produsen dan pemeriksa kesegaran tapi tak punya konsumen bukti; lapis judgment mahal kini jalan N+1 kali",
+      "location": "SKILL.md:29,31 + scripts/ps-run-layer.py:59-63 + references/adversarial-lens.md:56-59",
+      "evidence": "Fase 1 menyuruh Lapis 3 menulis `<module>-adversarial-<versi>.json` per versi. ps-plan-layers.py merencanakan keempat LAPIS per versi, jadi ia mengonsumsi file itu untuk kesegaran saja. Tak ada yang membawanya maju: ps-run-layer.py:59-63 mendeklarasikan adversarial SERIAL dan exit 2 bila diminta me-merge-nya, dan ps-aggregate.py membaca file kanonik (diverifikasi: satu --adversarial, tanpa nargs). Fase 2 lalu menjalankan ulang Lapis 3 sekali lintas-versi. Di bawah desain lama review per-versi itu biaya subagent; dengan default sekuensial konteks orkestrator sendiri membayar satu review penuh per versi PLUS satu review lintas-versi atas satu source tree yang sama — langsung melawan prinsip pembuka Validate 'lapis murah & deterministik dulu supaya run mahal tak diulang'.",
+      "recommendation": "Buang adversarial dari konvensi per-versi: nyatakan Lapis 3 adalah satu review lintas-versi yang ditulis ke file kanonik, konsisten dengan rasional SERIAL_LAYERS ps-run-layer.py dan klausa reuse adversarial-lens.md. Bila review per-versi memang diinginkan saat konvergensi, katakan eksplisit bahwa ia draft yang dikonsolidasi Fase 2."
+    },
+    {
+      "id": "leanness-3",
+      "lens": "leanness",
+      "severity": "medium",
+      "title": "Enumerasi field pelaporan jujur menyatakan ulang JSON yang sudah dipegang model",
+      "location": "SKILL.md:47 (Vonis dan output — 322 tok, baris tunggal terbesar di file)",
+      "evidence": "Baris ini mengenumerasi tujuh field output dengan gloss dalam kurung sebagai instruksi ke model yang sedang meringkas file JSON itu juga, yang memuat field-field tersebut beserta nilainya. Uji inti canon: model yang disuruh melapor jujur dari JSON vonis membaca field konklusivitas dari artefak di depannya. Hanya dua gloss yang membawa interpretasi non-inferable — `e2e_smoke_only` menjatuhkan `ready`, dan `advisory_note` dilaporkan tapi tak menggerbang — karena keduanya tak terbaca dari nama field saja.",
+      "recommendation": "Ganti enumerasi dengan outcome plus dua interpretasi non-inferable itu, dan pertahankan dua tawaran remediasi. Potong ~150 tok. Rutekan ke variant eval sebelum di-commit.",
+      "proposed_smallest": "Untuk {user_name} (kosong → 'operator'), ringkas dari JSON itu dalam {communication_language}: per versi lolos/gagal, error pemblokir beserta fix-nya, dan warning. Aturan jujur, sekali untuk semua lapis: laporkan apa yang TIDAK terbukti — tiap field konklusivitas yang false, lapis yang tak jalan, dan cakupan versi/browser yang dipersempit. Dua hal yang tak terbaca dari nama fieldnya: advisory_note dilaporkan tapi tak menggerbang, dan e2e_smoke_only berarti shop terbukti tak rusak sementara perilaku module belum teruji — ini menjatuhkan ready.",
+      "predicted_delta": "Kemungkinan nihil. Yang dibuang adalah nama field harfiah, semuanya hadir di JSON yang sedang diringkas. Satu kehilangan yang masuk akal adalah konsistensi lintas-run pada field yang jarang terisi — ringkasan yang melewatkan e2e_screenshot_dir saat screenshot ada. Rutekan ke variant eval; bila versi terkecil menjatuhkan folder screenshot, kembalikan klausa itu saja."
+    },
+    {
+      "id": "leanness-4",
+      "lens": "leanness",
+      "severity": "medium",
+      "title": "Paragraf 'Mode eksekusi' sebagian besar menyatakan ulang Fase 1 plus membela desain ke dirinya sendiri",
+      "location": "SKILL.md:33 (— 119 tok)",
+      "evidence": "Kalimat 1 tak mengatakan apa pun yang belum dikatakan Fase 1 (:29), dan default-nya sudah ditawarkan ke operator di :21, jadi faktanya kini dinyatakan TIGA kali di file yang sama. Kalimat 3 adalah meta-explanation yang menjelaskan sistem ke dirinya sendiri — pembelaan arsitektur, bukan langkah yang model ambil — dan `ps-run-layer.py --help` sudah berargumen sama panjang lebar di 'Kenapa skrip, bukan fan-out subagent'. Hanya kalimat tengah yang menanggung beban.",
+      "recommendation": "Ganti paragraf dengan versi terkecil. Memulihkan ~65 tok. Rutekan ke variant eval sebelum commit, karena ini passage yang baru disentuh suntingan default-sekuensial.",
+      "proposed_smallest": "**Mode eksekusi.** Default: sekuensial seperti Fase 1, tanpa subagent. Bila operator memilih fan-out, beri tiap subagent SATU versi (--versions <satu>) plus konvensi file per-versi; ia menjalankan lapisnya dan tak memvonis — penggabungan & vonis selalu milik skrip di gerbang rilis.",
+      "predicted_delta": "Tak ada yang bisa saya sebut. Klausa yang dibuang adalah pernyataan ulang bagian sebelumnya dan rasional untuk constraint yang versi terkecil sudah nyatakan sebagai aturan. Yang perlu diamati di varian: apakah run fan-out tetap menolak subagent mengemit vonis."
+    },
+    {
+      "id": "leanness-5",
+      "lens": "leanness",
+      "severity": "medium",
+      "title": "Fakta dinyatakan ulang lintas bagian, termasuk satu passage terduplikasi nyaris harfiah ke reference",
+      "location": "SKILL.md:37, 45, 27 (~120 tok gabungan)",
+      "evidence": "(a) SKILL.md:37 soal cleanup orphan muncul nyaris harfiah di references/e2e-quickstart.md:175-178; label `psm.owner-pid` dan jaminan 'dilewati, bukan dibunuh' adalah internal skrip yang tak mengubah langkah model. (b) SKILL.md:45 '`ready` hanya lahir dari agregasi kanonik...' menyatakan ulang SKILL.md:31. (c) daftar sebab exit-2 di :45 mengenumerasi apa yang klausa berikutnya suruh model baca sendiri: 'baca stderr'.",
+      "recommendation": "(a) Pangkas :37 dan biarkan e2e-quickstart.md + help skrip memegang semantik label kepemilikan — CATATAN: gerbang prosa di test-ps-flashlight-run.py mewajibkan SKILL.md tetap memuat CLEANUP_FLAG, LABEL_OWNER_PID, dan `psm-fl` berkutip, jadi pemangkasan harus mempertahankan ketiga token itu atau test merah. (b) Buang kalimat :45. (c) Buang daftar sebab dalam kurung. Memulihkan ~100 tok."
+    },
+    {
+      "id": "architecture-3",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Permukaan konkurensi multi-versi ps-run-layer.py yatim sementara SKILL.md menawarkan fan-out yang skripnya tentang",
+      "location": "SKILL.md:29,31,33 vs scripts/ps-run-layer.py:1-40,71,468 dan references/e2e-quickstart.md:172",
+      "evidence": "SKILL.md kini memanggil ps-run-layer.py hanya dengan dua cara degenerate: `--versions V --per-version` (satu versi) dan `--versions <semua> --merge-only` (tak menjalankan apa pun). `--jobs` dan penulisan kanonik multi-versi tak pernah dirutekan prosa mana pun. Docstring skripnya menyatakan tujuannya 'Jalankan SATU lapis mahal untuk BANYAK versi serentak' dan berargumen di bawah judul 'Kenapa skrip, bukan fan-out subagent' — namun SKILL.md:33 menjadikan fan-out subagent satu-satunya opsi paralel yang ditawarkan, tanpa satu baris pun merekonsiliasi keduanya. references/e2e-quickstart.md:172 masih mendeskripsikan 'dua versi serentak lewat ps-run-layer.py' sebagai skenario hidup.",
+      "recommendation": "Pilih satu pemilik konkurensi. Entah rutekan pilihan fan-out operator ke satu panggilan `ps-run-layer.py --versions <semua> --jobs <n> --per-version` dan buang fan-out subagent, atau hapus `--jobs` beserta argumen fan-out di docstring dan koreksi e2e-quickstart.md:172."
+    },
+    {
+      "id": "architecture-4",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "Headless membaca 'mode eksekusi' yang tak dipasok pemanggil mana pun, dan cabang fan-out kehilangan klausa degradasinya",
+      "location": "SKILL.md:53 dan SKILL.md:33; pemanggil psm-develop/SKILL.md:65, psm-cross-version/SKILL.md:47, psm-optimize/SKILL.md:52, psm-scaffold/SKILL.md:39",
+      "evidence": "Mode headless mengambil 'module-path, versi, browser & mode eksekusi dari argumen/konteks', tapi tak ada sibling yang meneruskan mode eksekusi — keempat pemanggil hanya berkata 'Panggil psm-validate atas module hasil terhadap ketiga versi'. Jadi parameter itu tak punya produsen, dan headless tak menyatakan default-nya sendiri. Cabang yang dihapus adalah satu-satunya pernyataan skill bahwa psm-validate yang di-spawn sebagai subagent oleh keempat pemanggil itu tak bisa men-spawn anak, dan klausa Lapis 3 'Bila kamu tak bisa men-spawn subagent, baca dan review sendiri' ikut hilang — jadi jalur fan-out kini tak punya fallback di mana pun.",
+      "recommendation": "Entah buang 'mode eksekusi' dari daftar input headless (headless = sekuensial, titik), atau nyatakan default headless plus fallback satu klausa: fan-out tak tersedia saat skill ini sendiri berjalan sebagai subagent → serial, alur identik, vonis tak berubah."
+    },
+    {
+      "id": "architecture-5",
+      "lens": "architecture",
+      "severity": "medium",
+      "title": "SKILL.md 55% di atas tier token keras yang dikonfigurasi",
+      "location": "SKILL.md (3889 token vs budget [1500 desired, 2500 keras])",
+      "evidence": "Pre-pass melaporkan 3889 token tiktoken terhadap `skill_md_tokens` [1500, 2500] project ini; prinsipnya menyebut over-budget sebagai temuan keras yang diselesaikan progressive disclosure, bukan kompresi. Bebannya ada di `## Validate` (baris 27-41, kira-kira separuh file). Dua reference terkarve (951 dan 3634 token) keduanya jauh di dalam budget mereka sendiri, jadi ada headroom untuk mengangkat.",
+      "recommendation": "Angkat mekanika Fase 1 / Fase 2 / Mode-eksekusi ke `references/two-phase-convergence.md` dengan pointer routing satu baris di Validate, dan pertahankan gotcha per-lapis (no_php_at_root, cleanup orphan, e2e_smoke_only) tetap inline — prinsipnya eksplisit bahwa gotcha tak pernah dikarve."
+    },
+    {
+      "id": "determinism-5",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Plan per-versi mengembalikan matriks 4xN tanpa roll-up dan tanpa penanda lapis mana yang per-versi-capable",
+      "location": "scripts/ps-plan-layers.py:plan_per_version + main vs SKILL.md Fase 1/Fase 2",
+      "evidence": "Mode kanonik mengembalikan roll-up `rerun` top-level; mode per-versi hanya `per_version[V].rerun` per versi tanpa padanan. Gerbang Fase 2 SKILL.md adalah 'Saat semua reuse, satukan...', jadi tiap iterasi loop konvergensi model meng-union hingga 4 lapis x N versi boolean dengan tangan — hitung/banding murni dengan satu jawaban benar, dan itu gerbang yang memutuskan boleh-tidaknya sweep rilis mahal dimulai. Selain itu `plan_per_version` mengiterasi keempat LAYERS, tapi hanya flashlight dan e2e punya jalur produce+merge per-versi.",
+      "recommendation": "Tambah `\"all_reuse\": bool` dan `\"rerun_matrix\": [[lapis, versi], …]` datar ke output per-versi, dan tandai tiap entri dengan cara ia diproduksi (`per_version_capable: true|false`) sehingga 'lapis mana yang merge dan mana yang di-run ulang utuh' jadi data, bukan paragraf yang harus diingat model di akhir run panjang."
+    },
+    {
+      "id": "determinism-6",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "'Saya di mode apa' adalah satu-satunya jawaban cakupan tanpa pembawa deterministik",
+      "location": "SKILL.md:21, :33, :39, :53",
+      "evidence": "Tawaran interaktif mengumpulkan tiga jawaban. Versi dan browser masing-masing jadi flag (`--versions`, `--browsers`) yang mendarat di file bukti dan dicek ulang gerbang cakupan ps-plan-layers serta `e2e_browsers` ps-aggregate. Mode jadi TAK APA-APA: tak ada flag, tak ada field di file lapis mana pun maupun di output agregat. Ia dirujuk lagi tiga paragraf kemudian, lagi di Lapis 3, dan lagi di headless — tempat SKILL.md menyuruh mengambil 'mode eksekusi dari argumen/konteks' tanpa menyebut argumen apa pun. Hasilnya state sepanjang-run yang dibawa model dalam prosa saja, dan laporan jadi yang darinya tak seorang pun bisa tahu mode mana yang memproduksinya.",
+      "recommendation": "Kebocoran state, bukan komputasi: perbaiki dengan MENGHAPUS state-nya, bukan menyimpannya. Mengadopsi `--jobs N` determinism-2 meruntuhkan mode jadi angka di satu baris perintah, yang membawa dirinya sendiri — flag ITU mode-nya, tak butuh memori lintas paragraf, dan terlihat di perintah yang memproduksi buktinya."
+    },
+    {
+      "id": "determinism-7",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Nama file per-versi Lapis 1 dan 3 diketik model, padahal dua skrip sudah menurunkan nama persis itu",
+      "location": "SKILL.md 'Konvensi tulis per-versi' vs scripts/ps-plan-layers.py:per_version_path + scripts/ps-run-layer.py:per_version_file",
+      "evidence": "Nama itu dihitung di Python dua kali — `per_version_path()` (pembaca) dan `per_version_file()` (penulis), keduanya dengan docstring yang menegaskan nama 'tak bisa diketik pemanggil' supaya bukti tak mendarat di file module/lapis/versi lain — namun untuk separuh lapis prompt-nya mengetiknya. `ps-static-scan.py` hanya mengekspos `-o` bebas-bentuk. Segmen versi yang salah kebanyakan gagal ke arah rerun ekstra, tapi segmen module yang salah menulis ke himpunan bukti module lain, yang ps-aggregate (determinism-3) takkan menangkap.",
+      "recommendation": "Tambah `--reports-dir` + `--per-version` ke ps-static-scan.py supaya ia menurunkan `<module>-static-<versi>.json` dari aturan yang sama, dan beri lapis adversarial penulis kecil supaya model memasok hanya findings JSON dan tak pernah path-nya. SKILL.md lalu tak menyebut nama file per-versi sama sekali."
+    },
+    {
+      "id": "determinism-8",
+      "lens": "determinism",
+      "severity": "medium",
+      "title": "Terjemahan config-ke-flag diulang dengan tangan tiap panggilan, dan mode sekuensial melipatgandakan jumlah panggilan",
+      "location": "SKILL.md Lapis 2 / Lapis 4 / Fase 1 vs konsumen resolve-psm-config.py",
+      "evidence": "Langkah 1 memuat config yang sudah resolved, lalu tiap panggilan hilir menyatakannya ulang dengan tangan: 'teruskan setelan config sebagai flag (--tag-map dari psm_flashlight_tag_map, --db-image, --ps-domain, --orchestrator, --startup-timeout)', plus peringatan Fase 1 bahwa --tag-map/--extra-rules yang SAMA juga harus ke ps-plan-layers. Menyalin key resolved ke flag adalah transform dengan satu jawaban benar. Di bawah default fan-out lama tiap subagent diberi set flagnya sekali; di bawah sekuensial konteks utama mengetik ulang set penuh per (lapis, versi) di Fase 1 dan lagi untuk tiap pasangan basi di Fase 2 — hand-copy O(lapis x versi) di mana --tag-map yang jatuh di sisi plan diam-diam salah menilai kesegaran provenance.",
+      "recommendation": "Tambah `--config <resolved.json>` ke ps-flashlight-run.py, ps-e2e-run.py dan ps-plan-layers.py (flag eksplisit tetap menang bila diberikan), sehingga prompt meneruskan satu path alih-alih lima nilai, dan plan serta skrip lapis terbukti melihat tag map yang sama."
+    },
+    {
+      "id": "customization-1",
+      "lens": "customization",
+      "severity": "medium",
+      "title": "Mode eksekusi jadi pengecualian KEDUA atas aturan 'setelan diteruskan sebagai flag', tapi tak diberi label kategori seperti psm_e2e_enabled",
+      "location": "SKILL.md:20,21,33,41",
+      "evidence": "SKILL.md:20 menyatakan aturan keluarga sebagai universal: 'Tiap setelan lapis diteruskan sebagai flag di titik pakainya.' Ronde sebelumnya (cust-3) menemukan psm_e2e_enabled melanggar aturan itu, dan fixnya BUKAN menambah flag melainkan memberi label kategori eksplisit di SKILL.md:41 — 'gerbang orkestrator, bukan flag skrip'. Pembalikan default kini menciptakan anggota kedua kelas yang sama persis: mode eksekusi diputuskan model, tak pernah masuk argumen skrip mana pun. Bedanya, ia TAK berlabel. Lebih jauh, SKILL.md:21 menaruhnya satu kalimat dengan dua item yang justru patuh aturan, lalu menutup dengan '(--versions, --browsers)' — dua flag untuk tiga pilihan.",
+      "recommendation": "Pinjam frasa yang sudah terbukti dipakai untuk psm_e2e_enabled: di SKILL.md:21 tandai item ketiga sebagai pilihan orkestrator per-run tanpa key config dan tanpa flag skrip. Nol key baru, nol perubahan perilaku; yang ditambahkan cuma label kategori yang sudah jadi konvensi skill ini."
+    },
+    {
+      "id": "customization-2",
+      "lens": "customization",
+      "severity": "medium",
+      "title": "Headless mengambil 'mode eksekusi dari argumen/konteks' padahal tak ada argumen, key, maupun pemanggil yang mengirimnya",
+      "location": "SKILL.md:53 (vs :21); pemanggil: psm-develop:65, psm-cross-version:47, psm-scaffold:39, psm-optimize:52",
+      "evidence": "SKILL.md:53 menyamakan empat sumber input headless. Tiga yang pertama punya sumber nyata saat argumen kosong — psm_modules_dir, psm_target_versions, psm_e2e_browsers dari resolver. Mode eksekusi tak punya keduanya: bukan key resolver (10 key PSM_DEFAULTS diverifikasi, nol untuk mode), bukan argumen bernama, dan keempat sibling tak menyebut mode sama sekali. Jadi jalur headless SELALU jatuh ke satu per satu sementara kalimatnya menjanjikan kanal yang tak ada. Konteks yang menguatkan 'kunci saja' ketimbang 'buka kanalnya': subagent tak bisa men-spawn subagent, jadi psm-validate yang dipanggil sebagai subagent memang tak boleh fan-out.",
+      "recommendation": "SUBTRACT, jangan tambah kanal. Buang 'mode eksekusi' dari daftar sumber argumen di :53 dan nyatakan fakta yang sudah berlaku: 'headless selalu satu per satu — fan-out adalah pilihan interaktif'. Satu klausa itu menghapus afordansi palsu dan menjaga keputusan tanpa-key tetap utuh."
+    },
+    {
+      "id": "enhancement-4",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Degradasi anggun hilang untuk pilihan operator yang baru (peluang, bila fan-out dipertahankan)",
+      "location": "SKILL.md:33",
+      "evidence": "Pola bernama yang hilang: Graceful degradation. Baris 33 mendeskripsikan cabang fan-out tanpa fallback bila harness tak bisa men-spawn subagent. Ini tak hipotetis: psm-validate dipanggil sebagai gerbang mutu oleh empat sibling, yang mana pun bisa menjalankannya di dalam subagent — dan subagent tak bisa men-spawn subagent. Operator (atau pemanggil) memilih fan-out, spawn gagal, dan skill tak punya jalan tertulis kembali.",
+      "recommendation": "Bila enhancement-1 ditolak, tambahkan ke baris 33: 'Subagent tak bisa di-spawn (harness menolak, atau skill ini sendiri sudah berjalan sebagai subagent) → jatuh ke satu-per-satu dan sebut itu di ringkasan; vonis tak berubah.' Bila enhancement-1 diterima temuan ini lenyap bersama mode-nya."
+    },
+    {
+      "id": "enhancement-5",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Headless membawa parameter mode eksekusi menggantung tanpa nama yang tak dilewatkan pemanggil mana pun",
+      "location": "SKILL.md:53",
+      "evidence": "Kesenjangan headless-readiness. Baris 53 menyuruh jalur headless mengambil 'mode eksekusi', tapi tak seperti `--headless`, `--versions` dan `--browsers` — semuanya token bernama — mode eksekusi tak punya nama flag, tak punya key config, dan tak punya default headless yang dinyatakan. Tak satu pun dari empat sibling pemanggil meneruskan apa pun untuknya. Jadi pilihannya tak bisa ditemukan automator dan tak terdefinisi saat runtime. Digabung enhancement-4, kasus terburuknya adalah run headless yang menyimpulkan fan-out di dalam subagent yang tak bisa men-spawn satu pun.",
+      "recommendation": "Bila mode dipotong (enhancement-1), hapus 'mode eksekusi' dari baris 53. Bila dipertahankan, sebut token-nya dan nyatakan default-nya dalam satu tarikan napas: '`--fan-out` bila pemanggil memintanya eksplisit; tanpa itu selalu satu per satu' — dan tambahkan flag itu ke kontrak caller-facing."
+    },
+    {
+      "id": "enhancement-6",
+      "lens": "enhancement",
+      "severity": "medium",
+      "title": "Pertanyaan mode diajukan di aktivasi, satu fase terlalu awal, dan membalik persona workflow",
+      "location": "SKILL.md:21",
+      "evidence": "Langkah 2 membundel topologi eksekusi ke tawaran cakupan bersama versi dan browser. Dua itu pertanyaan domain yang dimiliki operator; topologi eksekusi adalah proses, yang persona BMad berikan ke workflow. Ia juga ditanya di waktu yang salah: Fase 1 secara inheren satu-versi-sekali menurut desain, jadi fan-out hanya bisa memengaruhi refresh Fase 2 — fase yang mungkin tak pernah dicapai sebuah run bila konvergensi mandek. Operator ditanya, sebelum lapis mana pun jalan, untuk memutuskan sesuatu yang berlaku di paling akhir.",
+      "recommendation": "Bila enhancement-1 ditolak, pindahkan pilihan keluar dari aktivasi ke gerbang Fase 2, tempat jumlah pasangan (lapis, versi) basi sudah diketahui. Lebih baik lagi, per enhancement-2, jadikan ia nilai `--jobs` alih-alih mode: 'berapa versi boot serentak' adalah pertanyaan sumber daya yang operator benar-benar bisa jawab dari mesinnya."
+    },
+    {
+      "id": "leanness-6",
+      "lens": "leanness",
+      "severity": "low",
+      "title": "On Activation item 4 adalah constraint berdiri yang dinomori seolah langkah aktivasi",
+      "location": "SKILL.md:23 (On Activation, item 4 — 109 tok)",
+      "evidence": "Item 1-3 adalah urutan sejati. Item 4, '**Augment aturan (opsional).**', tak melakukan apa pun saat aktivasi: ia kebijakan tentang dari mana aturan boleh datang, dikonsumsi belakangan di Lapis 1 dan Lapis 2/4. Menomorinya memberi tahu pembaca bahwa urutan penting padahal tidak, dan canon memperingatkan model akan memawaskan langkah bernomor alih-alih mengadaptasinya.",
+      "recommendation": "Turunkan item 4 dari daftar bernomor — entah jadi bullet di Resolution rules atau satu kalimat di kepala bagian Validate, tempat flagnya benar-benar dipakai. Memulihkan ~40 tok dan menghentikan urutan itu mengimplikasikan aksi aktivasi keempat."
+    },
+    {
+      "id": "customization-3",
+      "lens": "customization",
+      "severity": "low",
+      "title": "Default --jobs 3 di ps-run-layer kini mengiklankan konkurensi yang tak bisa dicapai alur mana pun",
+      "location": "scripts/ps-run-layer.py:40,71,468-469 (vs SKILL.md:29,31)",
+      "evidence": "Tak satu pun dari 10 key psm_* jadi usang oleh pembalikan default (diperiksa di PSM_DEFAULTS, module.yaml, tabel docs/psm/README.md, e2e-quickstart.md), jadi permukaan key bersih. Yang usang justru knob di sebelahnya: DEFAULT_JOBS = 3 dengan help 'Versi yang boot serentak (default 3...)' dan contoh docstring '--versions 1.7.8,8.1,9.1 --jobs 3'. Tapi SKILL.md tak pernah memanggil ps-run-layer dengan banyak versi tanpa --merge-only, jadi execute() dengan width>1 tak terjangkau alur terdokumentasi mana pun.",
+      "recommendation": "Selaraskan deskripsinya dengan alur sebenarnya tanpa menyentuh kode, atau — bila jalur multi-versi langsung memang tak dipertahankan — setel DEFAULT_JOBS=1 supaya default skrip = default skill. Tak mendesak: tak ada yang salah vonis karenanya."
+    },
+    {
+      "id": "architecture-6",
+      "lens": "architecture",
+      "severity": "low",
+      "title": "Folder skill terinstal mengapalkan 8.5MB artefak build",
+      "location": ".analysis/ (7.1M), .memlog.md (136K), scripts/__pycache__/ (744K)",
+      "evidence": "Direktori skill membawa 14 run analisis lampau, memlog builder 136K, dan .pyc basi untuk tiga versi Python. references/e2e-quickstart.md:204-207 eksplisit menyuruh operator menyalin folder skill ke mesin lain, jadi ini payload terkapal, bukan sekadar scratch lokal. CATATAN PENTING: rekomendasi ini BERTENTANGAN dengan keputusan user yang berdiri di .memlog.md entri 69 ('opsi 3: lacak .analysis reports seperti biasa, jangan bersihkan history') dan sudah ditahan dua ronde karena alasan itu.",
+      "recommendation": "JANGAN eksekusi tanpa keputusan user baru. Bila user membalik entri 69, kecualikan .analysis/, .memlog.md, dan __pycache__/ dari skill terdistribusi (gitignore plus langkah prune). Bila tidak, temuan ini ditutup sebagai 'ditolak by design' supaya lensa berikutnya tak mengusulkannya untuk ketiga kalinya."
+    }
+  ]
+}
