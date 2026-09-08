@@ -12,6 +12,7 @@ Ini lapisan akurasi #1 (aturan yang diketahui pasti). Lapisan #2 (PHPStan +
 coding standard terhadap PS core asli) ditangani ps-flashlight-run.py.
 """
 import argparse
+import importlib.util
 import json
 import re
 import sys
@@ -472,6 +473,9 @@ def main():
                                           "di-merge ke ruleset; --rules MENGGANTI, ini MENAMBAH. "
                                           "Untuk aturan dari knowledge base tanpa menyalin ruleset inti.")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
+    ap.add_argument("--config", help="JSON hasil resolve-psm-config.py — --versions diisi dari "
+                                     "psm_target_versions bila tak diberikan eksplisit. Flag "
+                                     "eksplisit selalu menang.")
     ap.add_argument("--reports-dir", help="Folder laporan. Nama file lapis DITURUNKAN di sini "
                                           "(<module>-static.json, atau <module>-static-<versi>.json "
                                           "dengan --per-version) alih-alih diketik lewat -o.")
@@ -488,6 +492,24 @@ def main():
             print(f"error: token '{{project-root}}' belum diresolve di {name}: {val!r} — resolve "
                   "ke root project dulu; ini path filesystem, bukan nilai config.", file=sys.stderr)
         return 2
+
+    # --config diterapkan lewat pemilik tunggalnya di ps-flashlight-run, tapi diimpor MALAS:
+    # lapis 1 adalah lapis murah tanpa Docker, dan menyeret orkestrator ke setiap run yang
+    # tak memakai --config akan membayar biaya impor untuk kemampuan yang tak dipakai.
+    # Menyalin fungsinya ke sini akan jadi implementasi kedua yang mendrift diam-diam.
+    if args.config:
+        fl_path = Path(__file__).resolve().parent / "ps-flashlight-run.py"
+        try:
+            spec = importlib.util.spec_from_file_location("ps_flashlight_run", fl_path)
+            if not (spec and spec.loader):
+                raise ImportError(f"spec tak terbentuk untuk {fl_path}")
+            _fl = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(_fl)
+        except (OSError, ImportError, SyntaxError) as e:
+            print(f"error: --config butuh skrip sibling {fl_path.name} ({e}) — salin folder "
+                  "scripts/ utuh, atau beri --versions langsung", file=sys.stderr)
+            return 2
+        _fl.apply_config_file(args, ap, args.config)
 
     module_dir = Path(args.module_path).resolve()
     if not module_dir.is_dir():

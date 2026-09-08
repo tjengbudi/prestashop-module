@@ -620,6 +620,23 @@ def main():
         ok &= check("token {project-root} di --reports-dir ditolak seperti path lain",
                     r.returncode == 2 and "belum diresolve" in r.stderr)
 
+        # --config: SKILL.md menyuruh meneruskannya ke Lapis 1 juga. Ditemukan saat run nyata
+        # pertama atas modules/bankwire — prosa menjanjikan flag yang skripnya belum punya.
+        cfgp = t8 / "resolved.json"
+        cfgp.write_text(json.dumps({"psm_target_versions": "8.1"}), encoding="utf-8")
+        r, _ = None, None
+        rp = subprocess.run(["uv", "run", str(SCAN), str(m), "--reports-dir", str(rep),
+                             "--config", str(cfgp)], capture_output=True, text=True)
+        got = json.loads((rep / "derivmod-static.json").read_text())
+        ok &= check("--config mengisi --versions dari psm_target_versions",
+                    rp.returncode in (0, 1) and list(got["versions"]) == ["8.1"])
+        rp2 = subprocess.run(["uv", "run", str(SCAN), str(m), "--reports-dir", str(rep),
+                              "--config", str(cfgp), "--versions", "9.1"],
+                             capture_output=True, text=True)
+        got2 = json.loads((rep / "derivmod-static.json").read_text())
+        ok &= check("--versions eksplisit MENANG atas --config",
+                    rp2.returncode in (0, 1) and list(got2["versions"]) == ["9.1"])
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 
