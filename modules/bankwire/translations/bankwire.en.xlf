@@ -1,0 +1,317 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:1.2" version="1.2">
+  <file source-language="en" target-language="en" datatype="plaintext" original="califea-modules-bankwire">
+    <body>
+      <trans-unit id="1" resname="A bank account with this name already exists. Please choose a different name.">
+        <source>A bank account with this name already exists. Please choose a different name.</source>
+        <target>A bank account with this name already exists. Please choose a different name.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="2" resname="Accept payments via transfer to several bank accounts that you can add, remove, enable or disable dynamically.">
+        <source>Accept payments via transfer to several bank accounts that you can add, remove, enable or disable dynamically.</source>
+        <target>Accept payments via transfer to several bank accounts that you can add, remove, enable or disable dynamically.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="3" resname="Account number, branch, IBAN, BIC, etc.">
+        <source>Account number, branch, IBAN, BIC, etc.</source>
+        <target>Account number, branch, IBAN, BIC, etc.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="4" resname="Account owner">
+        <source>Account owner</source>
+        <target>Account owner</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="5" resname="Actions">
+        <source>Actions</source>
+        <target>Actions</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="6" resname="Add a bank account">
+        <source>Add a bank account</source>
+        <target>Add a bank account</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="7" resname="Are you sure you want to uninstall? All configured bank accounts will be deleted.">
+        <source>Are you sure you want to uninstall? All configured bank accounts will be deleted.</source>
+        <target>Are you sure you want to uninstall? All configured bank accounts will be deleted.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="8" resname="Back to list">
+        <source>Back to list</source>
+        <target>Back to list</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="9" resname="Bank accounts">
+        <source>Bank accounts</source>
+        <target>Bank accounts</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="10" resname="Bank address">
+        <source>Bank address</source>
+        <target>Bank address</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="11" resname="Bank logo/icon (jpg, png, gif). Leave empty to keep the current one.">
+        <source>Bank logo/icon (jpg, png, gif). Leave empty to keep the current one.</source>
+        <target>Bank logo/icon (jpg, png, gif). Leave empty to keep the current one.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="12" resname="Bank name">
+        <source>Bank name</source>
+        <target>Bank name</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="13" resname="Bank name is required.">
+        <source>Bank name is required.</source>
+        <target>Bank name is required.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="14" resname="Bankwire (multi-bank)">
+        <source>Bankwire (multi-bank)</source>
+        <target>Bankwire (multi-bank)</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="15" resname="Could not save bank account.">
+        <source>Could not save bank account.</source>
+        <target>Could not save bank account.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="16" resname="Could not save the icon image.">
+        <source>Could not save the icon image.</source>
+        <target>Could not save the icon image.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="17" resname="Customer information">
+        <source>Customer information</source>
+        <target>Customer information</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="18" resname="Default reservation period">
+        <source>Default reservation period</source>
+        <target>Default reservation period</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="19" resname="Delete">
+        <source>Delete</source>
+        <target>Delete</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="20" resname="Delete this bank account?">
+        <source>Delete this bank account?</source>
+        <target>Delete this bank account?</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="21" resname="Details">
+        <source>Details</source>
+        <target>Details</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="22" resname="Displayed to the customer at checkout, e.g. Bank BCA, Bank Niaga, Jenius.">
+        <source>Displayed to the customer at checkout, e.g. Bank BCA, Bank Niaga, Jenius.</source>
+        <target>Displayed to the customer at checkout, e.g. Bank BCA, Bank Niaga, Jenius.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="23" resname="Down">
+        <source>Down</source>
+        <target>Down</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="24" resname="Edit">
+        <source>Edit</source>
+        <target>Edit</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="25" resname="Edit bank account">
+        <source>Edit bank account</source>
+        <target>Edit bank account</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="26" resname="Enabled">
+        <source>Enabled</source>
+        <target>Enabled</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="27" resname="Extra note shown to the customer for this bank, e.g. processing time. Leave empty to show nothing.">
+        <source>Extra note shown to the customer for this bank, e.g. processing time. Leave empty to show nothing.</source>
+        <target>Extra note shown to the customer for this bank, e.g. processing time. Leave empty to show nothing.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="28" resname="Icon">
+        <source>Icon</source>
+        <target>Icon</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="29" resname="No bank account yet. Click &quot;Add a bank account&quot; to create the first one. Payment will appear at checkout once at least one bank is enabled.">
+        <source>No bank account yet. Click &quot;Add a bank account&quot; to create the first one. Payment will appear at checkout once at least one bank is enabled.</source>
+        <target>No bank account yet. Click &quot;Add a bank account&quot; to create the first one. Payment will appear at checkout once at least one bank is enabled.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="30" resname="No currency has been set for this module.">
+        <source>No currency has been set for this module.</source>
+        <target>No currency has been set for this module.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="31" resname="Number of days items stay reserved for this bank. 0 = use the global default.">
+        <source>Number of days items stay reserved for this bank. 0 = use the global default.</source>
+        <target>Number of days items stay reserved for this bank. 0 = use the global default.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="32" resname="Number of days items stay reserved, used by any bank set to 0. Enter 0 to show no reservation notice.">
+        <source>Number of days items stay reserved, used by any bank set to 0. Enter 0 to show no reservation notice.</source>
+        <target>Number of days items stay reserved, used by any bank set to 0. Enter 0 to show no reservation notice.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="33" resname="Position">
+        <source>Position</source>
+        <target>Position</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="34" resname="Reservation period">
+        <source>Reservation period</source>
+        <target>Reservation period</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="35" resname="Save">
+        <source>Save</source>
+        <target>Save</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="36" resname="Settings">
+        <source>Settings</source>
+        <target>Settings</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="37" resname="The action could not be completed.">
+        <source>The action could not be completed.</source>
+        <target>The action could not be completed.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="38" resname="The bank account was saved, but the icon could not be uploaded.">
+        <source>The bank account was saved, but the icon could not be uploaded.</source>
+        <target>The bank account was saved, but the icon could not be uploaded.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="39" resname="This bank account no longer exists.">
+        <source>This bank account no longer exists.</source>
+        <target>This bank account no longer exists.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="40" resname="This module lets you accept payments by bank transfer to several accounts.">
+        <source>This module lets you accept payments by bank transfer to several accounts.</source>
+        <target>This module lets you accept payments by bank transfer to several accounts.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="41" resname="Toggle">
+        <source>Toggle</source>
+        <target>Toggle</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="42" resname="Up">
+        <source>Up</source>
+        <target>Up</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="43" resname="When a customer pays by bank transfer, the order status changes to 'Awaiting bank wire payment'.">
+        <source>When a customer pays by bank transfer, the order status changes to 'Awaiting bank wire payment'.</source>
+        <target>When a customer pays by bank transfer, the order status changes to 'Awaiting bank wire payment'.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="44" resname="You must manually confirm the order once you receive the transfer.">
+        <source>You must manually confirm the order once you receive the transfer.</source>
+        <target>You must manually confirm the order once you receive the transfer.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="45" resname="Account details">
+        <source>Account details</source>
+        <target>Account details</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="46" resname="Amount">
+        <source>Amount</source>
+        <target>Amount</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="47" resname="Bank">
+        <source>Bank</source>
+        <target>Bank</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="48" resname="Bank address">
+        <source>Bank address</source>
+        <target>Bank address</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="49" resname="Goods will be reserved for %d day and the order processed as soon as we receive your payment.">
+        <source>Goods will be reserved for %d day and the order processed as soon as we receive your payment.</source>
+        <target>Goods will be reserved for %d day and the order processed as soon as we receive your payment.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="50" resname="Goods will be reserved for %d days and the order processed as soon as we receive your payment.">
+        <source>Goods will be reserved for %d days and the order processed as soon as we receive your payment.</source>
+        <target>Goods will be reserved for %d days and the order processed as soon as we receive your payment.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="51" resname="If you have questions, comments or concerns, please contact our [1]expert customer support team[/1].">
+        <source>If you have questions, comments or concerns, please contact our [1]expert customer support team[/1].</source>
+        <target>If you have questions, comments or concerns, please contact our [1]expert customer support team[/1].</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="52" resname="Name of account owner">
+        <source>Name of account owner</source>
+        <target>Name of account owner</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="53" resname="Pay by %s">
+        <source>Pay by %s</source>
+        <target>Pay by %s</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="54" resname="Please send us your payment by bank transfer with the following details:">
+        <source>Please send us your payment by bank transfer with the following details:</source>
+        <target>Please send us your payment by bank transfer with the following details:</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="55" resname="Please specify your order reference %s in the transfer description.">
+        <source>Please specify your order reference %s in the transfer description.</source>
+        <target>Please specify your order reference %s in the transfer description.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="56" resname="Please transfer the invoice amount to the account below. You will receive our order confirmation by email with the bank details and your order number.">
+        <source>Please transfer the invoice amount to the account below. You will receive our order confirmation by email with the bank details and your order number.</source>
+        <target>Please transfer the invoice amount to the account below. You will receive our order confirmation by email with the bank details and your order number.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="57" resname="The selected bank is not available.">
+        <source>The selected bank is not available.</source>
+        <target>The selected bank is not available.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="58" resname="This payment method is not available.">
+        <source>This payment method is not available.</source>
+        <target>This payment method is not available.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="59" resname="We have also sent you this information by email.">
+        <source>We have also sent you this information by email.</source>
+        <target>We have also sent you this information by email.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="60" resname="We noticed a problem with your order. If you think this is an error, feel free to contact our [1]expert customer support team[/1].">
+        <source>We noticed a problem with your order. If you think this is an error, feel free to contact our [1]expert customer support team[/1].</source>
+        <target>We noticed a problem with your order. If you think this is an error, feel free to contact our [1]expert customer support team[/1].</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="61" resname="Your order on %s is complete.">
+        <source>Your order on %s is complete.</source>
+        <target>Your order on %s is complete.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="62" resname="Your order will be shipped as soon as we receive your payment.">
+        <source>Your order will be shipped as soon as we receive your payment.</source>
+        <target>Your order will be shipped as soon as we receive your payment.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

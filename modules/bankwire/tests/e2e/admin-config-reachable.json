@@ -1,0 +1,10 @@
+{
+  "name": "bankwire-admin-modules-reachable",
+  "description": "BO Module Manager ter-render tanpa fatal saat module terpasang. Konklusif hanya bila login BO berhasil (best-effort); bila gagal login, jadi inconclusive (tak memblok). Catatan: halaman Configure dgn token tak diuji di sini karena URL langsung tanpa token memicu interstitial 'Invalid security token' PrestaShop — rendering panel bank sudah diverifikasi manual.",
+  "steps": [
+    {"action": "goto", "area": "bo", "path": "/index.php?controller=AdminModules"},
+    {"action": "expect_no_fatal"},
+    {"action": "expect_visible", "selector": "body"},
+    {"action": "screenshot"}
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "name": "bankwire-bo-allow-indonesia-payment",
+  "description": "Prasyarat checkout kedua, bukan uji module: izinkan bankwire untuk negara Indonesia di Payment > Preferences. Daftar negara per module diisi SAAT module dipasang, berisi negara yang aktif waktu itu (fixture: FR/GB/US) — Indonesia baru diaktifkan bo-setup-country sesudahnya, sehingga tanpa langkah ini checkout beralamat Indonesia berakhir 'there is no payment method available'. Yang diklik adalah tautan pilih-satu-kolom di header kolom Bankwire, bukan checkbox Indonesia-nya: tabel memuat ~250 negara dalam kontainer bergulir berheader lengket, dan klik langsung ke checkbox jauh di bawah kena timeout (header lengket mencegat). Di fixture SELURUH kotak negara kosong (itulah sebabnya FO bilang 'no payment method available'), jadi satu klik kolom mencentang semua negara untuk bankwire — termasuk Indonesia. Nama file urut sesudah bo-setup-country dan sebelum checkout-*. Interstitial token punya DUA bentuk: 1.7/8 memakai a.btn-continue, sedangkan 9 memakai halaman 'Invalid token — Do you want to display this page?' dengan tombol 'I understand the risk' (#security-compromised-page a.btn-outline-danger); keduanya di-dismiss opsional berurutan, bukan lewat satu selector berkoma.",
+  "steps": [
+    {
+      "action": "goto",
+      "area": "bo",
+      "path": "/index.php?controller=AdminPaymentPreferences"
+    },
+    {
+      "action": "click_optional",
+      "selector": "a.btn-continue"
+    },
+    {
+      "action": "click_optional",
+      "selector": "#security-compromised-page a.btn-outline-danger"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "expect_visible",
+      "selector": "#form-country-restrictions-save-button"
+    },
+    {
+      "action": "click",
+      "selector": ".card:has(#form-country-restrictions-save-button) a.js-multiple-choice-table-select-column:has-text('Bankwire')"
+    },
+    {
+      "action": "screenshot"
+    },
+    {
+      "action": "click",
+      "selector": "#form-country-restrictions-save-button"
+    },
+    {
+      "action": "click_optional",
+      "selector": "a.btn-continue"
+    },
+    {
+      "action": "click_optional",
+      "selector": "#security-compromised-page a.btn-outline-danger"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "screenshot"
+    }
+  ]
+}

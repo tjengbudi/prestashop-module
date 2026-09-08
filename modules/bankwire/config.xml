@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+    <name>bankwire</name>
+    <displayName><![CDATA[Bankwire (multi-bank)]]></displayName>
+    <version><![CDATA[1.0.6]]></version>
+    <description><![CDATA[Accept payments via transfer to several bank accounts that you can add, remove, enable or disable dynamically.]]></description>
+    <author><![CDATA[Prestanesia]]></author>
+    <tab><![CDATA[payments_gateways]]></tab>
+    <confirmUninstall><![CDATA[Are you sure you want to uninstall? All configured bank accounts will be deleted.]]></confirmUninstall>
+    <is_configurable>1</is_configurable>
+    <need_instance>0</need_instance>
+    <limited_countries></limited_countries>
+</module>
