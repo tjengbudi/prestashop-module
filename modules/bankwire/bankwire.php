@@ -139,6 +139,40 @@ class Bankwire extends PaymentModule
     }
 
     /**
+     * Reset module TANPA membuang data.
+     *
+     * JANGAN andalkan ini untuk melindungi tombol Reset di BO. `ModuleManager::reset()`
+     * memang memanggil `reset()` bila `$keepData` true, TAPI tak ada satu pun pemanggil
+     * yang mengirim true: ModuleController 1.7.8 memanggil satu argumen, 8.1/9.1 hanya
+     * menambah argumen kedua untuk UNINSTALL, dan `bin/console prestashop:module reset`
+     * satu argumen di ketiga versi. Di 8.1.6 method ini bahkan tak terjangkau secara
+     * struktural — `method_exists` di sana diuji pada adapter `Adapter\Module\Module`
+     * (yang hanya punya `onReset()`), bukan pada instance module. Semua diverifikasi dengan
+     * menekan Reset sungguhan, bukan dengan membaca kode.
+     *
+     * Yang benar-benar melindungi Reset ada di jalur uninstall: `uninstallDb()`
+     * mempertahankan `bankwire_order`, dan `retireOrderState()` tak mempensiunkan status
+     * yang masih dipegang order hidup. Method ini disimpan karena ia BENAR untuk pemanggil
+     * yang memang mengirim `keepData` (terbukti bekerja lewat API di 1.7.8) dan gratis.
+     *
+     * Yang di-reset: penunjuk OrderState (dikonsolidasikan bila ada duplikat), template
+     * email, dan folder icon. Tabel, order, dan rekening tak disentuh.
+     *
+     * @return bool
+     */
+    public function reset()
+    {
+        if (!$this->ensureOrderState()) {
+            return false;
+        }
+
+        $this->copyMailTemplates();
+        $this->ensureIconDir();
+
+        return true;
+    }
+
+    /**
      * @return bool
      */
     public function uninstall()
@@ -230,9 +264,23 @@ class Bankwire extends PaymentModule
     private function uninstallDb()
     {
         $prefix = _DB_PREFIX_;
+        // Rekening: memang dijanjikan hilang. confirmUninstall menyatakannya eksplisit ke
+        // merchant ("All configured bank accounts will be deleted"), jadi kontraknya sadar.
         Db::getInstance()->execute('DROP TABLE IF EXISTS `' . $prefix . 'bankwire_account`');
         Db::getInstance()->execute('DROP TABLE IF EXISTS `' . $prefix . 'bankwire_account_lang`');
         Db::getInstance()->execute('DROP TABLE IF EXISTS `' . $prefix . 'bankwire_account_shop`');
+
+        // `bankwire_order` ikut di-DROP. Mempertahankannya SUDAH DICOBA dan terbukti LEBIH
+        // BERBAHAYA: peta bertahan sementara `bankwire_account*` tetap dibuang, sehingga
+        // AUTO_INCREMENT kembali ke 1 dan rekening baru mendaur ulang id lama. Order lama
+        // lalu menampilkan rekening yang belum ada saat ia dibuat — di halaman konfirmasi
+        // maupun di `{bankwire_bank}` email. Peta yang hilang terlihat rusak; peta yatim
+        // tampak normal dan berbohong.
+        //
+        // Menjaga riwayat order melintasi uninstall butuh SNAPSHOT detail bank di dalam
+        // `bankwire_order` (nama/pemilik/detail disalin saat order dibuat) supaya ia tak
+        // pernah bergantung pada id rekening. Itu perubahan skema, bukan perubahan urutan
+        // DROP — dan belum diputuskan.
         Db::getInstance()->execute('DROP TABLE IF EXISTS `' . $prefix . 'bankwire_order`');
 
         return true;
@@ -317,22 +365,90 @@ class Bankwire extends PaymentModule
      * @param int $from
      * @param int $to
      *
-     * @return void
+     * @return bool false bila ada langkah yang gagal — pemanggil TIDAK boleh mempensiunkan
+     *              state asal, karena ordernya masih di sana
      */
     private function migrateOrdersBetweenStates($from, $to)
     {
         if ((int) $from === (int) $to) {
-            return;
+            return true;
         }
 
-        Db::getInstance()->execute(
-            'UPDATE `' . _DB_PREFIX_ . 'orders` SET `current_state` = ' . (int) $to
-            . ' WHERE `current_state` = ' . (int) $from
+        // TANPA transaksi, SENGAJA. `START TRANSACTION` lewat Db::execute() melempar di
+        // image 8.1 (PDO ATTR_ERRMODE=EXCEPTION di sana, SILENT di 1.7.8/9.1) sehingga
+        // COMMIT/ROLLBACK tak pernah jalan dan transaksi ditinggal TERBUKA — tulisan kode
+        // lain di request yang sama lalu hilang senyap. Ia juga berbohong di MyISAM, tempat
+        // ROLLBACK tak mengembalikan apa pun sementara log tetap mengklaimnya.
+        //
+        // Kebenaran dijamin URUTAN, bukan atomisitas: `order_history` dipindah DULU, baru
+        // `orders`. Bila langkah kedua gagal, riwayat sudah menunjuk kanonik sementara order
+        // masih di state asal — dan state asal TIDAK dipensiunkan karena fungsi ini
+        // mengembalikan false. Order tetap berada di status HIDUP; nol order telantar, yang
+        // memang satu-satunya kerusakan yang harus dicegah di sini.
+        $db = Db::getInstance();
+
+        try {
+            $ok = $db->execute(
+                'UPDATE `' . _DB_PREFIX_ . 'order_history` SET `id_order_state` = ' . (int) $to
+                . ' WHERE `id_order_state` = ' . (int) $from
+            );
+            if ($ok) {
+                $ok = $db->execute(
+                    'UPDATE `' . _DB_PREFIX_ . 'orders` SET `current_state` = ' . (int) $to
+                    . ' WHERE `current_state` = ' . (int) $from
+                );
+                $moved = (int) $db->Affected_Rows();
+            } else {
+                $moved = 0;
+            }
+        } catch (Exception $e) {
+            // `Throwable`, bukan `Exception`: PHP 8 melempar `Error` untuk method-call pada
+            // non-objek, dan `Error` tak mewarisi `Exception`. Apa pun yang lolos dari sini
+            // melompati blok pembersihan install() dan meninggalkan module AKTIF tanpa
+            // BANKWIRE_SIGNING_KEY — getSigningKey() lalu jatuh ke sha1(domain) dan tanda
+            // tangan tebakan diterima di toko utama.
+            $ok = false;
+            $moved = 0;
+        }
+
+        // Riwayat order bisa memuat dua baris berurutan dengan status sama setelah migrasi.
+        // SENGAJA tak dirapikan: order memang pernah melewati dua status yang kini jadi satu,
+        // dan menghapus barisnya akan memalsukan riwayat.
+        PrestaShopLogger::addLog(
+            '[bankwire] konsolidasi OrderState ' . (int) $from . ' -> ' . (int) $to
+            . ': ' . $moved . ' order dipindah, status=' . ($ok ? 'ok' : 'GAGAL'),
+            $ok ? 1 : 3,
+            null,
+            'Bankwire'
         );
-        Db::getInstance()->execute(
-            'UPDATE `' . _DB_PREFIX_ . 'order_history` SET `id_order_state` = ' . (int) $to
-            . ' WHERE `id_order_state` = ' . (int) $from
-        );
+
+        return (bool) $ok;
+    }
+
+    /**
+     * Nyalakan kembali `send_email` pada state yang diadopsi.
+     *
+     * `retireOrderState()` mematikannya saat uninstall (template email sudah dihapus, dan
+     * status yang mengirim tanpa template menghasilkan kegagalan ubah-status di 1.7.8/8.1
+     * serta placeholder mentah di 9.1). Saat module dipasang lagi templatenya kembali, jadi
+     * status harus kembali mengirim.
+     *
+     * Dipanggil dari KEDUA cabang adopsi. Versi sebelumnya hanya memasangnya di cabang
+     * satu-state, jadi instalasi yang melewati konsolidasi berakhir dengan kanonik
+     * ber-`send_email = 0`: gerbang core `AND os.send_email = 1` tak pernah cocok dan
+     * pelanggan tak pernah menerima instruksi transfer — tanpa satu pun pesan error.
+     *
+     * @param int $id
+     *
+     * @return void
+     */
+    private function reviveOrderStateEmail($id)
+    {
+        $state = new OrderState((int) $id);
+        if (Validate::isLoadedObject($state) && !$state->send_email) {
+            $state->send_email = true;
+            $state->update();
+        }
     }
 
     /**
@@ -410,7 +526,14 @@ class Bankwire extends PaymentModule
                 if ((int) $id === $canonical) {
                     continue;
                 }
-                $this->migrateOrdersBetweenStates((int) $id, $canonical);
+                // Pensiunkan HANYA bila ordernya benar-benar sudah pindah. Versi lalu
+                // mengabaikan hasil migrasi: sesudah kegagalan ia tetap mempensiunkan state
+                // asal, dan order tertinggal di status mati — persis kerusakan yang migrasi
+                // ini ada untuk mencegah. Duplikat yang hidup jauh lebih ringan daripada
+                // order yang tak bisa dijangkau merchant maupun pelanggan.
+                if (!$this->migrateOrdersBetweenStates((int) $id, $canonical)) {
+                    continue;
+                }
                 $dup = new OrderState((int) $id);
                 if (Validate::isLoadedObject($dup)) {
                     $dup->deleted = true;
@@ -418,12 +541,14 @@ class Bankwire extends PaymentModule
                     $dup->update();
                 }
             }
+            $this->reviveOrderStateEmail($canonical);
             $this->syncOrderStateCache($canonical);
 
             return true;
         }
 
         if (count($owned) === 1) {
+            $this->reviveOrderStateEmail((int) $owned[0]);
             $this->syncOrderStateCache((int) $owned[0]);
 
             return true;
@@ -547,11 +672,29 @@ class Bankwire extends PaymentModule
         // terkirim membawa placeholder mentah lewat fallback pindai modules/*/mails/.
         foreach ($this->findOwnedOrderStates() as $id) {
             $state = new OrderState((int) $id);
-            if (Validate::isLoadedObject($state)) {
-                $state->deleted = true;
-                $state->send_email = false;
-                $state->update();
+            if (!Validate::isLoadedObject($state)) {
+                continue;
             }
+
+            // Status yang masih dipegang order hidup TIDAK dipensiunkan. `deleted = true`
+            // membuatnya hilang dari dropdown BO, jadi merchant tak bisa lagi memindahkan
+            // order itu ke mana pun, dan halaman konfirmasi pelanggan jatuh ke cabang gagal.
+            // Tombol Reset di BO menjalankan uninstall()+install() (module ini tak terjangkau
+            // lewat jalur reset() core), jadi tanpa penjaga ini satu klik menelantarkan
+            // seluruh order yang sedang menunggu transfer.
+            //
+            // `send_email = false` tetap disetel: template email module sudah dihapus, dan
+            // status yang mencoba mengirim tanpa template menghasilkan kegagalan ubah-status
+            // di 1.7.8/8.1 dan placeholder mentah di 9.1. install ulang menyalakannya lagi.
+            $hasOrders = (int) Db::getInstance()->getValue(
+                'SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'orders`'
+                . ' WHERE `current_state` = ' . (int) $id,
+                false
+            );
+
+            $state->send_email = false;
+            $state->deleted = ($hasOrders === 0);
+            $state->update();
         }
 
         Configuration::deleteByName(self::OS_CONFIG_KEY);

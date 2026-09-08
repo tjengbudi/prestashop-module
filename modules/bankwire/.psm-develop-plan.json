@@ -79,5 +79,5 @@
       "note": "ps_order_state.module_name jadi sumber kebenaran kepemilikan; ps_configuration turun jadi cache; konsolidasi duplikat kini memindahkan order + riwayatnya."
     }
   ],
-  "verify_attempts": 0
+  "verify_attempts": 2
 }
