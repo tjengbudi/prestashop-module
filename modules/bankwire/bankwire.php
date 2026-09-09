@@ -758,6 +758,14 @@ class Bankwire extends PaymentModule
     public function getContent()
     {
         $this->ensureIconDir();
+        // Self-heal saat admin membuka halaman module. Jalur pemulihan lain tak selalu
+        // tersedia: `prestashop:module upgrade` melewati skrip upgrade bila versi DB sudah
+        // sama dengan versi file, jadi instalasi yang terlanjur memasang build cacat pada
+        // versi yang SAMA tak pernah sembuh sendiri — duplikat OrderState-nya bertahan
+        // sampai ada yang menekan Reset. Diverifikasi lewat skenario Lapis 5
+        // duplicate-order-states-on-upgrade. Aman di sini: ini halaman admin, bukan jalur
+        // checkout, dan ensureOrderState() idempoten.
+        $this->ensureOrderState();
 
         $showForm = false;
 
