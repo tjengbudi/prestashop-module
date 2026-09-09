@@ -25,11 +25,11 @@ import json
 import sys
 from pathlib import Path
 
-LAYERS = ("static", "flashlight", "adversarial", "e2e")
+LAYERS = ("static", "flashlight", "adversarial", "e2e", "scenario")
 # Lapis yang PUNYA bentuk per-versi. flashlight/e2e dijalankan & disatukan ps-run-layer.py;
 # static ditulis per-versi oleh pemanggil lewat -o. `adversarial` sengaja TAK di sini: ia
 # satu review lintas-versi di Fase 2 (ps-run-layer menolaknya, agregat cuma baca kanonik).
-PER_VERSION_LAYERS = ("static", "flashlight", "e2e")
+PER_VERSION_LAYERS = ("static", "flashlight", "e2e", "scenario")
 
 # Default kanonik psm_reports_dir, bentuk TANPA token (relatif cwd project). SKILL.md
 # menjanjikan "resolver absen -> lanjut dengan default kanonik skrip", tapi --reports-dir
@@ -196,7 +196,9 @@ def prov_for(layer, versions, ruleset, tag_map):
     """
     if layer == "static":
         return {"kind": "ruleset", **ruleset}
-    if layer in ("flashlight", "e2e"):
+    if layer in ("flashlight", "e2e", "scenario"):
+        # scenario ikut kanal image: ia mem-boot core yang sama, jadi bukti dari tag lain
+        # sama basinya seperti pada flashlight/e2e.
         return {"kind": "image", "expect": {v: fl.resolve_tag(tag_map, v) for v in versions}}
     return None
 

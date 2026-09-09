@@ -1002,6 +1002,62 @@ def main():
         ok &= check("tanpa --static & tanpa pasangan -> exit 2 berpesan, bukan Traceback",
                     r6.returncode == 2 and "Traceback" not in r6.stderr)
 
+    # Lapis 5 (skenario kondisi-rusak) menggerbang HANYA bila module mengapalkan skenario.
+    # Memaksanya ke tiap module akan menjatuhkan `ready` semua module lama demi lapis yang
+    # belum mereka pakai; sebaliknya, yang MENYATAKAN skenario wajib melewatinya.
+    with tempfile.TemporaryDirectory() as td:
+        rep = Path(td)
+        sres = static_result({"9.1": []})
+        sres["module"] = "m"
+        sp = rep / "m-static.json"
+        sp.write_text(json.dumps(sres), encoding="utf-8")
+
+        def _agg(*extra):
+            outp = rep / "out.json"
+            subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp), "-o", str(outp),
+                            *extra], capture_output=True, text=True)
+            return json.loads(outp.read_text())
+
+        def _scen(sources, scen_ok, conclusive=True):
+            sc = {"module": "m", "layer": "scenario", "status": "ran", "pass": scen_ok,
+                  "scenario_sources": sources, "scenario_notes": [],
+                  "versions": {"9.1": {"conclusive": conclusive, "pass": scen_ok, "scenarios": [
+                      {"name": "dup", "source": "dup.json", "ok": scen_ok,
+                       "conclusive": conclusive,
+                       "steps": [] if scen_ok else [{"phase": "then", "ok": False,
+                                                     "detail": "dapat='2' harap='1'"}]}]}}}
+            q = rep / "m-scenario.json"
+            q.write_text(json.dumps(sc), encoding="utf-8")
+            return str(q)
+
+        d = _agg()
+        ok &= check("tanpa lapis skenario -> tak masuk required (module lama tak terdampak)",
+                    "scenario" not in d["required_layers"]
+                    and d["layers_run"]["scenario"] is False)
+
+        d = _agg("--scenario", _scen(["dup.json"], True))
+        ok &= check("module mengapalkan skenario & lolos -> scenario MASUK required",
+                    "scenario" in d["required_layers"]
+                    and d["scenario_conclusive"] is True
+                    and d["versions"]["9.1"]["layers"]["scenario"]["conclusive"] is True)
+
+        d = _agg("--scenario", _scen(["dup.json"], False))
+        v = d["versions"]["9.1"]
+        ok &= check("skenario gagal -> pass False & temuan memblok ber-id scenario-*",
+                    d["pass"] is False and v["errors"] >= 1
+                    and any(f["id"].startswith("scenario-") for f in v["blocking"]))
+        ok &= check("temuan skenario membawa langkah yang gagal sbg fix (bukan pesan hampa)",
+                    any("harap" in (f.get("fix") or "") for f in v["blocking"]))
+
+        d = _agg("--scenario", _scen([], True, conclusive=False))
+        ok &= check("file ada tapi nol skenario -> TAK menggerbang (nol bukti bukan lolos)",
+                    "scenario" not in d["required_layers"]
+                    and d["versions"]["9.1"]["layers"]["scenario"]["conclusive"] is False)
+
+        d = _agg("--scenario", _scen(["dup.json"], True, conclusive=False))
+        ok &= check("skenario tak konklusif -> menggerbang tapi ready jatuh (bukan pass senyap)",
+                    "scenario" in d["required_layers"] and d["ready"] is False)
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

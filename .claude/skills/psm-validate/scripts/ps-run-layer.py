@@ -55,7 +55,8 @@ _HERE = Path(__file__).resolve().parent
 # Lapis yang memang dijalankan per versi. static murah dan sekali jalan di orkestrator;
 # adversarial adalah judgment satu reviewer atas seluruh cakupan — memaralelkan keduanya
 # bukan optimasi, dan file-nya tak berbentuk {versi: {...}} yang bisa disatukan.
-PARALLEL_LAYERS = {"flashlight": "ps-flashlight-run.py", "e2e": "ps-e2e-run.py"}
+PARALLEL_LAYERS = {"flashlight": "ps-flashlight-run.py", "e2e": "ps-e2e-run.py",
+                   "scenario": "ps-scenario-run.py"}
 SERIAL_LAYERS = {
     "static": "lapis static murah dan dijalankan sekali di orkestrator untuk semua versi",
     "adversarial": "lapis adversarial adalah satu reviewer atas seluruh cakupan, bukan per versi",
