@@ -157,7 +157,8 @@ Screenshot yang kamu tinjau **tak punya jalan ke vonis** kecuali lewat file lapi
 adversarial (`<psm_reports_dir>/<module>-adversarial.json`) — `ps-aggregate.py` tak pernah
 melihat gambar. Cacat visual yang kamu yakini, tulis ke situ SEBELUM agregat jalan:
 
-- **Tambahkan** ke `findings` yang sudah ada — jangan timpa: di file itu ada temuan
+- **Tambahkan** ke `findings` yang sudah ada — jangan timpa (SKILL.md menuntut read-merge
+  dari kedua arah, jadi Lapis 3 pun tak boleh menimpa temuanmu): di file itu ada temuan
   reviewer Lapis 3, dan menimpanya membuang temuan mereka diam-diam.
 - `severity: "error"` supaya memblok (`warning` tak pernah memblok).
 - Pastikan `versions` top-level **memuat versi yang kamu lihat sendiri**. Agregat menandai

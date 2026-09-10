@@ -933,6 +933,131 @@ def main():
     ok &= check("tanpa `file` -> tetap degrade ke 'line N' (bukan crash / 'None:42')",
                 mod._phpstan_loc({"line": 7}) == "line 7")
 
+    # Identitas bukti DITURUNKAN, bukan diketik. Dulu empat path diketik model di akhir run
+    # panjang dan `module` cuma dibaca dari payload static — satu salah ketik di folder yang
+    # memuat beberapa module diam-diam mengkreditkan bukti module lain ke `ready`.
+    with tempfile.TemporaryDirectory() as td:
+        rep = Path(td)
+        sres = static_result({"9.1": []})
+        sres["module"] = "mymod"
+        (rep / "mymod-static.json").write_text(json.dumps(sres), encoding="utf-8")
+        (rep / "mymod-flashlight.json").write_text(json.dumps(
+            {"module": "mymod", "status": "ran", "pass": True,
+             "versions": {"9.1": {"pass": True, "install": {"ok": True}}}}), encoding="utf-8")
+        modir = rep / "mymod"; modir.mkdir()
+
+        r = subprocess.run(["uv", "run", str(MOD_PATH), "--reports-dir", str(rep),
+                            "--module", str(modir)], capture_output=True, text=True)
+        ok &= check("--reports-dir + --module: path lapis diturunkan (tak diketik)",
+                    r.returncode in (0, 1) and "Traceback" not in r.stderr)
+        written = sorted(x.name for x in rep.glob("mymod-2*.json"))
+        ok &= check("nama output berstempel diturunkan di dalam skrip (model tak mengarang jam)",
+                    len(written) == 1)
+        if written:
+            got = json.loads((rep / written[0]).read_text())
+            # layers_run = {lapis: bool}. Yang diuji: file yang ADA terbaca, yang ABSEN
+            # tak dikarang jadi lapis yang jalan.
+            ok &= check("lapis yang PUNYA file terbaca, yang absen tak dikarang",
+                        got["layers_run"]["static"] is True
+                        and got["layers_run"]["e2e"] is False
+                        and got["layers_run"]["adversarial"] is False)
+
+        # Gerbang identitas: bukti module lain ditolak, bukan dikreditkan.
+        (rep / "mymod-e2e.json").write_text(json.dumps(
+            {"module": "modul-lain", "status": "ran", "pass": True,
+             "versions": {"9.1": {"pass": True, "conclusive": True}}}), encoding="utf-8")
+        r2 = subprocess.run(["uv", "run", str(MOD_PATH), "--reports-dir", str(rep),
+                             "--module", str(modir)], capture_output=True, text=True)
+        ok &= check("file lapis milik module lain -> exit 2, bukan vonis",
+                    r2.returncode == 2 and "modul-lain" in r2.stderr)
+
+        # Kontrol positif: identitas cocok -> lolos (gerbang tak kelebihan sapu).
+        (rep / "mymod-e2e.json").write_text(json.dumps(
+            {"module": "mymod", "status": "ran", "pass": True,
+             "versions": {"9.1": {"pass": True, "conclusive": True}}}), encoding="utf-8")
+        r3 = subprocess.run(["uv", "run", str(MOD_PATH), "--reports-dir", str(rep),
+                             "--module", str(modir)], capture_output=True, text=True)
+        ok &= check("identitas cocok -> jalan normal (gerbang tak over-fire)",
+                    r3.returncode in (0, 1) and "modul-lain" not in r3.stderr)
+
+        # Flag eksplisit tetap menang atas derivasi.
+        # Isinya harus BEDA dari file turunan, kalau tidak mutasi "derivasi menimpa flag"
+        # tak terasa sama sekali dan test ini hampa: versi 8.1 hanya ada di alt.
+        alt = rep / "alt-static.json"
+        alt_res = static_result({"8.1": []})
+        alt_res["module"] = "mymod"
+        alt.write_text(json.dumps(alt_res), encoding="utf-8")
+        r4 = subprocess.run(["uv", "run", str(MOD_PATH), "--reports-dir", str(rep),
+                             "--module", str(modir), "--static", str(alt),
+                             "-o", str(rep / "out.json")], capture_output=True, text=True)
+        got4 = json.loads((rep / "out.json").read_text()) if (rep / "out.json").exists() else {}
+        ok &= check("--static eksplisit menang atas nama turunan (versi dari alt, bukan turunan)",
+                    r4.returncode in (0, 1) and list(got4.get("versions", {})) == ["8.1"])
+
+        r5 = subprocess.run(["uv", "run", str(MOD_PATH), "--reports-dir", str(rep)],
+                            capture_output=True, text=True)
+        ok &= check("--reports-dir tanpa --module -> exit 2 (pasangan tak boleh separuh)",
+                    r5.returncode == 2)
+        r6 = subprocess.run(["uv", "run", str(MOD_PATH)], capture_output=True, text=True)
+        ok &= check("tanpa --static & tanpa pasangan -> exit 2 berpesan, bukan Traceback",
+                    r6.returncode == 2 and "Traceback" not in r6.stderr)
+
+    # Lapis 5 (skenario kondisi-rusak) menggerbang HANYA bila module mengapalkan skenario.
+    # Memaksanya ke tiap module akan menjatuhkan `ready` semua module lama demi lapis yang
+    # belum mereka pakai; sebaliknya, yang MENYATAKAN skenario wajib melewatinya.
+    with tempfile.TemporaryDirectory() as td:
+        rep = Path(td)
+        sres = static_result({"9.1": []})
+        sres["module"] = "m"
+        sp = rep / "m-static.json"
+        sp.write_text(json.dumps(sres), encoding="utf-8")
+
+        def _agg(*extra):
+            outp = rep / "out.json"
+            subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp), "-o", str(outp),
+                            *extra], capture_output=True, text=True)
+            return json.loads(outp.read_text())
+
+        def _scen(sources, scen_ok, conclusive=True):
+            sc = {"module": "m", "layer": "scenario", "status": "ran", "pass": scen_ok,
+                  "scenario_sources": sources, "scenario_notes": [],
+                  "versions": {"9.1": {"conclusive": conclusive, "pass": scen_ok, "scenarios": [
+                      {"name": "dup", "source": "dup.json", "ok": scen_ok,
+                       "conclusive": conclusive,
+                       "steps": [] if scen_ok else [{"phase": "then", "ok": False,
+                                                     "detail": "dapat='2' harap='1'"}]}]}}}
+            q = rep / "m-scenario.json"
+            q.write_text(json.dumps(sc), encoding="utf-8")
+            return str(q)
+
+        d = _agg()
+        ok &= check("tanpa lapis skenario -> tak masuk required (module lama tak terdampak)",
+                    "scenario" not in d["required_layers"]
+                    and d["layers_run"]["scenario"] is False)
+
+        d = _agg("--scenario", _scen(["dup.json"], True))
+        ok &= check("module mengapalkan skenario & lolos -> scenario MASUK required",
+                    "scenario" in d["required_layers"]
+                    and d["scenario_conclusive"] is True
+                    and d["versions"]["9.1"]["layers"]["scenario"]["conclusive"] is True)
+
+        d = _agg("--scenario", _scen(["dup.json"], False))
+        v = d["versions"]["9.1"]
+        ok &= check("skenario gagal -> pass False & temuan memblok ber-id scenario-*",
+                    d["pass"] is False and v["errors"] >= 1
+                    and any(f["id"].startswith("scenario-") for f in v["blocking"]))
+        ok &= check("temuan skenario membawa langkah yang gagal sbg fix (bukan pesan hampa)",
+                    any("harap" in (f.get("fix") or "") for f in v["blocking"]))
+
+        d = _agg("--scenario", _scen([], True, conclusive=False))
+        ok &= check("file ada tapi nol skenario -> TAK menggerbang (nol bukti bukan lolos)",
+                    "scenario" not in d["required_layers"]
+                    and d["versions"]["9.1"]["layers"]["scenario"]["conclusive"] is False)
+
+        d = _agg("--scenario", _scen(["dup.json"], True, conclusive=False))
+        ok &= check("skenario tak konklusif -> menggerbang tapi ready jatuh (bukan pass senyap)",
+                    "scenario" in d["required_layers"] and d["ready"] is False)
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

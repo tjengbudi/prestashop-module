@@ -1,0 +1,322 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:1.2" version="1.2">
+  <file source-language="en" target-language="id" datatype="plaintext" original="califea-modules-bankwire">
+    <body>
+      <trans-unit id="1" resname="A bank account with this name already exists. Please choose a different name.">
+        <source>A bank account with this name already exists. Please choose a different name.</source>
+        <target>Rekening bank dengan nama ini sudah ada. Silakan pilih nama lain.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="2" resname="Accept payments via transfer to several bank accounts that you can add, remove, enable or disable dynamically.">
+        <source>Accept payments via transfer to several bank accounts that you can add, remove, enable or disable dynamically.</source>
+        <target>Terima pembayaran via transfer ke beberapa rekening bank yang dapat Anda tambah, hapus, aktifkan, atau nonaktifkan secara dinamis.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="3" resname="Account number, branch, IBAN, BIC, etc.">
+        <source>Account number, branch, IBAN, BIC, etc.</source>
+        <target>Nomor rekening, cabang, IBAN, BIC, dll.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="4" resname="Account owner">
+        <source>Account owner</source>
+        <target>Pemilik rekening</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="5" resname="Actions">
+        <source>Actions</source>
+        <target>Aksi</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="6" resname="Add a bank account">
+        <source>Add a bank account</source>
+        <target>Tambah rekening bank</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="7" resname="Are you sure you want to uninstall? All configured bank accounts will be deleted.">
+        <source>Are you sure you want to uninstall? All configured bank accounts will be deleted.</source>
+        <target>Yakin ingin menghapus module? Semua rekening bank yang dikonfigurasi akan dihapus.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="8" resname="Back to list">
+        <source>Back to list</source>
+        <target>Kembali ke daftar</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="9" resname="Bank accounts">
+        <source>Bank accounts</source>
+        <target>Rekening bank</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="10" resname="Bank address">
+        <source>Bank address</source>
+        <target>Alamat bank</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="11" resname="Bank logo/icon (jpg, png, gif). Leave empty to keep the current one.">
+        <source>Bank logo/icon (jpg, png, gif). Leave empty to keep the current one.</source>
+        <target>Logo/icon bank (jpg, png, gif). Kosongkan untuk mempertahankan yang saat ini.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="12" resname="Bank name">
+        <source>Bank name</source>
+        <target>Nama bank</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="13" resname="Bank name is required.">
+        <source>Bank name is required.</source>
+        <target>Nama bank wajib diisi.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="14" resname="Bankwire (multi-bank)">
+        <source>Bankwire (multi-bank)</source>
+        <target>Bankwire (multi-bank)</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="15" resname="Could not save bank account.">
+        <source>Could not save bank account.</source>
+        <target>Rekening bank tidak dapat disimpan.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="16" resname="Could not save the icon image.">
+        <source>Could not save the icon image.</source>
+        <target>Gambar icon tidak dapat disimpan.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="17" resname="Customer information">
+        <source>Customer information</source>
+        <target>Informasi pelanggan</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="18" resname="Default reservation period">
+        <source>Default reservation period</source>
+        <target>Periode reservasi default</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="19" resname="Delete">
+        <source>Delete</source>
+        <target>Hapus</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="20" resname="Delete this bank account?">
+        <source>Delete this bank account?</source>
+        <target>Hapus rekening bank ini?</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="21" resname="Details">
+        <source>Details</source>
+        <target>Detail</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="22" resname="Displayed to the customer at checkout, e.g. Bank BCA, Bank Niaga, Jenius.">
+        <source>Displayed to the customer at checkout, e.g. Bank BCA, Bank Niaga, Jenius.</source>
+        <target>Ditampilkan kepada pelanggan saat checkout, mis. Bank BCA, Bank Niaga, Jenius.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="23" resname="Down">
+        <source>Down</source>
+        <target>Turun</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="24" resname="Edit">
+        <source>Edit</source>
+        <target>Edit</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="25" resname="Edit bank account">
+        <source>Edit bank account</source>
+        <target>Edit rekening bank</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="26" resname="Enabled">
+        <source>Enabled</source>
+        <target>Aktif</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="27" resname="Extra note shown to the customer for this bank, e.g. processing time. Leave empty to show nothing.">
+        <source>Extra note shown to the customer for this bank, e.g. processing time. Leave empty to show nothing.</source>
+        <target>Catatan tambahan yang ditampilkan kepada pelanggan untuk bank ini, mis. waktu pemrosesan. Kosongkan untuk tidak menampilkan apa pun.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="28" resname="Icon">
+        <source>Icon</source>
+        <target>Icon</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="29" resname="No bank account yet. Click &quot;Add a bank account&quot; to create the first one. Payment will appear at checkout once at least one bank is enabled.">
+        <source>No bank account yet. Click &quot;Add a bank account&quot; to create the first one. Payment will appear at checkout once at least one bank is enabled.</source>
+        <target>Belum ada rekening bank. Klik &quot;Tambah rekening bank&quot; untuk membuat yang pertama. Pembayaran akan muncul di checkout setelah setidaknya satu bank diaktifkan.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="30" resname="No currency has been set for this module.">
+        <source>No currency has been set for this module.</source>
+        <target>Tidak ada mata uang yang diatur untuk module ini.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="31" resname="Number of days items stay reserved for this bank. 0 = use the global default.">
+        <source>Number of days items stay reserved for this bank. 0 = use the global default.</source>
+        <target>Jumlah hari barang tetap direservasi untuk bank ini. 0 = pakai default global.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="32" resname="Number of days items stay reserved, used by any bank set to 0. Enter 0 to show no reservation notice.">
+        <source>Number of days items stay reserved, used by any bank set to 0. Enter 0 to show no reservation notice.</source>
+        <target>Jumlah hari barang direservasi, dipakai oleh bank yang diset 0. Masukkan 0 untuk tidak menampilkan pemberitahuan reservasi.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="33" resname="Position">
+        <source>Position</source>
+        <target>Posisi</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="34" resname="Reservation period">
+        <source>Reservation period</source>
+        <target>Periode reservasi</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="35" resname="Save">
+        <source>Save</source>
+        <target>Simpan</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="36" resname="Settings">
+        <source>Settings</source>
+        <target>Pengaturan</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="37" resname="The action could not be completed.">
+        <source>The action could not be completed.</source>
+        <target>Tindakan tidak dapat diselesaikan.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="38" resname="The bank account was saved, but the icon could not be uploaded.">
+        <source>The bank account was saved, but the icon could not be uploaded.</source>
+        <target>Rekening bank tersimpan, tetapi icon tidak dapat diunggah.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="39" resname="This bank account no longer exists.">
+        <source>This bank account no longer exists.</source>
+        <target>Rekening bank ini tidak ada lagi.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="40" resname="This module lets you accept payments by bank transfer to several accounts.">
+        <source>This module lets you accept payments by bank transfer to several accounts.</source>
+        <target>Module ini memungkinkan Anda menerima pembayaran via transfer bank ke beberapa rekening.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="41" resname="Toggle">
+        <source>Toggle</source>
+        <target>Ubah status</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="42" resname="Up">
+        <source>Up</source>
+        <target>Naik</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="43" resname="When a customer pays by bank transfer, the order status changes to 'Awaiting bank wire payment'.">
+        <source>When a customer pays by bank transfer, the order status changes to 'Awaiting bank wire payment'.</source>
+        <target>Saat pelanggan membayar via transfer bank, status pesanan berubah menjadi 'Menunggu pembayaran bankwire'.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="44" resname="You must manually confirm the order once you receive the transfer.">
+        <source>You must manually confirm the order once you receive the transfer.</source>
+        <target>Anda harus mengonfirmasi pesanan secara manual setelah menerima transfer.</target>
+        <note>Modules.Bankwire.Admin</note>
+      </trans-unit>
+      <trans-unit id="45" resname="Account details">
+        <source>Account details</source>
+        <target>Detail rekening</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="46" resname="Amount">
+        <source>Amount</source>
+        <target>Jumlah</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="47" resname="Bank">
+        <source>Bank</source>
+        <target>Bank</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="48" resname="Bank address">
+        <source>Bank address</source>
+        <target>Alamat bank</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="49" resname="Goods will be reserved for %d day and the order processed as soon as we receive your payment.">
+        <source>Goods will be reserved for %d day and the order processed as soon as we receive your payment.</source>
+        <target>Barang akan direservasi selama %d hari dan pesanan diproses segera setelah kami menerima pembayaran Anda.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="50" resname="Goods will be reserved for %d days and the order processed as soon as we receive your payment.">
+        <source>Goods will be reserved for %d days and the order processed as soon as we receive your payment.</source>
+        <target>Barang akan direservasi selama %d hari dan pesanan diproses segera setelah kami menerima pembayaran Anda.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="51" resname="If you have questions, comments or concerns, please contact our %s.">
+        <source>If you have questions, comments or concerns, please contact our %s.</source>
+        <target>Jika Anda memiliki pertanyaan, komentar, atau keluhan, silakan hubungi %s.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="52" resname="Name of account owner">
+        <source>Name of account owner</source>
+        <target>Nama pemilik rekening</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="53" resname="Pay by %s">
+        <source>Pay by %s</source>
+        <target>Bayar via %s</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="54" resname="Please send us your payment by bank transfer with the following details:">
+        <source>Please send us your payment by bank transfer with the following details:</source>
+        <target>Silakan kirim pembayaran Anda via transfer bank dengan detail berikut:</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="55" resname="Please specify your order reference %s in the transfer description.">
+        <source>Please specify your order reference %s in the transfer description.</source>
+        <target>Silakan cantumkan referensi pesanan %s pada keterangan transfer.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="56" resname="Please transfer the invoice amount to the account below. You will receive our order confirmation by email with the bank details and your order number.">
+        <source>Please transfer the invoice amount to the account below. You will receive our order confirmation by email with the bank details and your order number.</source>
+        <target>Silakan transfer jumlah tagihan ke rekening berikut. Anda akan menerima konfirmasi pesanan kami via email beserta detail bank dan nomor pesanan Anda.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="57" resname="The selected bank is not available.">
+        <source>The selected bank is not available.</source>
+        <target>Bank yang dipilih tidak tersedia.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="58" resname="This payment method is not available.">
+        <source>This payment method is not available.</source>
+        <target>Metode pembayaran ini tidak tersedia.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="59" resname="We have also sent you this information by email.">
+        <source>We have also sent you this information by email.</source>
+        <target>Kami juga telah mengirimkan informasi ini via email.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="60" resname="We noticed a problem with your order. If you think this is an error, feel free to contact our %s.">
+        <source>We noticed a problem with your order. If you think this is an error, feel free to contact our %s.</source>
+        <target>Kami menemukan masalah dengan pesanan Anda. Jika menurut Anda ini kesalahan, silakan hubungi %s.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="61" resname="Your order on %s is complete.">
+        <source>Your order on %s is complete.</source>
+        <target>Pesanan Anda di %s telah selesai.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="62" resname="Your order will be shipped as soon as we receive your payment.">
+        <source>Your order will be shipped as soon as we receive your payment.</source>
+        <target>Pesanan Anda akan dikirim segera setelah kami menerima pembayaran Anda.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="63" resname="expert customer support team">
+        <source>expert customer support team</source>
+        <target>tim dukungan pelanggan ahli kami</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

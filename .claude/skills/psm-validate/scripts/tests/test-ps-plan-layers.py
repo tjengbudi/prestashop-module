@@ -388,6 +388,27 @@ def main():
                     r_canon.returncode == 0 and '"per_version"' not in r_canon.stdout
                     and '"layers"' in r_canon.stdout)
 
+        # Roll-up gerbang Fase 2: model tak boleh meng-union 4 lapis x N versi dengan tangan
+        # di gerbang yang memutuskan boleh-tidaknya sweep rilis mahal dimulai.
+        roll = mod.per_version_rollup(pv3)
+        ok &= check("roll-up: ada yang rerun -> all_reuse False",
+                    roll["all_reuse"] is False)
+        ok &= check("roll-up: matriks memuat pasangan (lapis, versi) yang rerun",
+                    {"layer": "e2e", "version": "9.1"} in
+                    [{"layer": m["layer"], "version": m["version"]} for m in roll["rerun_matrix"]])
+        ok &= check("roll-up: e2e ditandai per-versi-capable",
+                    all(m["per_version_capable"] for m in roll["rerun_matrix"]
+                        if m["layer"] == "e2e"))
+        ok &= check("roll-up: adversarial ditandai TAK per-versi-capable "
+                    "(satu review lintas-versi; ps-run-layer menolak me-merge-nya)",
+                    all(m["per_version_capable"] is False for m in roll["rerun_matrix"]
+                        if m["layer"] == "adversarial"))
+        empty = mod.per_version_rollup({"9.1": {"layers": {}, "rerun": []}})
+        ok &= check("roll-up: nol rerun -> all_reuse True & matriks kosong",
+                    empty["all_reuse"] is True and empty["rerun_matrix"] == [])
+        ok &= check("CLI per-versi memancarkan roll-up (bukan cuma tersedia di fungsi)",
+                    '"all_reuse"' in r1.stdout and '"rerun_matrix"' in r1.stdout)
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

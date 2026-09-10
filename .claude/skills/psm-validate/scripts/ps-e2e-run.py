@@ -86,12 +86,18 @@ _spec.loader.exec_module(fl)
 DEFAULT_BROWSERS = "chromium,firefox"
 SUPPORTED_ENGINES = ("chromium", "firefox", "webkit")
 SUPPORTED_ACTIONS = ("goto", "expect_no_fatal", "expect_visible", "expect_text",
-                     "expect_no_console_error", "click", "click_optional", "fill", "screenshot")
+                     "expect_no_console_error", "click", "click_optional", "fill", "select",
+                     "wait_for_text", "screenshot")
 # Aksi yang benar-benar MENEGAKKAN sesuatu. goto/click/fill/screenshot menggerakkan browser
 # tapi tak menyatakan apa pun soal benar/salah — `click` cuma membuktikan tombolnya ADA, bukan
 # hasilnya benar. Diturunkan dari SUPPORTED_ACTIONS supaya aksi expect_* yang ditambahkan nanti
 # ikut terhitung tanpa daftar kedua yang bisa melenceng.
-ASSERT_ACTIONS = tuple(a for a in SUPPORTED_ACTIONS if a.startswith("expect_"))
+ASSERT_ACTIONS = tuple(a for a in SUPPORTED_ACTIONS
+                       if a.startswith("expect_") or a in ("wait_for_text",))
+# `wait_for_text` ikut dihitung MESKI tak berawalan expect_: ia gagal bila teksnya tak pernah
+# muncul dalam batas waktu, jadi ia menegakkan sesuatu persis seperti expect_text — hanya
+# dengan kesabaran. Meninggalkannya di luar akan mengecilkan authored_assertions dan melemahkan
+# gerbang e2e_smoke_only tepat pada skenario paling berharga (konfirmasi pembayaran).
 # Aksi yang menilai RESPONS server (status + fatal) di URL yang dituju: konklusif tanpa login
 # BO. Dulu konklusivitas dikunci per-AREA, jadi BO yang 500-fatal → login gagal → bo_authed
 # False → SETIAP assertion BO tak konklusif, TERMASUK expect_no_fatal yang ada persis untuk
@@ -111,6 +117,10 @@ DEFAULT_ADMIN_EMAIL = "admin@prestashop.com"
 DEFAULT_ADMIN_PASSWORD = "prestashop"
 DEFAULT_NAV_TIMEOUT_S = 60        # timeout per navigasi/aksi Playwright; flashlight dingin
                                   # butuh >20s di load pertama (kompilasi Smarty/Symfony)
+WAIT_TEXT_TIMEOUT_MS = 15000      # default `wait_for_text`; step boleh menimpanya via timeout_ms
+WAIT_TEXT_POLL_MS = 250           # jeda antar-cek; polling dipilih agar permukaan `page` yang
+                                  # dituntut tetap sama dengan aksi lain (count() saja), jadi
+                                  # logika ini tetap teruji dengan page-tiruan.
 SETTLE_TIMEOUT_MS = 15000         # batas tunggu settle (networkidle login BO / 'load'
                                   # sebelum expect_text) — BO polling XHR, jangan tunggu selamanya
 
@@ -482,7 +492,9 @@ def run_steps(page, steps, ctx):
 
     `page` cukup mengekspos goto()->response(status), url, content()->str, locator(sel)
     (.first.is_visible()/.count()), get_by_text(txt).filter(visible=True)(.count()),
-    click(sel), fill(sel,val) — sehingga logika ini teruji dengan page-tiruan.
+    click(sel), fill(sel,val), select_option(sel, label=) — sehingga logika ini teruji
+    dengan page-tiruan. `wait_for_text` sengaja MEM-POLL count() alih-alih memakai API
+    tunggu Playwright, supaya permukaan yang dituntut tak melebar dan ia tetap teruji.
     `expect_no_fatal` menilai body MENTAH dari ctx['doc'][page.url] (diisi
     _track_document lewat listener response); tanpa body itu ia TAK menilai (tak
     konklusif) alih-alih menebak dari DOM. `click_optional` = klik bila elemen ada,
@@ -570,6 +582,32 @@ def run_steps(page, steps, ctx):
             elif action == "fill":
                 page.fill(step.get("selector", ""), substitute(step.get("value", ""), ctx))
                 results.append(_res(action, True, conclusive, "filled", step.get("selector", "")))
+            elif action == "select":
+                # Dipilih lewat LABEL (teks yang dilihat manusia), bukan value: spec ditulis
+                # operator yang membaca dropdown, dan value-nya id numerik yang berbeda antar
+                # instalasi (id_country Indonesia tak sama di tiap fixture). Playwright
+                # auto-wait pada select_option, jadi field yang baru muncul setelah form
+                # di-render ulang (mis. provinsi sesudah ganti negara) tak perlu didahului
+                # expect_visible yang menilai seketika.
+                sel = step.get("selector", "")
+                label = substitute(step.get("value", ""), ctx)
+                page.select_option(sel, label=label)
+                results.append(_res(action, True, conclusive, f"selected {label}", sel))
+            elif action == "wait_for_text":
+                txt = substitute(step.get("text", ""), ctx)
+                limit_ms = int(step.get("timeout_ms", WAIT_TEXT_TIMEOUT_MS))
+                deadline = time.monotonic() + (limit_ms / 1000.0)
+                present = False
+                while True:
+                    # Sama seperti expect_text: hanya yang BENAR-BENAR TERLIHAT. BO PrestaShop
+                    # membawa template growl/modal tersembunyi, jadi node teks yang display:none
+                    # akan meloloskan halaman yang sebenarnya belum sampai.
+                    present = page.get_by_text(txt).filter(visible=True).count() > 0
+                    if present or time.monotonic() >= deadline:
+                        break
+                    time.sleep(WAIT_TEXT_POLL_MS / 1000.0)
+                results.append(_res(action, present, conclusive,
+                                    f"text present={present} dalam {limit_ms}ms: {txt[:50]}", area))
             elif action == "screenshot":
                 _snap(page, ctx, f"{idx:02d}-shot")
                 results.append(_res(action, True, conclusive, "screenshot diambil", ctx.get("screenshot_dir", "")))
@@ -1023,6 +1061,7 @@ def main():
         epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("module_path", help="Path folder module PrestaShop")
     ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
+    ap.add_argument("--config", help="JSON hasil resolve-psm-config.py — setelan keluarga (tag map, image DB, ps-domain, orchestrator, timeout, versi, browser) diisi dari sini untuk argumen yang tak diberikan eksplisit. Flag eksplisit selalu menang.")
     ap.add_argument("--browsers", default=DEFAULT_BROWSERS,
                     help=f"Engine Playwright dipisah koma (default: {DEFAULT_BROWSERS}; didukung: {','.join(SUPPORTED_ENGINES)})")
     ap.add_argument("--tag-map", default="", help="Peta LENGKAP versi=tag dipisah koma (MENGGANTI default)")
@@ -1052,6 +1091,8 @@ def main():
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
+    if args.config:
+        fl.apply_config_file(args, ap, args.config)
 
     module_dir = Path(args.module_path).resolve()
     if not module_dir.is_dir():

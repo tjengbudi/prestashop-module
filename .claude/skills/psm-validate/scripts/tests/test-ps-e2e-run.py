@@ -155,6 +155,11 @@ class FakePage:
         if "fill" in self._raise_on:
             raise RuntimeError("fill gagal")
 
+    def select_option(self, sel, label=None, value=None):
+        self.log.append(("select_option", sel, label, value))
+        if "select" in self._raise_on:
+            raise RuntimeError("select gagal")
+
     def on(self, event, handler):
         self.log.append(("on", event))
         self._handlers[event] = handler
@@ -163,6 +168,25 @@ class FakePage:
         self.log.append(("screenshot", path))
         if "screenshot" in self._raise_on:
             raise RuntimeError("screenshot gagal")
+
+
+class LatePage(FakePage):
+    """Halaman yang teksnya baru TERLIHAT setelah `appear_after` pemeriksaan.
+
+    Ini yang membedakan `wait_for_text` dari `expect_text`: yang kedua menilai seketika
+    dan akan merah pada halaman yang masih menyusul. Tanpa page seperti ini, test tak
+    bisa membedakan implementasi yang benar-benar menunggu dari yang cuma mengecek sekali.
+    """
+    def __init__(self, appear_after, text, **kw):
+        super().__init__(**kw)
+        self._appear_after = appear_after
+        self._text = text
+        self.checks = 0
+
+    def get_by_text(self, txt):
+        self.checks += 1
+        hit = 1 if (txt == self._text and self.checks > self._appear_after) else 0
+        return _TextLoc(hit, 0)
 
 
 class _FakeContext:
@@ -463,6 +487,41 @@ def main():
     ropt_exc = mod.run_steps(FakePage(raise_on={"click"}),
                              [{"action": "click_optional", "selector": "#x"}], _ctx())
     ok &= check("click_optional elemen ada tapi klik raise -> ok False", ropt_exc[0]["ok"] is False)
+    # --- run_steps: select (penggerak) & wait_for_text (assertion yang sabar) ---
+    pg_sel = FakePage()
+    rsel = mod.run_steps(pg_sel, [{"action": "select", "selector": "select[name=id_country]",
+                                   "value": "Indonesia"}], _ctx())
+    ok &= check("select -> ok & memanggil select_option", rsel[0]["ok"] is True
+                and ("select_option", "select[name=id_country]", "Indonesia", None) in pg_sel.log)
+    ok &= check("select memilih lewat LABEL, bukan value (id numerik beda antar instalasi)",
+                pg_sel.log[-1][2] == "Indonesia" and pg_sel.log[-1][3] is None)
+    rsel_sub = mod.run_steps(FakePage(), [{"action": "select", "selector": "#s",
+                                           "value": "{browser}"}],
+                             {**_ctx(), "browser": "chromium"})
+    ok &= check("select mensubstitusi placeholder di value", rsel_sub[0]["ok"] is True)
+    rsel_err = mod.run_steps(FakePage(raise_on=["select"]),
+                             [{"action": "select", "selector": "#s", "value": "X"}], _ctx())
+    ok &= check("select gagal (opsi/elemen tak ada) -> ok False", rsel_err[0]["ok"] is False)
+
+    # Halaman yang teksnya baru muncul: inilah yang membedakan wait_for_text dari expect_text.
+    pg_late = LatePage(appear_after=2, text="Please send us your payment",
+                       visible_text="")
+    rwait = mod.run_steps(pg_late, [{"action": "wait_for_text",
+                                     "text": "Please send us your payment",
+                                     "timeout_ms": 5000}], _ctx())
+    ok &= check("wait_for_text MENUNGGU teks yang menyusul -> ok",
+                rwait[0]["ok"] is True and pg_late.checks > 2)
+    pg_never = FakePage(visible_text="halaman lain")
+    rwait_no = mod.run_steps(pg_never, [{"action": "wait_for_text", "text": "tak pernah ada",
+                                         "timeout_ms": 50}], _ctx())
+    ok &= check("wait_for_text teks tak pernah muncul -> ok False (bukan menggantung)",
+                rwait_no[0]["ok"] is False)
+    pg_hidden = FakePage(visible_text="", hidden_text="Please send us your payment")
+    rwait_hid = mod.run_steps(pg_hidden, [{"action": "wait_for_text",
+                                           "text": "Please send us your payment",
+                                           "timeout_ms": 50}], _ctx())
+    ok &= check("wait_for_text mengabaikan teks TERSEMBUNYI (template growl BO)",
+                rwait_hid[0]["ok"] is False)
     rukn = mod.run_steps(FakePage(), [{"action": "teleport"}], _ctx())
     ok &= check("aksi tak dikenal -> ok False & tak konklusif (bukan silent pass)",
                 rukn[0]["ok"] is False and rukn[0]["conclusive"] is False)
@@ -609,16 +668,29 @@ def main():
                 mod.count_authored_assertions([_sc("trivial.json", [
                     _r("screenshot"), _r("goto"), _r("click"), _r("fill"),
                     _r("click_optional")])]) == 0)
+    ok &= check("wait_for_text terhitung authored assertion (aksi penggerak tidak)",
+                mod.count_authored_assertions([_sc("cfg.json", [
+                    _r("wait_for_text"), _r("goto"), _r("select")])]) == 1)
     ok &= check("aksi expect_* authored dihitung",
                 mod.count_authored_assertions([_sc("cfg.json", [
                     _r("expect_visible"), _r("expect_text"), _r("goto")])]) == 2)
     ok &= check("assertion TAK konklusif tak dihitung (jangan percaya sesi rusak)",
                 mod.count_authored_assertions([_sc("cfg.json", [
                     _r("expect_visible", conclusive=False), _r("expect_text")])]) == 1)
-    ok &= check("ASSERT_ACTIONS diturunkan dari SUPPORTED_ACTIONS (tanpa daftar kedua)",
-                set(mod.ASSERT_ACTIONS) == {a for a in mod.SUPPORTED_ACTIONS
-                                            if a.startswith("expect_")}
-                and len(mod.ASSERT_ACTIONS) == 4)
+    # Kontrak: ASSERT_ACTIONS boleh memuat aksi non-expect_ (wait_for_text menegakkan
+    # sesuatu juga), TAPI tiap anggotanya WAJIB ada di SUPPORTED_ACTIONS. Itu yang menutup
+    # kelas "daftar kedua yang mendrift": aksi yang dibuang dari SUPPORTED_ACTIONS tak bisa
+    # tertinggal hidup di sini, dan entri eksplisit yang salah ketik langsung merah.
+    ok &= check("tiap ASSERT_ACTION ada di SUPPORTED_ACTIONS (nol yatim)",
+                set(mod.ASSERT_ACTIONS) <= set(mod.SUPPORTED_ACTIONS))
+    ok &= check("semua expect_* ikut terhitung otomatis (derivasi tak dilewati)",
+                {a for a in mod.SUPPORTED_ACTIONS if a.startswith("expect_")}
+                <= set(mod.ASSERT_ACTIONS))
+    ok &= check("wait_for_text dihitung sbg assertion (gagal bila teks tak pernah muncul)",
+                "wait_for_text" in mod.ASSERT_ACTIONS)
+    ok &= check("aksi penggerak TIDAK terhitung assertion",
+                not ({"goto", "click", "fill", "select", "screenshot", "click_optional"}
+                     & set(mod.ASSERT_ACTIONS)))
 
     # --- playwright_available -> bool (env apa pun) ---
     ok &= check("playwright_available -> bool", isinstance(mod.playwright_available(), bool))

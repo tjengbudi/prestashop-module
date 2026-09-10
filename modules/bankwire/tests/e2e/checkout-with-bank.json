@@ -1,0 +1,238 @@
+{
+  "name": "bankwire-checkout-with-bank",
+  "description": "Jalur pembayaran yang sesungguhnya, ujung ke ujung: tambahkan satu rekening lewat form BO, buktikan tersimpan lewat MUAT ULANG halaman configure (bukan lewat respons POST — body respons POST tak tertangkap sehingga cek fatal jadi tak konklusif), lalu tembus guest checkout FO sampai blok PAYMENT dan pastikan opsi 'Pay by <bank>' milik module benar-benar ter-render. Melengkapi checkout-empty-banks (yang hanya menguji kondisi nol bank). Email pelanggan dibuat unik per-browser lewat {browser}; nama bank sengaja STATIS ('Bank Niaga E2E') karena runner e2e tak mensubstitusi placeholder di field selector — module kini MENOLAK duplikat nama case-insensitive (fix adv-duplicate-bank-name), jadi POST add-bank engine kedua gagal validasi (form kembali dengan error BO) dan checkout memakai baris bank engine pertama; assert konfirmasi tetap valid karena owner & nomor rekening identik. Cart sengaja diisi produk VIRTUAL (Mountain fox - Vector graphics, id 12) — tak ada carrier yang melayani alamat di fixture flashlight, sehingga cart fisik akan mentok di langkah pengiriman; cart murni virtual membuat PrestaShop melompati langkah itu langsung ke PAYMENT. Negara alamat DIPILIH eksplisit (Indonesia, diaktifkan oleh bo-setup-country) dan bukan dibiarkan default: PS_DETECT_COUNTRY=1 menebak negara dari bahasa browser, yang membuat firefox mendarat di United States dan checkout mentok pada State yang wajib. Select provinsi sengaja TIDAK didahului expect_visible: field itu baru muncul setelah PrestaShop me-render ulang form akibat ganti negara, dan expect_visible menilai seketika tanpa menunggu — sedangkan `select` menunggu elemennya siap. Kedua select diberi ':visible' karena PrestaShop merender DUA form alamat (pengiriman dan penagihan, salah satunya tersembunyi): tanpa penyaring itu `.first` bisa mengenai select yang tersembunyi dan Playwright menunggu sampai timeout atas elemen yang memang tak akan pernah bisa diklik. Setelah blok PAYMENT: klik label CTA 'Pay by <bank>' HANYA MEMILIH radio (form belum ter-submit — verified di 1.7/8/9, themes/core.js confirm() baru submit #pay-with-<id>-form saat tombol Place Order ditekan), lalu centang checkbox syarat&ketentuan (nama field beda per versi: conditions_to_approve[cgv] di 1.7, conditions_to_approve[terms-and-conditions] di 8/9 — keduanya dicoba via click_optional), lalu klik tombol 'Place Order', lalu ASSERT nama pemilik rekening dan nomor rekening TERLIHAT di HALAMAN KONFIRMASI ORDER (bukan sekadar additionalInformation payment step) — regresi untuk cutover hook displayPaymentReturn di 1.0.4 (sebelumnya hook paymentReturn mati di semua versi sehingga halaman konfirmasi kosong). Konklusif hanya bila login BO berhasil; bila gagal, langkah BO jadi inconclusive (tak memblok). Pasca klik 'place order', aksi wait_for_text (runner) polling sampai teks konfirmasi tampil (max 30s) karena POST->validateOrder+email->redirect bisa >15s di 8.x — pump expect_no_fatal saja terbukti tak cukup (false-fail run 8.1; pump 'load' langsung kembali bila dokumen sudah loaded padahal POST masih di jalan).",
+  "steps": [
+    {
+      "action": "goto",
+      "area": "bo",
+      "path": "/index.php?controller=AdminModules&configure=bankwire"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "click_optional",
+      "selector": "a.btn-continue"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "expect_text",
+      "text": "Bank accounts"
+    },
+    {
+      "action": "screenshot"
+    },
+    {
+      "action": "click",
+      "selector": "a[href*='action=addbank']"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "expect_visible",
+      "selector": "input[name=bank_name]"
+    },
+    {
+      "action": "fill",
+      "selector": "input[name=bank_name]",
+      "value": "Bank Niaga E2E"
+    },
+    {
+      "action": "fill",
+      "selector": "input[name=owner]",
+      "value": "PT Contoh Sejahtera"
+    },
+    {
+      "action": "fill",
+      "selector": "textarea[name=details]",
+      "value": "1234567890 a.n. PT Contoh Sejahtera"
+    },
+    {
+      "action": "screenshot"
+    },
+    {
+      "action": "click",
+      "selector": "button[name=submitBank]"
+    },
+    {
+      "action": "goto",
+      "area": "bo",
+      "path": "/index.php?controller=AdminModules&configure=bankwire"
+    },
+    {
+      "action": "click_optional",
+      "selector": "a.btn-continue"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "expect_text",
+      "text": "Bank Niaga E2E"
+    },
+    {
+      "action": "screenshot"
+    },
+    {
+      "action": "goto",
+      "area": "fo",
+      "path": "/"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "goto",
+      "area": "fo",
+      "path": "/index.php?controller=cart&add=1&id_product=12&qty=1"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "goto",
+      "area": "fo",
+      "path": "/index.php?controller=order"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "expect_visible",
+      "selector": "input[name=firstname]"
+    },
+    {
+      "action": "fill",
+      "selector": "input[name=firstname]",
+      "value": "Budi"
+    },
+    {
+      "action": "fill",
+      "selector": "input[name=lastname]",
+      "value": "Tester"
+    },
+    {
+      "action": "fill",
+      "selector": "input[name=email]",
+      "value": "e2e-{browser}@example.com"
+    },
+    {
+      "action": "click_optional",
+      "selector": "input[name=customer_privacy]"
+    },
+    {
+      "action": "click_optional",
+      "selector": "input[name=psgdpr]"
+    },
+    {
+      "action": "screenshot"
+    },
+    {
+      "action": "click",
+      "selector": "button[data-link-action=register-new-customer]"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "expect_visible",
+      "selector": "select[name=id_country]:visible"
+    },
+    {
+      "action": "select",
+      "selector": "select[name=id_country]:visible",
+      "value": "Indonesia"
+    },
+    {
+      "action": "select",
+      "selector": "select[name=id_state]:visible",
+      "value": "Jakarta"
+    },
+    {
+      "action": "expect_visible",
+      "selector": "input[name=address1]"
+    },
+    {
+      "action": "fill",
+      "selector": "input[name=address1]",
+      "value": "Jl. Danau Sunter Utara 1"
+    },
+    {
+      "action": "fill",
+      "selector": "input[name=city]",
+      "value": "Jakarta"
+    },
+    {
+      "action": "fill",
+      "selector": "input[name=postcode]",
+      "value": "14350"
+    },
+    {
+      "action": "fill",
+      "selector": "input[name=phone]",
+      "value": "02155512345"
+    },
+    {
+      "action": "screenshot"
+    },
+    {
+      "action": "click",
+      "selector": "button[name=confirm-addresses]"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "expect_text",
+      "text": "Pay by Bank Niaga E2E"
+    },
+    {
+      "action": "screenshot"
+    },
+    {
+      "action": "click",
+      "selector": "label:has-text('Pay by Bank Niaga E2E')"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "click_optional",
+      "selector": "input[name='conditions_to_approve[cgv]']:visible"
+    },
+    {
+      "action": "click_optional",
+      "selector": "input[name='conditions_to_approve[terms-and-conditions]']:visible"
+    },
+    {
+      "action": "click",
+      "selector": "button:has-text('place order')"
+    },
+    {
+      "action": "wait_for_text",
+      "text": "Please send us your payment by bank transfer",
+      "timeout_ms": 30000
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "expect_text",
+      "text": "PT Contoh Sejahtera"
+    },
+    {
+      "action": "expect_text",
+      "text": "Please send us your payment by bank transfer"
+    },
+    {
+      "action": "expect_text",
+      "text": "1234567890 a.n. PT Contoh Sejahtera"
+    },
+    {
+      "action": "screenshot"
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 # Kontrak review adversarial e-commerce (Lapis 3)
 
-Briefing WAJIB untuk subagent reviewer psm-validate — diberikan di **setiap** run.
+Kontrak WAJIB untuk peninjau Lapis 3 psm-validate — berlaku di **setiap** run, sama saat
+ditinjau subagent reviewer (default, konteks bersih) maupun saat orkestrator meninjau
+sendiri karena subagent tak tersedia (fallback; sebut itu di ringkasan).
 File ini memegang sikap dan bentuk kembalian yang ditegakkan skrip agregat.
 
 `{project-root}/_bmad/psm/memory/ecommerce/adversarial-checks.md` (bila ada) MENAMBAH

@@ -1,0 +1,18 @@
+{
+  "name": "bankwire-checkout-empty-banks-safe",
+  "description": "Dengan module aktif namun BELUM ada bank (fresh install), toko tidak boleh rusak: FO home, halaman produk, dan cart harus ter-render tanpa fatal/500. Menjaga jalur early-return hookPaymentOptions (0 bank aktif -> module tak menampilkan opsi, bukan error). Produk yang dimasukkan sengaja produk VIRTUAL (Mountain fox - Vector graphics, id 12): semua skenario berbagi satu browser context sehingga cart terbawa ke checkout-with-bank, dan cart yang murni virtual membuat PrestaShop melewati langkah pengiriman — perlu karena alamat default toko (United Kingdom) tak dilayani carrier mana pun di fixture flashlight.",
+  "steps": [
+    {"action": "goto", "area": "fo", "path": "/"},
+    {"action": "expect_no_fatal"},
+    {"action": "expect_visible", "selector": "body"},
+    {"action": "screenshot"},
+
+    {"action": "goto", "area": "fo", "path": "/index.php?controller=cart&add=1&id_product=12&qty=1"},
+    {"action": "expect_no_fatal"},
+
+    {"action": "goto", "area": "fo", "path": "/index.php?controller=order"},
+    {"action": "expect_no_fatal"},
+    {"action": "expect_visible", "selector": "body"},
+    {"action": "screenshot"}
+  ]
+}

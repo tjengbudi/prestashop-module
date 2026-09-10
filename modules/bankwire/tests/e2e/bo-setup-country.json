@@ -1,0 +1,55 @@
+{
+  "name": "bankwire-bo-activate-indonesia",
+  "description": "Prasyarat checkout, bukan uji module: aktifkan negara Indonesia (id 110) di BO supaya form alamat FO bisa MEMILIHNYA secara eksplisit. Tanpa ini negara alamat ditebak PrestaShop dari bahasa browser (PS_DETECT_COUNTRY=1 di ketiga fixture), sehingga firefox bisa mendarat di United States yang mewajibkan State dan checkout mentok — kegagalan lingkungan yang terbaca seolah module rusak. Di fixture flashlight hanya FR/GB/US yang aktif, jadi langkah ini wajib. Nama file diawali 'bo-' supaya urut sebelum skenario checkout-* (skenario dijalankan berurutan nama file dalam satu browser context). Toggle & tombol simpan ditulis dua varian dan semuanya click_optional: 1.7/8 memakai form helper legacy (#active_on, button[name=submitAddcountry]) sedangkan 9 memakai form Symfony CountryType (#country_is_enabled_1, #save-button). Sengaja BUKAN satu selector berkoma — bila dua varian kebetulan sama-sama ada, klik strict Playwright gagal karena cocok-ganda. Interstitial token punya DUA bentuk: 1.7/8 memakai a.btn-continue, sedangkan 9 memakai halaman 'Invalid token — Do you want to display this page?' dengan tombol 'I understand the risk' (#security-compromised-page a.btn-outline-danger); keduanya di-dismiss opsional berurutan, bukan lewat satu selector berkoma.",
+  "steps": [
+    {
+      "action": "goto",
+      "area": "bo",
+      "path": "/index.php?controller=AdminCountries&id_country=110&updatecountry"
+    },
+    {
+      "action": "click_optional",
+      "selector": "a.btn-continue"
+    },
+    {
+      "action": "click_optional",
+      "selector": "#security-compromised-page a.btn-outline-danger"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "click_optional",
+      "selector": "#active_on:not(:checked)"
+    },
+    {
+      "action": "click_optional",
+      "selector": "#country_is_enabled_1:not(:checked)"
+    },
+    {
+      "action": "screenshot"
+    },
+    {
+      "action": "click_optional",
+      "selector": "button[name=submitAddcountry]"
+    },
+    {
+      "action": "click_optional",
+      "selector": "#save-button"
+    },
+    {
+      "action": "click_optional",
+      "selector": "a.btn-continue"
+    },
+    {
+      "action": "click_optional",
+      "selector": "#security-compromised-page a.btn-outline-danger"
+    },
+    {
+      "action": "expect_no_fatal"
+    },
+    {
+      "action": "screenshot"
+    }
+  ]
+}

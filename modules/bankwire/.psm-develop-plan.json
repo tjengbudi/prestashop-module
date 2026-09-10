@@ -1,0 +1,109 @@
+{
+  "items": [
+    {
+      "function": "custom-text-per-bank",
+      "status": "diterapkan",
+      "add_hooks": [],
+      "insert_files": [
+        "bankwire.php",
+        "classes/BankAccount.php",
+        "controllers/front/validation.php",
+        "views/templates/hook/intro.tpl",
+        "views/templates/hook/payment_return.tpl",
+        "mails/en/bankwire_multibank.html",
+        "mails/en/bankwire_multibank.txt",
+        "mails/id/bankwire_multibank.html",
+        "mails/id/bankwire_multibank.txt",
+        "config.xml"
+      ],
+      "add_tables": [
+        "bankwire_account_lang"
+      ],
+      "add_classes": [],
+      "changes_objectmodel": true,
+      "files": []
+    },
+    {
+      "function": "reservation-days",
+      "status": "diterapkan",
+      "add_hooks": [],
+      "insert_files": [
+        "bankwire.php",
+        "classes/BankAccount.php",
+        "views/templates/hook/intro.tpl",
+        "views/templates/admin/bank_list.tpl"
+      ],
+      "add_tables": [],
+      "add_classes": [],
+      "changes_objectmodel": true
+    },
+    {
+      "function": "admin-info-panel",
+      "status": "diterapkan",
+      "add_hooks": [],
+      "insert_files": [
+        "bankwire.php",
+        "views/templates/admin/bank_list.tpl"
+      ],
+      "add_tables": [],
+      "add_classes": [],
+      "changes_objectmodel": false
+    },
+    {
+      "function": "fix-core-mail-template-clobber",
+      "status": "diterapkan",
+      "files": [
+        "modules/bankwire/bankwire.php",
+        "modules/bankwire/controllers/front/validation.php",
+        "modules/bankwire/mails/en/bankwire_multibank.html",
+        "modules/bankwire/mails/en/bankwire_multibank.txt",
+        "modules/bankwire/mails/id/bankwire_multibank.html",
+        "modules/bankwire/mails/id/bankwire_multibank.txt",
+        "modules/bankwire/upgrade/upgrade-1.0.6.php"
+      ],
+      "add_tables": [],
+      "add_classes": [],
+      "add_hooks": [],
+      "note": "Perbaikan pemblokir adv-core-mail-template-clobber. OrderState sendiri (BANKWIRE_OS_AWAITING) + template bernama unik bankwire_multibank; core mails/<iso>/bankwire.* tak lagi ditimpa. Penyalinan ke _PS_MAIL_DIR_ DIPERTAHANKAN karena fallback pindai modules/*/mails/ hanya ada di 9.1, tak ada di 1.7.8/8.1."
+    },
+    {
+      "function": "fix-orderstate-ownership-root",
+      "status": "diterapkan",
+      "files": [
+        "modules/bankwire/bankwire.php",
+        "modules/bankwire/controllers/front/validation.php"
+      ],
+      "add_tables": [],
+      "add_classes": [],
+      "add_hooks": [],
+      "note": "ps_order_state.module_name jadi sumber kebenaran kepemilikan; ps_configuration turun jadi cache; konsolidasi duplikat kini memindahkan order + riwayatnya."
+    },
+    {
+      "function": "Bump versi → 1.0.2",
+      "status": "diterapkan",
+      "files": [
+        "modules/bankwire/bankwire.php",
+        "modules/bankwire/config.xml",
+        "modules/bankwire/upgrade/upgrade-1.0.2.php"
+      ],
+      "add_tables": [],
+      "add_classes": [],
+      "add_hooks": []
+    },
+    {
+      "function": "fix-validation-warnings-v106",
+      "status": "diterapkan",
+      "files": [
+        "modules/bankwire/views/templates/hook/payment_return.tpl",
+        "modules/bankwire/translations/bankwire.id.xlf",
+        "modules/bankwire/translations/bankwire.en.xlf",
+        "modules/bankwire/tests/scenarios/index.php"
+      ],
+      "add_tables": [],
+      "add_classes": [],
+      "add_hooks": [],
+      "note": "W1 tags→sprintf di payment_return.tpl (PS9 Symfony translator tak mensubstitusi tags; sprintf anjuran pesan error PS9); label link jadi unit terjemahan sendiri (id 63). W2 stub index.php di tests/scenarios/. Tanpa bump versi (pra-commit v1.0.6)."
+    }
+  ],
+  "verify_attempts": 2
+}

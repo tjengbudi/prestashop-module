@@ -20,13 +20,14 @@ Pembagian kerja: skrip menghitung/menggabung/membandingkan (satu jawaban benar);
 model tinggal menghasilkan temuan adversarial (Lapis 3) & prosa untuk manusia.
 """
 import argparse
+import datetime
 import importlib.util
 import json
 import sys
 from pathlib import Path
 
 ERROR = "error"
-LAYERS = ("static", "flashlight", "adversarial", "e2e")
+LAYERS = ("static", "flashlight", "adversarial", "e2e", "scenario")
 
 # "Cakupan apa yang DITINJAU file lapis ini" hanya boleh punya SATU definisi. Dulu
 # ps-plan-layers menegakkannya (menolak reuse file yang cakupannya kurang) sementara
@@ -637,13 +638,50 @@ def adversarial_layer(adversarial, full_ver):
     return {"ran": True, "conclusive": True, "errors": errs, "findings": findings}
 
 
-def merge_version(full_ver, static, flash, adversarial, e2e):
+def scenario_layer(scen, full_ver):
+    """Lapis 5 — skenario kondisi-rusak. Konklusif hanya bila ADA skenario yang dinilai.
+
+    Nol skenario BUKAN lolos: module tanpa `tests/scenarios/` tak membuktikan apa pun tentang
+    perilakunya di keadaan rusak, dan menandainya konklusif membuat `ready` mengklaim
+    pengujian yang tak pernah ada. Itu juga sebabnya lapis ini hanya MENGGERBANG bila module
+    memang mengapalkan skenario (lihat gerbang `required` di main) — memaksanya ke tiap module
+    akan menjatuhkan `ready` semua module lama demi lapis yang belum mereka pakai.
+
+    Skenario yang `given`-nya gagal masuk kanal TAK KONKLUSIF, bukan gagal: kondisi rusaknya
+    tak terbentuk, jadi apa pun yang dinilai sesudahnya bicara tentang keadaan yang bukan
+    yang dimaksud.
+    """
+    if scen is None:
+        return {"ran": False, "conclusive": False, "errors": 0,
+                "reason": "tak ada file lapis skenario", "findings": []}
+    ver = (scen.get("versions") or {}).get(full_ver)
+    if ver is None:
+        return {"ran": True, "conclusive": False, "errors": 0,
+                "reason": "versi tak dijalankan di lapis skenario", "findings": []}
+    findings = []
+    for s in ver.get("scenarios", []):
+        if s.get("conclusive") and not s.get("ok"):
+            gagal = [st for st in s.get("steps", []) if not st.get("ok")]
+            findings.append({
+                "source": "scenario", "id": f"scenario-{s.get('name', '?')}",
+                "severity": ERROR,
+                "message": f"skenario kondisi-rusak gagal: {s.get('name', '?')}",
+                "fix": "; ".join(f"{g.get('phase')}: {g.get('detail', '')[:120]}" for g in gagal[:3]),
+                "location": s.get("source", ""),
+            })
+    return {"ran": True, "conclusive": bool(ver.get("conclusive")),
+            "errors": len(findings), "findings": findings,
+            "scenarios_run": len(ver.get("scenarios", []))}
+
+
+def merge_version(full_ver, static, flash, adversarial, e2e, scen=None):
     s = static_layer(static, full_ver)
     fl = flashlight_layer(flash, full_ver)
     adv = adversarial_layer(adversarial, full_ver)
     e = e2e_layer(e2e, full_ver)
+    sc = scenario_layer(scen, full_ver)
 
-    all_findings = [f for layer in (s, fl, adv, e) for f in layer["findings"]]
+    all_findings = [f for layer in (s, fl, adv, e, sc) for f in layer["findings"]]
     blocking = [f for f in all_findings if f["severity"] == ERROR]
     # Lolos bila tak ada error dari lapis KONKLUSIF manapun.
     passed = len(blocking) == 0
@@ -660,7 +698,8 @@ def merge_version(full_ver, static, flash, adversarial, e2e):
         # warning adversarial/flashlight tak terhitung. Pemilik hitungannya agregat, bukan prosa.
         "errors": len(blocking),
         "warnings": len([f for f in all_findings if f["severity"] == "warning"]),
-        "layers": {"static": s, "flashlight": fl, "adversarial": adv, "e2e": e},
+        "scenario_conclusive": sc["conclusive"],
+        "layers": {"static": s, "flashlight": fl, "adversarial": adv, "e2e": e, "scenario": sc},
         "blocking": blocking,
     }
 
@@ -668,10 +707,17 @@ def merge_version(full_ver, static, flash, adversarial, e2e):
 def main():
     ap = argparse.ArgumentParser(description="Satukan empat lapis validasi jadi vonis terstruktur.",
                                  epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--static", required=True, help="JSON output ps-static-scan.py")
+    ap.add_argument("--reports-dir", help="Folder laporan. Dengan --module, keempat nama file "
+                                          "lapis kanonik DITURUNKAN (<module>-<lapis>.json) dan lapis "
+                                          "yang filenya absen dilewati — path tak perlu diketik. "
+                                          "Flag lapis eksplisit tetap menang bila diberikan.")
+    ap.add_argument("--module", help="Path folder module. Wajib bersama --reports-dir; juga "
+                                     "menegakkan identitas: file lapis milik module lain ditolak.")
+    ap.add_argument("--static", help="JSON output ps-static-scan.py (wajib kecuali --reports-dir/--module)")
     ap.add_argument("--flashlight", help="JSON output ps-flashlight-run.py (opsional bila dilewati)")
     ap.add_argument("--adversarial", help="JSON temuan adversarial buatan model (opsional)")
     ap.add_argument("--e2e", help="JSON output ps-e2e-run.py (Lapis 4, opsional bila dilewati)")
+    ap.add_argument("--scenario", help="JSON output ps-scenario-run.py (Lapis 5, opsional bila dilewati)")
     ap.add_argument("--versions", help="Versi target dipisah koma (default: dari hasil static)")
     ap.add_argument("--require", help="Lapis yang WAJIB tuntas agar `ready` true, dipisah koma "
                                       f"({'|'.join(LAYERS)}). DEFAULT: KEEMPATNYA — siap-rilis berarti "
@@ -682,15 +728,52 @@ def main():
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     args = ap.parse_args()
 
+    # Nama file lapis DITURUNKAN bila folder+module diberi. Mengetik empat path dengan tangan
+    # di akhir run panjang adalah kerja deterministik yang sudah punya satu jawaban benar
+    # (cermin layer_file() di ps-run-layer.py), dan salah ketik segmen module diam-diam
+    # mengkreditkan bukti module lain ke vonis ini.
+    if bool(args.reports_dir) != bool(args.module):
+        print("error: --reports-dir dan --module harus diberikan bersama", file=sys.stderr)
+        sys.exit(2)
+    if args.reports_dir:
+        mod_name = Path(args.module).resolve().name
+        for layer in LAYERS:
+            if getattr(args, layer, None):
+                continue  # flag eksplisit menang
+            cand = Path(args.reports_dir) / f"{mod_name}-{layer}.json"
+            if cand.exists():
+                setattr(args, layer, str(cand))
+        if not args.output:
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
+            args.output = str(Path(args.reports_dir) / f"{mod_name}-{stamp}.json")
+    if not args.static:
+        print("error: --static wajib (atau beri --reports-dir + --module agar diturunkan)",
+              file=sys.stderr)
+        sys.exit(2)
+
     static = load_json(args.static, "static-scan")
     flash = load_json(args.flashlight, "flashlight") if args.flashlight else None
     adversarial = load_json(args.adversarial, "adversarial") if args.adversarial else None
     e2e = load_json(args.e2e, "e2e") if args.e2e else None
+    scen = load_json(args.scenario, "scenario") if args.scenario else None
 
     # Bentuk file lapis buatan skrip digerbang SEBELUM dibaca — kalau tidak, file terpotong
     # meledak jadi Traceback + exit 1 dan CI tak bisa membedakannya dari "module punya error
     # pemblokir". static_layer membaca f["id"]/f["severity"]/f["message"] langsung, jadi khusus
     # static kunci itu diwajibkan; lapis lain memakai .get() dan cukup dijaga bentuk containernya.
+    # Gerbang identitas module: ps-aggregate dulu membaca `module` HANYA dari payload static
+    # dan tak pernah membandingkannya dengan lapis lain, jadi satu path salah ketik di folder
+    # yang memuat beberapa module dikreditkan diam-diam ke vonis ini. Ini satu-satunya skrip
+    # yang mengemit `ready`, jadi kelas itu tak boleh punya permukaan di sini.
+    static_module = (static or {}).get("module")
+    if static_module:
+        for payload, label in ((flash, "flashlight"), (adversarial, "adversarial"), (e2e, "e2e")):
+            other = (payload or {}).get("module")
+            if other and other != static_module:
+                print(f"error: file lapis {label} milik module '{other}', bukan '{static_module}' "
+                      "— bukti module lain tak boleh masuk vonis ini", file=sys.stderr)
+                sys.exit(2)
+
     for payload, label, keys in ((static, "static-scan", ("id", "severity", "message")),
                                  (flash, "flashlight", ()), (e2e, "e2e", ())):
         if payload is None:
@@ -750,7 +833,7 @@ def main():
     all_conclusive = True
     all_e2e_conclusive = True
     for full_ver in target_versions:
-        m = merge_version(full_ver, static, flash, adversarial, e2e)
+        m = merge_version(full_ver, static, flash, adversarial, e2e, scen)
         versions[full_ver] = m
         overall_pass = overall_pass and m["pass"]
         all_conclusive = all_conclusive and m["flashlight_conclusive"]
@@ -783,6 +866,14 @@ def main():
             return 2
     else:
         required = list(LAYERS)
+        # Lapis 5 hanya menggerbang bila module MEMANG mengapalkan skenario. Memaksanya ke
+        # tiap module akan menjatuhkan `ready` semua module lama demi lapis yang belum mereka
+        # pakai — regresi yang kena semua orang. Sebaliknya, module yang MENYATAKAN skenario
+        # wajib melewatinya: menyatakan lalu gagal tak boleh tetap siap-rilis.
+        # Konsekuensi jujur & disengaja: menghapus tests/scenarios/ menghijaukan `ready`,
+        # sama seperti menghapus test mana pun. Gerbang mengukur yang ADA, bukan yang mungkin.
+        if not (scen and scen.get("scenario_sources")):
+            required = [l for l in required if l != "scenario"]
 
     # `ready` per versi, dari fungsi yang sama yang menghitung `ready` keseluruhan. Kontrak
     # ketiga skill sibling ditulis per-versi ("siap hanya bila `ready` true di 1.7.x, 8.x, 9.x")
@@ -800,11 +891,13 @@ def main():
         "required_layers": required,
         "flashlight_conclusive": all_conclusive,
         "e2e_conclusive": all_e2e_conclusive,
+        "scenario_conclusive": all(m["layers"]["scenario"]["conclusive"] for m in versions.values()),
         "layers_run": {
             "static": True,
             "flashlight": flashlight_ran,
             "adversarial": adversarial is not None,
             "e2e": e2e_ran,
+            "scenario": scen is not None,
         },
     }
     # Spec E2E authored yang dilewati (JSON rusak / tanpa steps) di-echo di top-level supaya
@@ -830,9 +923,14 @@ def main():
         result["e2e_browsers_run"] = (e2e or {}).get("browsers_available") or []
     # Folder screenshot E2E di-echo agar path artefak visual ('cek web asli') sampai ke laporan
     # gabungan — supaya render bisa ditinjau, bukan cuma diproduksi lalu terlupakan.
+    # Bentuknya DUA: run langsung ps-e2e-run.py mengemit satu string; file lapis hasil merge
+    # ps-run-layer mengemit DAFTAR (satu folder run per invokasi orkestrator — konvergensi
+    # per-versi memang menstempel ulang tiap kali). Dinormalkan ke daftar supaya peninjau
+    # visual menerima SEMUA folder, bukan yang kebetulan pertama.
     e2e_shot_dir = (e2e or {}).get("screenshot_dir")
     if e2e_shot_dir:
-        result["e2e_screenshot_dir"] = e2e_shot_dir
+        dirs = e2e_shot_dir if isinstance(e2e_shot_dir, list) else [e2e_shot_dir]
+        result["e2e_screenshot_dir"] = [d for d in dirs if d]
     out = json.dumps(result, indent=2, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(out, encoding="utf-8")

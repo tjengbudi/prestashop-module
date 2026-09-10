@@ -1,0 +1,12 @@
+{
+  "name": "selfcheck-given-membentuk-kondisi",
+  "description": "Kontrol positif untuk skenario duplikat: membuktikan blok `given` BENAR-BENAR membentuk dua state hidup yang keduanya memegang order. Tanpa kontrol ini, skenario utama bisa hijau karena kondisinya tak pernah terbentuk — bukan karena perbaikannya bekerja.",
+  "given": [
+    "SET @orig := (SELECT id_order_state FROM `{prefix}order_state` WHERE module_name='bankwire' AND deleted=0 ORDER BY id_order_state LIMIT 1); INSERT INTO `{prefix}order_state` (invoice,send_email,module_name,color,unremovable,hidden,logable,delivery,shipped,paid,deleted) SELECT invoice,send_email,module_name,color,unremovable,hidden,logable,delivery,shipped,paid,0 FROM `{prefix}order_state` WHERE id_order_state=@orig; SET @dup := LAST_INSERT_ID(); INSERT INTO `{prefix}order_state_lang` (id_order_state,id_lang,name,template) SELECT @dup,id_lang,name,template FROM `{prefix}order_state_lang` WHERE id_order_state=@orig; SET @lo := (SELECT MIN(id_order) FROM `{prefix}orders`); SET @hi := (SELECT MAX(id_order) FROM `{prefix}orders`); UPDATE `{prefix}orders` SET current_state=@orig WHERE id_order=@lo; UPDATE `{prefix}orders` SET current_state=@dup WHERE id_order=@hi;"
+  ],
+  "when": "none",
+  "then": [
+    {"query": "SELECT COUNT(*) FROM `{prefix}order_state` WHERE module_name='bankwire' AND deleted=0", "expect": "2"},
+    {"query": "SELECT COUNT(*) FROM `{prefix}orders` o JOIN `{prefix}order_state` s ON o.current_state=s.id_order_state WHERE s.module_name='bankwire'", "expect": "2"}
+  ]
+}

@@ -6,3 +6,16 @@ __pycache__/
 # abaikan report HTML/md + dump scanner (lint-*/prepass-*) yang jadi bulk distribusi (~6.4M).
 .claude/skills/psm-validate/.analysis/*/*
 !.claude/skills/psm-validate/.analysis/*/findings.json
+
+# Laporan psm-validate: seluruhnya hasil generate & regenerable (file lapis per-versi,
+# kanonik, vonis berstempel, screenshot E2E, cache config resolved). Pengetahuan yang
+# bertahan hidup di <module>/.psm-develop-plan.md dan _bmad/psm/memory/projects/, bukan di sini.
+_bmad-output/psm-validate/
+
+# Setting Claude Code khusus mesin ini (mis. ambang auto-compact), bukan konvensi repo —
+# jangan dibagikan lewat git.
+.claude/settings.local.json
+
+# Alternate data stream NTFS yang ikut terbawa saat file disalin dari Windows ke WSL —
+# penanda asal-unduhan, bukan isi repo, dan lahir lagi tiap copy-paste berikutnya.
+*:Zone.Identifier

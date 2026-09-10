@@ -81,12 +81,12 @@ Menunjuk seluruh folder berarti pi juga melihat semua skill bmad di pohon itu, b
 
 **droid** belum disiapkan. Dia hanya memindai `<repo>/.factory/skills/`, `~/.factory/skills/`, dan folder kompat `.agent/skills/` — `.claude/skills/` tidak termasuk, jadi butuh symlink per-skill. Dua hal harus diuji lebih dulu:
 
-- **Routing subagent BYOK** ([Factory-AI/factory#1061](https://github.com/Factory-AI/factory/issues/1061)) — subagent droid dilaporkan lari ke Anthropic alih-alih model BYOK. `psm-validate` bergantung pada subagent di dua tempat: Lapis 3 (review adversarial) dan paralelisme per-versi.
+- **Routing subagent BYOK** ([Factory-AI/factory#1061](https://github.com/Factory-AI/factory/issues/1061)) — subagent droid dilaporkan lari ke Anthropic alih-alih model BYOK. `psm-validate` kini memakai subagent di **satu** tempat saja: reviewer Lapis 3 (review adversarial). Paralelisme per-versi tak lagi memakai subagent sama sekali — itu milik `ps-run-layer.py --jobs`.
 - **`droid exec --model` menolak model ID custom** ([#787](https://github.com/Factory-AI/factory/issues/787)) — `droid exec` adalah mode non-interaktif untuk run panjang.
 
 Keduanya bisa saja sudah diperbaiki di versi yang kamu pasang; keduanya belum diverifikasi di repo ini.
 
-> **Catatan subagent umum.** `psm-validate` sudah punya fallback bila harness tak bisa men-spawn subagent: review adversarial dikerjakan sendiri dan versi dikonvergensikan serial, dengan kontrak hasil yang sama. Paralelisme adalah optimasi, bukan syarat vonis — jadi skill tetap sah di harness tanpa subagent, hanya lebih lambat.
+> **Catatan subagent umum.** `psm-validate` memakai subagent untuk **satu** hal: reviewer Lapis 3, yang dibeli bukan kecepatan melainkan **konteks bersih** — peninjau yang sudah melihat hasil Lapis 1/2/4 cenderung membaca pindai bersih sebagai bukti sehat. Bila harness tak bisa men-spawn subagent, skill meninjau sendiri di bawah kontrak yang sama dan menyebutkan itu di ringkasan, jadi ia tetap jalan utuh — hanya dengan konteks yang diakui tak bersih. Kecepatan lintas-versi tak pernah lewat subagent: itu `ps-run-layer.py --jobs`.
 
 ---
 
@@ -350,7 +350,7 @@ Hanya ada dua arah, dan keduanya searah:
 
 Tiga workflow juga **mengarahkan ke `psm-scaffold` lalu berhenti** bila targetnya ternyata bukan module (`looks_like_module: false`): `psm-develop`, `psm-plan`, `psm-ideate`. Itu gerbang target — mereka menolak merancang di atas ketiadaan, alih-alih menghasilkan scan kosong yang menyerupai sukses.
 
-Di dalam dirinya sendiri, `psm-validate` juga mendelegasikan ke **subagent** (bukan skill): satu subagent per versi target saat versi > 1, plus satu subagent reviewer untuk Lapis 3 — supaya source module tak membebani konteks orkestrasi.
+Di dalam dirinya sendiri, `psm-validate` mendelegasikan ke **satu** subagent (bukan skill): reviewer Lapis 3, supaya lensa adversarialnya bekerja di konteks bersih. Konkurensi lintas-versi bukan urusan subagent — `ps-run-layer.py` mem-boot beberapa versi serentak sebagai subproses lewat `--jobs`, dan vonis tetap milik skrip.
 
 ### 2. Skrip milik bersama (skill X menjalankan skrip milik skill Y)
 

@@ -55,7 +55,8 @@ _HERE = Path(__file__).resolve().parent
 # Lapis yang memang dijalankan per versi. static murah dan sekali jalan di orkestrator;
 # adversarial adalah judgment satu reviewer atas seluruh cakupan — memaralelkan keduanya
 # bukan optimasi, dan file-nya tak berbentuk {versi: {...}} yang bisa disatukan.
-PARALLEL_LAYERS = {"flashlight": "ps-flashlight-run.py", "e2e": "ps-e2e-run.py"}
+PARALLEL_LAYERS = {"flashlight": "ps-flashlight-run.py", "e2e": "ps-e2e-run.py",
+                   "scenario": "ps-scenario-run.py"}
 SERIAL_LAYERS = {
     "static": "lapis static murah dan dijalankan sekali di orkestrator untuk semua versi",
     "adversarial": "lapis adversarial adalah satu reviewer atas seluruh cakupan, bukan per versi",
@@ -79,6 +80,12 @@ DEFAULT_JOBS = 3  # tiap job mem-boot container PS + DB (Lapis 4 plus engine bro
 _AND_KEYS = ("pass",)                                    # AND: lolos hanya bila semua lolos
 _OR_KEYS = ("e2e_available", "docker_available")         # OR: lapis tersedia bila ADA yang bisa
 _PREFER_RAN_KEYS = ("status",)                           # "ran" bila ada satu pun yang jalan
+# UNION: kunci yang SAH berbeda antar invokasi orkestrator, jadi konflik skalar salah alamat.
+# `screenshot_dir` distempel run-<ts> BARU tiap invokasi (ps-e2e-run.run_shot_dir), dan alur
+# terdokumentasi mengonvergensikan versi SATU PER SATU — jadi N versi = N invokasi = N stempel,
+# lalu --merge-only meledak exit 2 atas bukti yang justru sehat, tanpa input yang bisa diperbaiki.
+# Dikumpulkan jadi daftar: tiap folder run tetap terjangkau peninjau visual, nol yang dibuang.
+_UNION_KEYS = ("screenshot_dir",)
 
 _agg = None
 _e2e = None
@@ -160,6 +167,17 @@ def merge_toplevel(payloads, merged_versions):
             out[k] = any(bool(v) for v in present)
         elif k in _PREFER_RAN_KEYS:
             out[k] = "ran" if any(v == "ran" for v in present) else present[0]
+        elif k in _UNION_KEYS:
+            seen, acc = set(), []
+            for v in present:
+                for item in (v if isinstance(v, list) else [v]):
+                    if item is None:
+                        continue
+                    c = _canon(item)
+                    if c not in seen:
+                        seen.add(c)
+                        acc.append(item)
+            out[k] = acc
         elif any(isinstance(v, list) for v in present):
             seen, acc = set(), []
             for v in present:

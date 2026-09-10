@@ -1,0 +1,17 @@
+# Config PHPStan referensi untuk bankwire (level 5).
+#
+# Include di bawah menunjuk ps-module-extension.neon dari php-dev-tools versi composer
+# (dipakai bila modul di-`composer install` di lingkungan CI biasa). Di image flashlight
+# extension berada di /var/opt/prestashop/coding-standards/phpstan/ — untuk itu pakai
+# `./tests/phpstan.sh <versi>`, yang merakit include dengan path image yang benar.
+includes:
+	- %currentWorkingDirectory%/vendor/prestashop/php-dev-tools/phpstan/ps-module-extension.neon
+
+parameters:
+  level: 5
+  paths:
+    # Path relatif terhadap file neon ini.
+    - ../../bankwire.php
+    - ../../classes/
+    - ../../controllers/
+    - ../../upgrade/

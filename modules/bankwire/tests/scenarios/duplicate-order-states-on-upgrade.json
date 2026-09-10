@@ -1,0 +1,22 @@
+{
+  "name": "duplicate-order-states-on-upgrade",
+  "description": "Dua OrderState hidup milik module, KEDUANYA memegang order — kondisi yang ditinggalkan build cacat (kunci config shop-scoped membayangi baris global). Reviewer adversarial merakitnya dengan tangan di ronde 5, 6, dan 8.\n\nYang DIPATOK di sini adalah invarian yang menyentuh PELANGGAN, bukan konsolidasinya. `prestashop:module upgrade` melewati skrip upgrade bila versi DB sudah sama dengan versi file, jadi di jalur ini konsolidasi memang TIDAK terjadi — dan itu bukan cacat ensureOrderState() (lihat duplicate-order-states-on-reset, yang lolos penuh). Yang tak boleh terjadi apa pun jalurnya: nol order boleh terkunci di status yang dipensiunkan, dan status yang dipakai harus tetap mengirim email. Duplikatnya sendiri sembuh saat admin membuka halaman module (getContent memanggil ensureOrderState) atau menekan Reset.",
+  "given": [
+    "SET @orig := (SELECT id_order_state FROM `{prefix}order_state` WHERE module_name='bankwire' AND deleted=0 ORDER BY id_order_state LIMIT 1); INSERT INTO `{prefix}order_state` (invoice,send_email,module_name,color,unremovable,hidden,logable,delivery,shipped,paid,deleted) SELECT invoice,send_email,module_name,color,unremovable,hidden,logable,delivery,shipped,paid,0 FROM `{prefix}order_state` WHERE id_order_state=@orig; SET @dup := LAST_INSERT_ID(); INSERT INTO `{prefix}order_state_lang` (id_order_state,id_lang,name,template) SELECT @dup,id_lang,name,template FROM `{prefix}order_state_lang` WHERE id_order_state=@orig; SET @lo := (SELECT MIN(id_order) FROM `{prefix}orders`); SET @hi := (SELECT MAX(id_order) FROM `{prefix}orders`); UPDATE `{prefix}orders` SET current_state=@orig WHERE id_order=@lo; UPDATE `{prefix}orders` SET current_state=@dup WHERE id_order=@hi;"
+  ],
+  "when": "upgrade",
+  "then": [
+    {
+      "query": "SELECT COUNT(*) FROM `{prefix}orders` o JOIN `{prefix}order_state` s ON o.current_state=s.id_order_state WHERE s.module_name='bankwire' AND s.deleted=1",
+      "expect": "0"
+    },
+    {
+      "query": "SELECT COUNT(*) FROM `{prefix}orders` o JOIN `{prefix}order_state` s ON o.current_state=s.id_order_state WHERE s.module_name='bankwire' AND s.deleted=0",
+      "expect": "2"
+    },
+    {
+      "query": "SELECT MIN(send_email) FROM `{prefix}order_state` WHERE module_name='bankwire' AND deleted=0",
+      "expect": "1"
+    }
+  ]
+}

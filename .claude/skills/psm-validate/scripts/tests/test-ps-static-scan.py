@@ -515,6 +515,128 @@ def main():
                     res91["versions"]["9.1"]["keys"] == ["9", "9.1"]
                     and res9["versions"]["9"]["keys"] == ["9"])
 
+    # Komentar bukan kode: pola di dalam komentar tak boleh MEMBLOK rilis. Audiens skill ini
+    # adalah module yang sedang dibawa lintas 1.7/8/9, tempat komentar migrasi & cabang legacy
+    # ter-comment memang hidup — dan temuan static selalu konklusif, jadi false positive di
+    # sini menjatuhkan `ready` tanpa jalan keluar (SKILL.md melarang menilai ulang vonis skrip).
+    with tempfile.TemporaryDirectory() as td7:
+        t7 = Path(td7)
+
+        def ids(mod_dir, ver="9.1"):
+            r, _ = run_scan(mod_dir, ver)
+            return [f["id"] for f in r["versions"][ver]["findings"]]
+
+        cmt = make_module(t7, "cmtmod", GOOD_MAIN + (
+            "<?php\n"
+            "// legacy: Tools::jsonEncode dihapus di PS9, pakai json_encode\n"
+            "# Attribute:: juga sudah tidak ada\n"
+            "/* blok:\n"
+            "   Tools::addonsRequest dibuang\n"
+            "*/\n"))
+        got = ids(cmt)
+        ok &= check("komentar // tak lagi memblok (Tools::jsonEncode dalam komentar)",
+                    "mth-tools-jsonencode" not in got)
+        ok &= check("komentar # tak lagi memblok (Attribute:: dalam komentar)",
+                    "cls-attribute" not in got)
+        ok &= check("komentar blok /* */ tak lagi memblok",
+                    "mth-tools-addonsrequest" not in got)
+
+        # Kontrol positif — tanpa ini larangan di atas bisa dipenuhi scanner yang buta total.
+        real = make_module(t7, "realmod", GOOD_MAIN + "<?php\nTools::jsonEncode($x);\n")
+        ok &= check("kode sungguhan TETAP kena (gerbang tak jadi buta)",
+                    "mth-tools-jsonencode" in ids(real))
+
+        # `//` di dalam string bukan pembuka komentar — kalau salah dibaca, sisa file ikut
+        # dikosongkan dan scanner diam-diam berhenti menilai.
+        url = make_module(t7, "urlmod", GOOD_MAIN + (
+            '<?php\n$u = "http://example.test/x"; Tools::jsonEncode($y);\n'))
+        ok &= check("`//` di dalam string tak dibaca sbg komentar (pola SEBARIS sesudahnya)",
+                    "mth-tools-jsonencode" in ids(url))
+
+        # Isi string SENGAJA tak dikosongkan: nama hook hidup di dalam string.
+        hook = make_module(t7, "hookmod", GOOD_MAIN + (
+            "<?php\n$this->registerHook('actionAdminLoginControllerBefore');\n"))
+        ok &= check("nama hook di dalam string TETAP terdeteksi (string tak dikosongkan)",
+                    "hook-admin-login" in ids(hook))
+
+        # Nomor baris & snippet harus tetap menunjuk kode asli, bukan spasi.
+        lineno = make_module(t7, "linemod", GOOD_MAIN + (
+            "<?php\n// baris komentar\n// baris komentar lagi\n"
+            "Tools::jsonEncode($z); // ganti dengan json_encode\n"))
+        r, _ = run_scan(lineno, "9.1")
+        hit = [f for f in r["versions"]["9.1"]["findings"] if f["id"] == "mth-tools-jsonencode"]
+        occ = (hit[0]["occurrences"][0] if hit else {})
+        # Komentar EKOR hanya ada di teks asli — snippet dari teks yang dikosongkan kehilangannya.
+        ok &= check("snippet dilaporkan dari teks ASLI (komentar ekor ikut terbawa)",
+                    "ganti dengan json_encode" in occ.get("snippet", ""))
+        # Diturunkan, bukan diketik: GOOD_MAIN + <?php + 2 baris komentar -> baris pola.
+        expect_line = GOOD_MAIN.count(chr(10)) + 4
+        ok &= check("nomor baris menunjuk baris yang benar (pengosongan menjaga panjang)",
+                    occ.get("line") == expect_line)
+
+        # Smarty: {* *} adalah komentar .tpl.
+        tplmod = make_module(t7, "tplmod", GOOD_MAIN,
+                             tpl="{* /themes/classic dibuang di PS9 *}\n<div>{$x|escape:'html'}</div>")
+        ok &= check("komentar Smarty {* *} tak lagi memblok",
+                    "smarty-hardcoded-theme" not in ids(tplmod))
+
+    # Nama file lapis DITURUNKAN, tak diketik: segmen module yang salah ketik menulis bukti
+    # ke himpunan bukti module lain, dan agregat mengkreditkan vonisnya ke sana.
+    with tempfile.TemporaryDirectory() as td8:
+        t8 = Path(td8)
+        m = make_module(t8, "derivmod", GOOD_MAIN)
+        rep = t8 / "rep"; rep.mkdir()
+
+        r = subprocess.run(["uv", "run", str(SCAN), str(m), "--versions", "9.1",
+                            "--reports-dir", str(rep)], capture_output=True, text=True)
+        ok &= check("--reports-dir -> nama kanonik diturunkan (<module>-static.json)",
+                    r.returncode in (0, 1) and (rep / "derivmod-static.json").exists())
+
+        r = subprocess.run(["uv", "run", str(SCAN), str(m), "--versions", "8.1",
+                            "--reports-dir", str(rep), "--per-version"],
+                           capture_output=True, text=True)
+        ok &= check("--per-version -> nama per-versi diturunkan (<module>-static-<versi>.json)",
+                    r.returncode in (0, 1) and (rep / "derivmod-static-8.1.json").exists())
+
+        r = subprocess.run(["uv", "run", str(SCAN), str(m), "--versions", "8.1,9.1",
+                            "--reports-dir", str(rep), "--per-version"],
+                           capture_output=True, text=True)
+        ok &= check("--per-version dgn >1 versi -> exit 2 (cakupan file per-versi persis satu)",
+                    r.returncode == 2 and "TEPAT satu versi" in r.stderr)
+
+        r = subprocess.run(["uv", "run", str(SCAN), str(m), "--versions", "9.1",
+                            "--per-version"], capture_output=True, text=True)
+        ok &= check("--per-version tanpa --reports-dir -> exit 2 (nama tak punya asal)",
+                    r.returncode == 2)
+
+        r = subprocess.run(["uv", "run", str(SCAN), str(m), "--versions", "9.1",
+                            "--reports-dir", str(rep), "-o", str(t8 / "x.json")],
+                           capture_output=True, text=True)
+        ok &= check("--reports-dir + -o -> exit 2 (dua pemilik nama = drift diam-diam)",
+                    r.returncode == 2 and not (t8 / "x.json").exists())
+
+        r = subprocess.run(["uv", "run", str(SCAN), str(m), "--versions", "9.1",
+                            "--reports-dir", "{project-root}/rep"], capture_output=True, text=True)
+        ok &= check("token {project-root} di --reports-dir ditolak seperti path lain",
+                    r.returncode == 2 and "belum diresolve" in r.stderr)
+
+        # --config: SKILL.md menyuruh meneruskannya ke Lapis 1 juga. Ditemukan saat run nyata
+        # pertama atas modules/bankwire — prosa menjanjikan flag yang skripnya belum punya.
+        cfgp = t8 / "resolved.json"
+        cfgp.write_text(json.dumps({"psm_target_versions": "8.1"}), encoding="utf-8")
+        r, _ = None, None
+        rp = subprocess.run(["uv", "run", str(SCAN), str(m), "--reports-dir", str(rep),
+                             "--config", str(cfgp)], capture_output=True, text=True)
+        got = json.loads((rep / "derivmod-static.json").read_text())
+        ok &= check("--config mengisi --versions dari psm_target_versions",
+                    rp.returncode in (0, 1) and list(got["versions"]) == ["8.1"])
+        rp2 = subprocess.run(["uv", "run", str(SCAN), str(m), "--reports-dir", str(rep),
+                              "--config", str(cfgp), "--versions", "9.1"],
+                             capture_output=True, text=True)
+        got2 = json.loads((rep / "derivmod-static.json").read_text())
+        ok &= check("--versions eksplisit MENANG atas --config",
+                    rp2.returncode in (0, 1) and list(got2["versions"]) == ["9.1"])
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 
