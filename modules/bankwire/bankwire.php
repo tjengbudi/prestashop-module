@@ -1575,6 +1575,19 @@ class Bankwire extends PaymentModule
         $order = $params['order'];
         $state = $order->getCurrentState();
 
+        // Anchor kontak dibangun di PHP, BUKAN di template: Smarty 3.1.48 (PS 1.7.x)
+        // gagal mengompilasi pemanggilan {l} bersarang di dalam argumen sprintf=[...]
+        // ("Unexpected space, expected , or ]") sehingga halaman konfirmasi white screen
+        // di 1.7.8 sementara 8/9 (Smarty lebih baru) lolos — diverifikasi dengan kompilasi
+        // standalone terhadap vendor/smarty image flashlight masing-masing versi.
+        // Di ketiga versi, cabang d='Shop' meneruskan argumen sprintf ke translator Symfony
+        // TANPA escaping (config/smartyfront.config.inc.php), jadi anchor mentah ter-render
+        // sebagai link sungguhan; label diterjemahkan lewat katalog module (jaminan i18n).
+        $contactUrl = $this->context->link->getPageLink('contact', true);
+        $contactLabel = $this->trans('expert customer support team', array(), 'Modules.Bankwire.Shop');
+        $contactAnchor = '<a href="' . htmlspecialchars($contactUrl, ENT_QUOTES, 'UTF-8') . '">'
+            . htmlspecialchars($contactLabel, ENT_QUOTES, 'UTF-8') . '</a>';
+
         if (!in_array($state, array(
             $this->getOrderStateId(),
             Configuration::get('PS_OS_OUTOFSTOCK'),
@@ -1582,7 +1595,8 @@ class Bankwire extends PaymentModule
         ))) {
             $this->smarty->assign(array(
                 'status' => 'failed',
-                'contact_url' => $this->context->link->getPageLink('contact', true),
+                'contact_url' => $contactUrl,
+                'contact_anchor' => $contactAnchor,
             ));
 
             return $this->fetchUncached('module:bankwire/views/templates/hook/payment_return.tpl');
@@ -1594,7 +1608,8 @@ class Bankwire extends PaymentModule
             'status' => 'ok',
             'shop_name' => $this->context->shop->name,
             'reference' => $order->reference,
-            'contact_url' => $this->context->link->getPageLink('contact', true),
+            'contact_url' => $contactUrl,
+            'contact_anchor' => $contactAnchor,
             'bankwire_bank_name' => $bank ? $bank['bank_name'] : '',
             'bankwire_owner' => ($bank && $bank['owner']) ? $bank['owner'] : '___________',
             'bankwire_details' => ($bank && $bank['details']) ? Tools::nl2br($bank['details']) : '___________',

@@ -18,10 +18,10 @@
     </p>
     <strong>{l s='Your order will be shipped as soon as we receive your payment.' mod='bankwire' d='Shop'}</strong>
     <p>
-      {l s='If you have questions, comments or concerns, please contact our [1]expert customer support team[/1].' mod='bankwire' d='Shop' tags=["<a href='{$contact_url|escape:'html':'UTF-8'}'>"]}
+      {l s='If you have questions, comments or concerns, please contact our %s.' mod='bankwire' d='Shop' sprintf=[$contact_anchor]}
     </p>
 {else}
     <p class="warning">
-      {l s='We noticed a problem with your order. If you think this is an error, feel free to contact our [1]expert customer support team[/1].' mod='bankwire' d='Shop' tags=["<a href='{$contact_url|escape:'html':'UTF-8'}'>"]}
+      {l s='We noticed a problem with your order. If you think this is an error, feel free to contact our %s.' mod='bankwire' d='Shop' sprintf=[$contact_anchor]}
     </p>
 {/if}

@@ -10,10 +10,10 @@
         "controllers/front/validation.php",
         "views/templates/hook/intro.tpl",
         "views/templates/hook/payment_return.tpl",
-        "mails/en/bankwire.html",
-        "mails/en/bankwire.txt",
-        "mails/id/bankwire.html",
-        "mails/id/bankwire.txt",
+        "mails/en/bankwire_multibank.html",
+        "mails/en/bankwire_multibank.txt",
+        "mails/id/bankwire_multibank.html",
+        "mails/id/bankwire_multibank.txt",
         "config.xml"
       ],
       "add_tables": [
@@ -77,6 +77,32 @@
       "add_classes": [],
       "add_hooks": [],
       "note": "ps_order_state.module_name jadi sumber kebenaran kepemilikan; ps_configuration turun jadi cache; konsolidasi duplikat kini memindahkan order + riwayatnya."
+    },
+    {
+      "function": "Bump versi → 1.0.2",
+      "status": "diterapkan",
+      "files": [
+        "modules/bankwire/bankwire.php",
+        "modules/bankwire/config.xml",
+        "modules/bankwire/upgrade/upgrade-1.0.2.php"
+      ],
+      "add_tables": [],
+      "add_classes": [],
+      "add_hooks": []
+    },
+    {
+      "function": "fix-validation-warnings-v106",
+      "status": "diterapkan",
+      "files": [
+        "modules/bankwire/views/templates/hook/payment_return.tpl",
+        "modules/bankwire/translations/bankwire.id.xlf",
+        "modules/bankwire/translations/bankwire.en.xlf",
+        "modules/bankwire/tests/scenarios/index.php"
+      ],
+      "add_tables": [],
+      "add_classes": [],
+      "add_hooks": [],
+      "note": "W1 tags→sprintf di payment_return.tpl (PS9 Symfony translator tak mensubstitusi tags; sprintf anjuran pesan error PS9); label link jadi unit terjemahan sendiri (id 63). W2 stub index.php di tests/scenarios/. Tanpa bump versi (pra-commit v1.0.6)."
     }
   ],
   "verify_attempts": 2

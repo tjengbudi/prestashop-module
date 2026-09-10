@@ -252,9 +252,9 @@
         <target>Goods will be reserved for %d days and the order processed as soon as we receive your payment.</target>
         <note>Modules.Bankwire.Shop</note>
       </trans-unit>
-      <trans-unit id="51" resname="If you have questions, comments or concerns, please contact our [1]expert customer support team[/1].">
-        <source>If you have questions, comments or concerns, please contact our [1]expert customer support team[/1].</source>
-        <target>If you have questions, comments or concerns, please contact our [1]expert customer support team[/1].</target>
+      <trans-unit id="51" resname="If you have questions, comments or concerns, please contact our %s.">
+        <source>If you have questions, comments or concerns, please contact our %s.</source>
+        <target>If you have questions, comments or concerns, please contact our %s.</target>
         <note>Modules.Bankwire.Shop</note>
       </trans-unit>
       <trans-unit id="52" resname="Name of account owner">
@@ -297,9 +297,9 @@
         <target>We have also sent you this information by email.</target>
         <note>Modules.Bankwire.Shop</note>
       </trans-unit>
-      <trans-unit id="60" resname="We noticed a problem with your order. If you think this is an error, feel free to contact our [1]expert customer support team[/1].">
-        <source>We noticed a problem with your order. If you think this is an error, feel free to contact our [1]expert customer support team[/1].</source>
-        <target>We noticed a problem with your order. If you think this is an error, feel free to contact our [1]expert customer support team[/1].</target>
+      <trans-unit id="60" resname="We noticed a problem with your order. If you think this is an error, feel free to contact our %s.">
+        <source>We noticed a problem with your order. If you think this is an error, feel free to contact our %s.</source>
+        <target>We noticed a problem with your order. If you think this is an error, feel free to contact our %s.</target>
         <note>Modules.Bankwire.Shop</note>
       </trans-unit>
       <trans-unit id="61" resname="Your order on %s is complete.">
@@ -310,6 +310,11 @@
       <trans-unit id="62" resname="Your order will be shipped as soon as we receive your payment.">
         <source>Your order will be shipped as soon as we receive your payment.</source>
         <target>Your order will be shipped as soon as we receive your payment.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="63" resname="expert customer support team">
+        <source>expert customer support team</source>
+        <target>expert customer support team</target>
         <note>Modules.Bankwire.Shop</note>
       </trans-unit>
     </body>

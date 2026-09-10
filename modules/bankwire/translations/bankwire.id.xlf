@@ -252,9 +252,9 @@
         <target>Barang akan direservasi selama %d hari dan pesanan diproses segera setelah kami menerima pembayaran Anda.</target>
         <note>Modules.Bankwire.Shop</note>
       </trans-unit>
-      <trans-unit id="51" resname="If you have questions, comments or concerns, please contact our [1]expert customer support team[/1].">
-        <source>If you have questions, comments or concerns, please contact our [1]expert customer support team[/1].</source>
-        <target>Jika Anda memiliki pertanyaan, komentar, atau keluhan, silakan hubungi [1]tim dukungan pelanggan ahli kami[/1].</target>
+      <trans-unit id="51" resname="If you have questions, comments or concerns, please contact our %s.">
+        <source>If you have questions, comments or concerns, please contact our %s.</source>
+        <target>Jika Anda memiliki pertanyaan, komentar, atau keluhan, silakan hubungi %s.</target>
         <note>Modules.Bankwire.Shop</note>
       </trans-unit>
       <trans-unit id="52" resname="Name of account owner">
@@ -297,9 +297,9 @@
         <target>Kami juga telah mengirimkan informasi ini via email.</target>
         <note>Modules.Bankwire.Shop</note>
       </trans-unit>
-      <trans-unit id="60" resname="We noticed a problem with your order. If you think this is an error, feel free to contact our [1]expert customer support team[/1].">
-        <source>We noticed a problem with your order. If you think this is an error, feel free to contact our [1]expert customer support team[/1].</source>
-        <target>Kami menemukan masalah dengan pesanan Anda. Jika menurut Anda ini kesalahan, silakan hubungi [1]tim dukungan pelanggan ahli kami[/1].</target>
+      <trans-unit id="60" resname="We noticed a problem with your order. If you think this is an error, feel free to contact our %s.">
+        <source>We noticed a problem with your order. If you think this is an error, feel free to contact our %s.</source>
+        <target>Kami menemukan masalah dengan pesanan Anda. Jika menurut Anda ini kesalahan, silakan hubungi %s.</target>
         <note>Modules.Bankwire.Shop</note>
       </trans-unit>
       <trans-unit id="61" resname="Your order on %s is complete.">
@@ -310,6 +310,11 @@
       <trans-unit id="62" resname="Your order will be shipped as soon as we receive your payment.">
         <source>Your order will be shipped as soon as we receive your payment.</source>
         <target>Pesanan Anda akan dikirim segera setelah kami menerima pembayaran Anda.</target>
+        <note>Modules.Bankwire.Shop</note>
+      </trans-unit>
+      <trans-unit id="63" resname="expert customer support team">
+        <source>expert customer support team</source>
+        <target>tim dukungan pelanggan ahli kami</target>
         <note>Modules.Bankwire.Shop</note>
       </trans-unit>
     </body>
