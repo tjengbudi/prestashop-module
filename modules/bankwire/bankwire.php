@@ -73,7 +73,7 @@ class Bankwire extends PaymentModule
     {
         $this->name = 'bankwire';
         $this->tab = 'payments_gateways';
-        $this->version = '1.0.6';
+        $this->version = '1.0.7';
         // 1.7.7 — versi pertama yang punya hook actionEmailSendBefore (dipakai mengisi
         // placeholder bank pada email non-inisial). Context::$currentLocale yang dipakai
         // formatPrice() ada sejak 1.7.6, jadi 1.7.7 adalah batas yang mengikat.
@@ -748,6 +748,51 @@ class Bankwire extends PaymentModule
         $this->cleanIconDir();
     }
 
+    /**
+     * Kaitkan bank existing ke toko yang belum punya baris asosiasi (backfill penuh).
+     *
+     * Core TIDAK punya hook pembuatan toko di 1.7.8/8.1/9.1 (diverifikasi terhadap
+     * source ketiga versi: tak ada actionAddShop maupun event setara saat Shop::add()),
+     * jadi tak ada moment untuk mengaitkan bank saat toko baru lahir — dan menyimpan
+     * ulang bank pun tak membantu (asosiasi hanya dibuat saat bank DIBUAT), sehingga
+     * toko baru tak pernah melihat bank existing di checkout-nya.
+     *
+     * Aturan tanggal (shop.date_add > bank.date_add) TIDAK dipakai: kolom date_add pada
+     * ps_shop DIHAPUS di PS 8.x/9.x (diverifikasi live terhadap skema 8.1.6 — tabel itu
+     * hanya id_shop/id_shop_group/name/color/id_category/theme_name/active/deleted),
+     * jadi aturan itu fatal di 8/9 sementara di 1.7.8 jalan — drift skema lintas versi.
+     * Backfill penuh adalah satu-satunya aturan yang stabil di semua versi dan tetap
+     * aman: ke-lebihan asosiasi bisa dibatalkan merchant lewat toggle aktif per-toko
+     * (sa.active), sedangkan celah semula tak bisa diperbaiki sama sekali (tanpa baris,
+     * bank tak muncul di daftar mana pun untuk di-toggle).
+     *
+     * Idempoten (INSERT IGNORE). Jalan sebagai self-heal dari getContent() (pola sama
+     * ensureOrderState) dan sekali dari upgrade 1.0.7 untuk instalasi lama.
+     *
+     * @return void
+     */
+    public function ensureShopAssociations()
+    {
+        if (!BankAccount::shopTableExists()) {
+            return;
+        }
+
+        $rows = Db::getInstance()->executeS(
+            'SELECT b.`id_bankwire_account`, s.`id_shop`'
+            . ' FROM `' . _DB_PREFIX_ . 'bankwire_account` b'
+            . ' CROSS JOIN `' . _DB_PREFIX_ . 'shop` s'
+            . ' WHERE NOT EXISTS ('
+            . '   SELECT 1 FROM `' . _DB_PREFIX_ . 'bankwire_account_shop` sa'
+            . '   WHERE sa.`id_bankwire_account` = b.`id_bankwire_account`'
+            . '     AND sa.`id_shop` = s.`id_shop`'
+            . ' )'
+        );
+
+        foreach ((array) $rows as $row) {
+            BankAccount::associateToShop((int) $row['id_bankwire_account'], (int) $row['id_shop']);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Admin (getContent) — CRUD bank
     // ------------------------------------------------------------------
@@ -766,6 +811,9 @@ class Bankwire extends PaymentModule
         // duplicate-order-states-on-upgrade. Aman di sini: ini halaman admin, bukan jalur
         // checkout, dan ensureOrderState() idempoten.
         $this->ensureOrderState();
+        // Self-heal asosiasi toko baru (celah multistore; core tak punya hook pembuatan
+        // toko di 1.7.8/8.1/9.1). Idempoten dan murah — satu query kecil per muat halaman.
+        $this->ensureShopAssociations();
 
         $showForm = false;
 

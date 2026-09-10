@@ -241,9 +241,12 @@ class BankAccount extends ObjectModel
     }
 
     /**
+     * Publik karena Bankwire::ensureShopAssociations() (self-heal asosiasi toko baru)
+     * memakainya dari luar kelas.
+     *
      * @return bool
      */
-    private static function shopTableExists()
+    public static function shopTableExists()
     {
         if (self::$shopTableExists === null) {
             $rows = Db::getInstance()->executeS(
@@ -361,31 +364,51 @@ class BankAccount extends ObjectModel
      */
     public static function associateToCurrentShops($idBank)
     {
+        foreach (array_map('intval', (array) Shop::getContextListShopID()) as $idShop) {
+            self::associateToShop((int) $idBank, (int) $idShop);
+        }
+    }
+
+    /**
+     * Kaitkan satu bank ke SATU toko spesifik — idempoten (INSERT IGNORE).
+     *
+     * Dipakai associateToCurrentShops() (setelah add) dan Bankwire::ensureShopAssociations()
+     * (self-heal toko yang lahir setelah bank dibuat; core tak punya hook pembuatan toko
+     * di 1.7.8/8.1/9.1). Posisi dihitung per toko (MAX+1 dalam toko itu) supaya urutan
+     * checkout tiap toko independen; active default 1, seperti kolom lama.
+     *
+     * @param int $idBank
+     * @param int $idShop
+     *
+     * @return void
+     */
+    public static function associateToShop($idBank, $idShop)
+    {
         if (!self::shopTableExists()) {
             return;
         }
 
-        $withColumns = self::shopColumnsExist();
+        $idBank = (int) $idBank;
+        $idShop = (int) $idShop;
+        if (!$idBank || !$idShop) {
+            return;
+        }
 
-        foreach (array_map('intval', (array) Shop::getContextListShopID()) as $idShop) {
-            if ($withColumns) {
-                // Posisi dihitung per toko (MAX+1 dalam toko itu) supaya urutan checkout
-                // tiap toko independen. active default 1, seperti kolom lama.
-                $next = 1 + (int) Db::getInstance()->getValue(
-                    'SELECT MAX(position) FROM `' . _DB_PREFIX_ . 'bankwire_account_shop`
-                     WHERE id_shop = ' . (int) $idShop
-                );
-                Db::getInstance()->execute(
-                    'INSERT IGNORE INTO `' . _DB_PREFIX_ . 'bankwire_account_shop`
-                     (id_bankwire_account, id_shop, active, position)
-                     VALUES (' . (int) $idBank . ', ' . (int) $idShop . ', 1, ' . (int) $next . ')'
-                );
-            } else {
-                Db::getInstance()->execute(
-                    'INSERT IGNORE INTO `' . _DB_PREFIX_ . 'bankwire_account_shop` (id_bankwire_account, id_shop)
-                     VALUES (' . (int) $idBank . ', ' . (int) $idShop . ')'
-                );
-            }
+        if (self::shopColumnsExist()) {
+            $next = 1 + (int) Db::getInstance()->getValue(
+                'SELECT MAX(position) FROM `' . _DB_PREFIX_ . 'bankwire_account_shop`
+                 WHERE id_shop = ' . $idShop
+            );
+            Db::getInstance()->execute(
+                'INSERT IGNORE INTO `' . _DB_PREFIX_ . 'bankwire_account_shop`
+                 (id_bankwire_account, id_shop, active, position)
+                 VALUES (' . $idBank . ', ' . $idShop . ', 1, ' . (int) $next . ')'
+            );
+        } else {
+            Db::getInstance()->execute(
+                'INSERT IGNORE INTO `' . _DB_PREFIX_ . 'bankwire_account_shop` (id_bankwire_account, id_shop)
+                 VALUES (' . $idBank . ', ' . $idShop . ')'
+            );
         }
     }
 
