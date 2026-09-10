@@ -401,7 +401,7 @@ class Bankwire extends PaymentModule
             } else {
                 $moved = 0;
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             // `Throwable`, bukan `Exception`: PHP 8 melempar `Error` untuk method-call pada
             // non-objek, dan `Error` tak mewarisi `Exception`. Apa pun yang lolos dari sini
             // melompati blok pembersihan install() dan meninggalkan module AKTIF tanpa
