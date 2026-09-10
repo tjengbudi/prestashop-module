@@ -11,3 +11,11 @@ __pycache__/
 # kanonik, vonis berstempel, screenshot E2E, cache config resolved). Pengetahuan yang
 # bertahan hidup di <module>/.psm-develop-plan.md dan _bmad/psm/memory/projects/, bukan di sini.
 _bmad-output/psm-validate/
+
+# Setting Claude Code khusus mesin ini (mis. ambang auto-compact), bukan konvensi repo —
+# jangan dibagikan lewat git.
+.claude/settings.local.json
+
+# Alternate data stream NTFS yang ikut terbawa saat file disalin dari Windows ke WSL —
+# penanda asal-unduhan, bukan isi repo, dan lahir lagi tiap copy-paste berikutnya.
+*:Zone.Identifier
