@@ -79,14 +79,15 @@ Skill `psm-*` mengikuti **Agent Skills open standard** — frontmatter hanya `na
 
 Menunjuk seluruh folder berarti pi juga melihat semua skill bmad di pohon itu, bukan cuma sepuluh `psm-*`.
 
-**droid** belum disiapkan. Dia hanya memindai `<repo>/.factory/skills/`, `~/.factory/skills/`, dan folder kompat `.agent/skills/` — `.claude/skills/` tidak termasuk, jadi butuh symlink per-skill. Dua hal harus diuji lebih dulu:
+**droid** belum disiapkan. Dia hanya memindai `<repo>/.factory/skills/`, `~/.factory/skills/`, dan folder kompat `.agent/skills/` — `.claude/skills/` tidak termasuk, jadi butuh symlink per-skill. Satu hambatan masih harus diuji lebih dulu:
 
-- **Routing subagent BYOK** ([Factory-AI/factory#1061](https://github.com/Factory-AI/factory/issues/1061)) — subagent droid dilaporkan lari ke Anthropic alih-alih model BYOK. `psm-validate` kini memakai subagent di **satu** tempat saja: reviewer Lapis 3 (review adversarial). Paralelisme per-versi tak lagi memakai subagent sama sekali — itu milik `ps-run-layer.py --jobs`.
 - **`droid exec --model` menolak model ID custom** ([#787](https://github.com/Factory-AI/factory/issues/787)) — `droid exec` adalah mode non-interaktif untuk run panjang.
 
-Keduanya bisa saja sudah diperbaiki di versi yang kamu pasang; keduanya belum diverifikasi di repo ini.
+Bisa saja sudah diperbaiki di versi yang kamu pasang; belum diverifikasi di repo ini.
 
-> **Catatan subagent umum.** `psm-validate` memakai subagent untuk **satu** hal: reviewer Lapis 3, yang dibeli bukan kecepatan melainkan **konteks bersih** — peninjau yang sudah melihat hasil Lapis 1/2/4 cenderung membaca pindai bersih sebagai bukti sehat. Bila harness tak bisa men-spawn subagent, skill meninjau sendiri di bawah kontrak yang sama dan menyebutkan itu di ringkasan, jadi ia tetap jalan utuh — hanya dengan konteks yang diakui tak bersih. Kecepatan lintas-versi tak pernah lewat subagent: itu `ps-run-layer.py --jobs`.
+**Routing subagent BYOK** ([Factory-AI/factory#1061](https://github.com/Factory-AI/factory/issues/1061)) — subagent droid dilaporkan lari ke Anthropic alih-alih model BYOK — **tak lagi berlaku di sini**: sejak Lapis 3 dikerjakan inline, tak ada skill `psm-*` yang men-spawn subagent sama sekali.
+
+> **Catatan subagent umum.** Skill `psm-*` **tidak memakai subagent sama sekali**. Lapis 3 psm-validate — satu-satunya yang dulu didelegasikan demi konteks bersih — kini ditinjau inline: empat lensa satu per satu, tiap lensa ditulis ke file lapis sebelum lensa berikutnya mulai, dan ringkasan run **wajib menyebut** bahwa konteksnya tak bersih (prosedurnya di `references/adversarial-lens.md`). Yang hilang dibayar urutan kerja, bukan niat baik. Kecepatan lintas-versi tak pernah lewat subagent: itu `ps-run-layer.py --jobs`.
 
 ---
 
@@ -350,7 +351,7 @@ Hanya ada dua arah, dan keduanya searah:
 
 Tiga workflow juga **mengarahkan ke `psm-scaffold` lalu berhenti** bila targetnya ternyata bukan module (`looks_like_module: false`): `psm-develop`, `psm-plan`, `psm-ideate`. Itu gerbang target — mereka menolak merancang di atas ketiadaan, alih-alih menghasilkan scan kosong yang menyerupai sukses.
 
-Di dalam dirinya sendiri, `psm-validate` mendelegasikan ke **satu** subagent (bukan skill): reviewer Lapis 3, supaya lensa adversarialnya bekerja di konteks bersih. Konkurensi lintas-versi bukan urusan subagent — `ps-run-layer.py` mem-boot beberapa versi serentak sebagai subproses lewat `--jobs`, dan vonis tetap milik skrip.
+Di dalam dirinya sendiri, `psm-validate` **tak mendelegasikan ke subagent mana pun**: Lapis 3 ditinjau inline, empat lensa berurutan dengan file lapis sebagai ingatannya. Konkurensi lintas-versi juga bukan urusan subagent — `ps-run-layer.py` mem-boot beberapa versi serentak sebagai subproses lewat `--jobs`, dan vonis tetap milik skrip.
 
 ### 2. Skrip milik bersama (skill X menjalankan skrip milik skill Y)
 

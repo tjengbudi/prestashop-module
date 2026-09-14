@@ -16,6 +16,10 @@ Catat asumsi yang diambil (module-path di-infer, default resolver dipakai) ke
 dulu bila file itu belum ada (`append` ke file absen gagal), lalu
 `append --path <file> --type assumption --text <asumsi>`.
 
+Lapis 3 juga ditinjau inline di sini (kontrak `references/adversarial-lens.md`) — sama seperti
+interaktif, tapi tak ada ringkasan prosa untuk mengakuinya: catat satu `assumption` ke memlog
+bahwa review adversarial dikerjakan inline tanpa konteks bersih.
+
 ## Kembalian
 
 Objek JSON kecil, bukan prosa: `status` (`complete`|`blocked`), path laporan, path memlog,
