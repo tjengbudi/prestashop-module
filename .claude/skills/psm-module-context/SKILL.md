@@ -19,14 +19,14 @@ Bertindak sebagai perawat memori per-module: operator (Budi) memutuskan apa yang
 
 ## On Activation
 
-1. Muat config resolved via `uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_modules_dir`, `communication_language`, dll. Baca apa adanya; jangan parse `config.yaml` sendiri. Bahasa: bicara dengan pengguna dalam `communication_language`, tetapi tulis setiap dokumen/artefak yang kamu buat atau ubah (file markdown, rencana, laporan, catatan, memlog) dalam `document_output_language` — keduanya bisa berbeda; jangan ikuti bahasa SKILL.md ini atau bahasa percakapan untuk isi dokumen.
+1. Muat config resolved via `uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_modules_dir`, `communication_language`, dll. Baca apa adanya; jangan parse `config.yaml` sendiri. Bahasa: bicara dengan pengguna dalam `communication_language`, tetapi tulis setiap dokumen/artefak yang kamu buat atau ubah (file markdown, rencana, laporan, catatan, memlog) dalam `document_output_language` — keduanya bisa berbeda; jangan ikuti bahasa SKILL.md ini atau bahasa percakapan untuk isi dokumen. Dokumen lama berbahasa lain: hanya bagian yang kamu tulis/ubah yang memakai bahasa dokumen — jangan terjemahkan borongan tanpa diminta. Token mesin (penanda `<!-- psm:… -->`, marker `Fakta:`/`Ide:`/`kind=`/`status=`, nilai status seperti `direncanakan`/`diterapkan`/`dipilih`, field JSON) tetap apa adanya.
 2. Tentukan module dari permintaan Budi. Nama telanjang (mis. `psbanner`) di-resolve ke `<psm_modules_dir>/<nama>`; path lengkap dipakai apa adanya. Bila ambigu, tanya satu pertanyaan.
 3. Jalankan `uv run <skills-dir>/psm-develop/scripts/ps-module-inventory.py <module-path>` → JSON inventaris. **Gerbang target:** bila folder hilang atau inventaris emit `looks_like_module: false`, arahkan Budi ke **psm-scaffold** dan berhenti; jangan merawat konteks atas ketiadaan. Bila skrip exit non-zero, tampilkan error apa adanya (headless: `gagal`).
 4. Baca `<memory-dir>/projects/<module>.md` bila ada. Bila belum, `uv run scripts/ps-module-context.py init --memory-dir <memory-dir> --module <module> --source "<sumber seed>"` — kontrak marker & pembagian zona seksi ada di `--help` skrip; jangan menyusun format sendiri.
 
 ## Rekonsiliasi (deterministik)
 
-`uv run scripts/ps-module-context.py reconcile --memory-dir <memory-dir> --module <module> --inventory <inventaris.json>` — cocokkan klaim di `## Fakta terkonsiliasi` dengan bukti inventaris. **rc=1 bukan status gagal skill ini**; itu justru hasil kerjanya. Tiga jenis drift, dua penanganan:
+`uv run scripts/ps-module-context.py reconcile --memory-dir <memory-dir> --module <module> --inventory <inventaris.json>` — cocokkan klaim di seksi fakta (`psm:fakta`) dengan bukti inventaris. **rc=1 bukan status gagal skill ini**; itu justru hasil kerjanya. Tiga jenis drift, dua penanganan:
 
 - **Jelas** — `live_but_missing` pada fakta yang memang sengaja dihapus, atau `claim_malformed`: koreksi langsung (`claim --status retired` / `drop`), lalu catat satu baris ke Jurnal. Tak perlu bertanya.
 - **Ambigu, dan semua `retired_but_present`** — fakta yang sengaja absen tapi muncul lagi berarti sesuatu menghidupkannya kembali; itu keputusan manusia, bukan koreksi klerikal. Angkat sebagai pilihan singkat ke Budi (headless: `butuh intervensi`).
@@ -35,10 +35,10 @@ Bertindak sebagai perawat memori per-module: operator (Budi) memutuskan apa yang
 
 ## Kurasi konvensi & keputusan
 
-Zona prosa (`## Konvensi module`, `## Keputusan`) disunting **tangan** — tak ada subcommand untuknya; itu memang batasnya. Gali dari Budi lalu tulis padat:
+Zona prosa — seksi konvensi (`psm:konvensi`) dan keputusan (`psm:keputusan`) — disunting **tangan**; tak ada subcommand untuknya, itu memang batasnya. Seksi dikenali dari penanda `<!-- psm:… -->` di baris judul, bukan dari judulnya. Kerangka dibuat skrip dalam bahasa dokumen; bila bahasanya bukan Indonesia/English, terjemahkan judul & petunjuknya dengan penanda tetap di tempatnya. Token marker `Fakta:`/`kind=`/`status=` jangan diterjemahkan. Gali dari Budi lalu tulis padat:
 
-- **Konvensi module** — namespace, layout service, prefix tabel, kesepakatan tim. Aturan tak-duplikasi: yang benar untuk **PrestaShop umum tak pernah ditulis di sini**, cukup rujuk `[[cross-version-patterns]]`, `[[persistence]]`, `[[services-di]]` di `tech/`. Yang masuk hanya yang khusus module ini.
-- **Keputusan** — butir bertanggal `- YYYY-MM-DD — <keputusan>: <alasan>`. Alasannya yang bernilai; keputusan tanpa alasan sama tak bergunanya dengan tak dicatat.
+- **Konvensi** — namespace, layout service, prefix tabel, kesepakatan tim. Aturan tak-duplikasi: yang benar untuk **PrestaShop umum tak pernah ditulis di sini**, cukup rujuk `[[cross-version-patterns]]`, `[[persistence]]`, `[[services-di]]` di `tech/`. Yang masuk hanya yang khusus module ini.
+- **Keputusan** — butir bertanggal `- YYYY-MM-DD — <keputusan>: <alasan>` (ditulis dalam bahasa dokumen). Alasannya yang bernilai; keputusan tanpa alasan sama tak bergunanya dengan tak dicatat.
 
 Bila sesuatu bisa dibuktikan dari inventaris (hook/tabel/class/file), tempatnya **Fakta**, bukan prosa — pakai `claim`. Skrip menolak `--kind konvensi` justru supaya drift tak pernah lahir dari klaim yang tak punya cara diselesaikan.
 

@@ -17,7 +17,7 @@ Bertindak sebagai pendamping pembuatan module PrestaShop: operator (Budi) memutu
 
 ## On Activation
 
-1. Muat config resolved via `uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `psm_modules_dir` (folder module), `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri). Bahasa: bicara dengan pengguna dalam `communication_language`, tetapi tulis setiap dokumen/artefak yang kamu buat atau ubah (file markdown, rencana, laporan, catatan, memlog) dalam `document_output_language` — keduanya bisa berbeda; jangan ikuti bahasa SKILL.md ini atau bahasa percakapan untuk isi dokumen.
+1. Muat config resolved via `uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `psm_modules_dir` (folder module), `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri). Bahasa: bicara dengan pengguna dalam `communication_language`, tetapi tulis setiap dokumen/artefak yang kamu buat atau ubah (file markdown, rencana, laporan, catatan, memlog) dalam `document_output_language` — keduanya bisa berbeda; jangan ikuti bahasa SKILL.md ini atau bahasa percakapan untuk isi dokumen. Dokumen lama berbahasa lain: hanya bagian yang kamu tulis/ubah yang memakai bahasa dokumen — jangan terjemahkan borongan tanpa diminta. Token mesin (penanda `<!-- psm:… -->`, marker `Fakta:`/`Ide:`/`kind=`/`status=`, nilai status seperti `direncanakan`/`diterapkan`/`dipilih`, field JSON) tetap apa adanya.
 2. Kumpulkan dari Budi: nama module (lowercase, mis. `ps_mybanner`), author, dan maksud module satu kalimat (dasar display-name/description dan penawaran fungsi nanti). Tanya hanya yang belum jelas dari permintaan. Rentang versi target jangan ditanya: default dari `psm_target_versions` config, sebut sepintas saja ("kerangka untuk 1.7–9.x sesuai config"), dan tanya hanya bila permintaan Budi menyiratkan penyimpangan.
 
 ## Bangkitkan kerangka
@@ -28,7 +28,7 @@ Bila folder module tujuan sudah ada, skrip menolak — itu gerbang keputusan, bu
 
 Setelah dibangkitkan, ingatkan Budi menjalankan `composer dump-autoload` di folder module agar autoloader namespace aktif.
 
-Seed konteks module selagi keputusannya masih segar: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py init --memory-dir {project-root}/_bmad/psm/memory --module <nama> --source "psm-scaffold"`, lalu tulis namespace PSR-4 & prefix tabel yang baru dihitung ke seksi **Konvensi module** (prosa, disunting tangan) dan `claim --kind file --key <main file> --status live --by psm-scaffold` untuk kerangkanya. Namespace/prefix bukan Fakta — tak bisa dibuktikan dari inventaris; tempatnya prosa.
+Seed konteks module selagi keputusannya masih segar: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py init --memory-dir {project-root}/_bmad/psm/memory --module <nama> --source "psm-scaffold"`, lalu tulis namespace PSR-4 & prefix tabel yang baru dihitung ke seksi konvensi (`psm:konvensi`, prosa, disunting tangan) dan `claim --kind file --key <main file> --status live --by psm-scaffold` untuk kerangkanya. Namespace/prefix bukan Fakta — tak bisa dibuktikan dari inventaris; tempatnya prosa.
 
 ## Tawarkan fungsi e-commerce
 

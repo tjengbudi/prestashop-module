@@ -19,9 +19,9 @@ Bertindak sebagai pendamping penggalian ide per-module: operator (Budi) memutusk
 
 ## On Activation
 
-1. Muat config resolved via `uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_modules_dir`, `psm_target_versions`, `communication_language`, dll. Baca apa adanya; jangan parse `config.yaml` sendiri. Bahasa: bicara dengan pengguna dalam `communication_language`, tetapi tulis setiap dokumen/artefak yang kamu buat atau ubah (file markdown, rencana, laporan, catatan, memlog) dalam `document_output_language` — keduanya bisa berbeda; jangan ikuti bahasa SKILL.md ini atau bahasa percakapan untuk isi dokumen.
+1. Muat config resolved via `uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_modules_dir`, `psm_target_versions`, `communication_language`, dll. Baca apa adanya; jangan parse `config.yaml` sendiri. Bahasa: bicara dengan pengguna dalam `communication_language`, tetapi tulis setiap dokumen/artefak yang kamu buat atau ubah (file markdown, rencana, laporan, catatan, memlog) dalam `document_output_language` — keduanya bisa berbeda; jangan ikuti bahasa SKILL.md ini atau bahasa percakapan untuk isi dokumen. Dokumen lama berbahasa lain: hanya bagian yang kamu tulis/ubah yang memakai bahasa dokumen — jangan terjemahkan borongan tanpa diminta. Token mesin (penanda `<!-- psm:… -->`, marker `Fakta:`/`Ide:`/`kind=`/`status=`, nilai status seperti `direncanakan`/`diterapkan`/`dipilih`, field JSON) tetap apa adanya.
 2. Tentukan module yang digali. Nama telanjang (mis. `psbankwire`) di-resolve ke `<psm_modules_dir>/<nama>`; path lengkap dipakai apa adanya. Bila ambigu, tanya satu pertanyaan.
-3. **Konteks module.** Bila `{project-root}/_bmad/psm/memory/projects/<module>.md` ada, baca **Konvensi module**, **Keputusan**, dan ekor **Jurnal** — keputusan lama sering sudah menolak sebuah ide beserta alasannya; menggalinya ulang membuang waktu Budi. Bila belum ada, lanjut; **psm-module-context** yang membuatnya.
+3. **Konteks module.** Bila `{project-root}/_bmad/psm/memory/projects/<module>.md` ada, baca seksi konvensi (`psm:konvensi`), keputusan (`psm:keputusan`), dan ekor jurnal (`psm:jurnal`) — seksi dikenali dari penanda ID di baris judulnya, judulnya sendiri mengikuti bahasa dokumen — keputusan lama sering sudah menolak sebuah ide beserta alasannya; menggalinya ulang membuang waktu Budi. Bila belum ada, lanjut; **psm-module-context** yang membuatnya.
 4. **Augment katalog bila ada.** Bila `{project-root}/_bmad/psm/memory/ecommerce/function-catalog.md` ada, baca untuk fungsi tambahan di luar katalog inti.
 
 ## Kenali domain & posisi
@@ -34,7 +34,7 @@ Gali dari bukti, bukan dari nama module. Jalankan:
 
 Dari inventaris itu, tentukan domain module dan posisinya: `paymentOptions` → domain pembayaran; `actionCarrierProcess` → pengiriman; `displayHome` + ObjectModel konten → marketing. Bila domainnya punya keluarga fungsi yang sudah dipetakan di `<skills-dir>/psm-develop/references/ecommerce-function-catalog.md` (mis. **Keluarga fungsi: pembayaran manual/offline → semi-otomatis**), posisikan module di tangga itu — anak tangga yang sudah dilewati dan yang berikutnya adalah kerangka penggalian yang paling berguna.
 
-Tulis hasilnya ke seksi prosa **Domain & posisi** di artefak backlog (`init --domain "<satu-dua baris>"` bila artefak belum ada; sunting tangan bila sudah). Itu satu-satunya seksi prosa di artefak ini.
+Tulis hasilnya ke seksi prosa domain (`psm:domain`) di artefak backlog (`init --domain "<satu-dua baris>"` bila artefak belum ada; sunting tangan bila sudah). Itu satu-satunya seksi prosa di artefak ini. Kerangka dibuat skrip dalam bahasa dokumen; bila bahasanya bukan Indonesia/English, terjemahkan judul & petunjuknya — penanda `<!-- psm:… -->` dan token marker `Ide:`/`status=`/`arah=` tetap apa adanya.
 
 ## Sinkronkan backlog dulu
 

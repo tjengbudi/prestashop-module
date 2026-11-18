@@ -16,8 +16,8 @@ mesin hidup sebagai marker di dalam .md, di-parse seperti parse_md_statuses.
 Dua disiplin tulis, karena append-only murni tak cukup: bila tabel dihapus,
 meng-append "tabel hilang" membiarkan klaim live lama berdiri dan reconcile
 drift selamanya.
-- '## Jurnal' — append-only (note), semantik memlog.
-- '## Fakta terkonsiliasi' — upsert by (kind,key) (claim/drop).
+- seksi jurnal (psm:jurnal) — append-only (note), semantik memlog.
+- seksi fakta (psm:fakta) — upsert by (kind,key) (claim/drop).
 Keduanya tata bahasa tertutup: drift datang dari kebebasan prosa, bukan mutasi.
 
 Lima mode:
@@ -56,15 +56,65 @@ from pathlib import Path
 KINDS = ("hook", "table", "class", "file")
 STATUSES = ("live", "retired", "planned")
 
-SEC_KONVENSI = "Konvensi module"
-SEC_KEPUTUSAN = "Keputusan"
-SEC_FAKTA = "Fakta terkonsiliasi"
-SEC_JURNAL = "Jurnal"
-SEC_RINGKASAN = "Ringkasan"
+# Seksi dikenali lewat ID STABIL, bukan judulnya: judul ditulis dalam bahasa dokumen
+# (document_output_language) dan boleh diterjemahkan tangan, jadi parser tak boleh
+# bergantung padanya. ID hidup sebagai komentar HTML di baris judul — tak terlihat
+# saat dirender: `## Module conventions <!-- psm:konvensi -->`. Artefak lama tanpa
+# penanda tetap dikenali lewat judul bawaan (TITLES) dan diberi penanda saat ditulis.
+SEC_KONVENSI = "konvensi"
+SEC_KEPUTUSAN = "keputusan"
+SEC_FAKTA = "fakta"
+SEC_JURNAL = "jurnal"
+SEC_RINGKASAN = "ringkasan"
 SECTIONS = (SEC_KONVENSI, SEC_KEPUTUSAN, SEC_FAKTA, SEC_JURNAL, SEC_RINGKASAN)
 
+# Teks kerangka per bahasa dokumen. Bahasa lain jatuh ke 'en'; model menerjemahkan
+# judul & petunjuk sendiri — penanda ID yang membuat itu aman.
+TEXTS = {
+    "id": {
+        "titles": {SEC_KONVENSI: "Konvensi module", SEC_KEPUTUSAN: "Keputusan",
+                   SEC_FAKTA: "Fakta terkonsiliasi", SEC_JURNAL: "Jurnal",
+                   SEC_RINGKASAN: "Ringkasan"},
+        "h1": "Konteks module {module}",
+        "seeded": "Diseed {date} dari {src}.",
+        "updated": "Diperbarui {date} oleh {who}.",
+        "default_src": "inventaris ps-module-inventory + sesi workflow psm",
+        "hints": {
+            SEC_KONVENSI: "_Konvensi khusus module ini: namespace, layout service, prefix tabel, kesepakatan tim._\n"
+                          "_Yang benar untuk PrestaShop umum TIDAK ditulis di sini — rujuk `[[cross-version-patterns]]`,\n"
+                          "`[[persistence]]`, `[[services-di]]` di `tech/`._",
+            SEC_KEPUTUSAN: "_Butir bertanggal: keputusan yang diambil dan alasannya._",
+            SEC_FAKTA: "_Milik `ps-module-context.py` (claim/drop). Jangan sunting tangan._",
+            SEC_JURNAL: "_Milik `ps-module-context.py` (note), append-only. Jangan sunting tangan._",
+            SEC_RINGKASAN: "_Opsional, dikurasi psm-agent-expert. Tak dibaca workflow._",
+        },
+        "footer": "Sumber: sesi workflow psm + inventaris ps-module-inventory.py; "
+                  "pengetahuan PrestaShop umum di `tech/`.",
+    },
+    "en": {
+        "titles": {SEC_KONVENSI: "Module conventions", SEC_KEPUTUSAN: "Decisions",
+                   SEC_FAKTA: "Reconciled facts", SEC_JURNAL: "Journal",
+                   SEC_RINGKASAN: "Summary"},
+        "h1": "Module context {module}",
+        "seeded": "Seeded {date} from {src}.",
+        "updated": "Updated {date} by {who}.",
+        "default_src": "ps-module-inventory inventory + psm workflow session",
+        "hints": {
+            SEC_KONVENSI: "_Conventions specific to this module: namespace, service layout, table prefix, team agreements._\n"
+                          "_What holds for PrestaShop in general is NOT written here — link `[[cross-version-patterns]]`,\n"
+                          "`[[persistence]]`, `[[services-di]]` in `tech/`._",
+            SEC_KEPUTUSAN: "_Dated bullets: the decision taken and its reason._",
+            SEC_FAKTA: "_Owned by `ps-module-context.py` (claim/drop). Do not edit by hand._",
+            SEC_JURNAL: "_Owned by `ps-module-context.py` (note), append-only. Do not edit by hand._",
+            SEC_RINGKASAN: "_Optional, curated by psm-agent-expert. Not read by workflows._",
+        },
+        "footer": "Source: psm workflow sessions + ps-module-inventory.py inventory; "
+                  "general PrestaShop knowledge in `tech/`.",
+    },
+}
+
 MARKER_SCHEMA = """\
-Marker kanonik di seksi '## Fakta terkonsiliasi' (kontrak bersama workflow psm):
+Marker kanonik di seksi fakta (psm:fakta) (kontrak bersama workflow psm):
   - Fakta: kind=<hook|table|class|file> key=<ident> status=<live|retired|planned>
            sejak=<YYYY-MM-DD> oleh=<skill> [catatan=<bebas, sampai akhir baris>]
 
@@ -75,17 +125,28 @@ status=live     -> fakta harus ADA di inventaris; hilang = drift live_but_missin
 status=retired  -> fakta sengaja ABSEN; muncul lagi = drift retired_but_present
 status=planned  -> diabaikan reconcile (belum diterapkan)
 
-Zona artefak <memory-dir>/projects/<module>.md:
-  '## Konvensi module', '## Keputusan', '## Ringkasan' -> prosa terkurasi,
-    disunting TANGAN (psm-module-context / psm-agent-expert).
-  '## Fakta terkonsiliasi', '## Jurnal' -> milik skrip ini saja; jangan
-    disunting tangan.
-Tiap write hanya menyentuh satu seksi; sisanya disalin byte-for-byte.
+Zona artefak <memory-dir>/projects/<module>.md — seksi dikenali lewat ID di
+penanda judul `## <judul> <!-- psm:<id> -->`, BUKAN lewat judulnya:
+  psm:konvensi, psm:keputusan, psm:ringkasan -> prosa terkurasi, disunting
+    TANGAN (psm-module-context / psm-agent-expert).
+  psm:fakta, psm:jurnal -> milik skrip ini saja; jangan disunting tangan.
+Bahasa: judul, petunjuk kerangka, H1, dan baris provenance ditulis dalam bahasa
+dokumen (--lang, else document_output_language di _bmad/config.yaml, else
+English; bawaan Indonesia & English, bahasa lain memakai English). Judul boleh
+diterjemahkan tangan asal penanda <!-- psm:<id> --> tetap di baris judul.
+Artefak lama tanpa penanda dikenali dari judul bawaan dan diberi penanda saat
+ditulis. Token marker (Fakta:, kind=, status=, sejak=, oleh=, catatan=) adalah
+kontrak mesin — jangan diterjemahkan.
+Tiap write hanya menyentuh satu seksi; isi seksi lain disalin byte-for-byte.
 """
 
 FAKTA_RE = re.compile(r"^\s*(?:[-*]\s+)?Fakta\s*:\s*(.+?)\s*$", re.IGNORECASE)
 FIELD_RE = re.compile(r"\b(kind|key|status|sejak|oleh|catatan)=")
 H2_RE = re.compile(r"^##\s+(.+?)\s*$")
+SEC_ID_RE = re.compile(r"\s*<!--\s*psm:([a-z_]+)\s*-->\s*$")
+DOC_LANG_RE = re.compile(r"^document_output_language\s*:\s*['\"]?([^'\"#\n]+?)['\"]?\s*(?:#.*)?$", re.M)
+# Judul bawaan semua bahasa -> ID, untuk artefak yang belum berpenanda.
+TITLE_TO_ID = {t.lower(): sid for txt in TEXTS.values() for sid, t in txt["titles"].items()}
 
 
 def today() -> str:
@@ -118,70 +179,96 @@ def module_name(args, path: Path) -> str:
     return args.module if args.module else path.stem
 
 
+def normalize_lang(value) -> str:
+    """Nama bahasa bebas (config/flag) -> kunci TEXTS. Tak dikenal -> 'en'."""
+    v = (value or "").strip().lower()
+    if v in ("id", "ind") or v.startswith(("indo", "bahasa")):
+        return "id"
+    return "en"
+
+
+def doc_lang(args, path: Path) -> str:
+    """Bahasa dokumen: --lang menang; else document_output_language dari
+    `_bmad/config.yaml` terdekat di atas artefak; else 'en' (default psm-setup)."""
+    if getattr(args, "lang", None):
+        return normalize_lang(args.lang)
+    for parent in path.resolve().parents:
+        cfg = parent / "_bmad" / "config.yaml"
+        if cfg.is_file():
+            m = DOC_LANG_RE.search(cfg.read_text(encoding="utf-8", errors="replace"))
+            return normalize_lang(m.group(1) if m else None)
+    return "en"
+
+
 # --- struktur artefak -------------------------------------------------------
 
-def split_sections(text):
-    """Pecah jadi (head, {judul: [baris]}, urutan) per batas H2.
+def section_key(heading):
+    """Baris judul H2 (tanpa '## ') -> (kunci, judul tampil).
 
-    head = semua sebelum H2 pertama (H1 + baris provenance). Seksi tak dikenal
-    ikut terbawa apa adanya — skrip ini tak pernah membuang apa yang tak dimilikinya.
+    Kunci = ID penanda bila ada, else ID judul bawaan (artefak lama), else judul
+    mentah (seksi tak dikenal — dibawa apa adanya)."""
+    m = SEC_ID_RE.search(heading)
+    if m:
+        return m.group(1), heading[:m.start()].strip()
+    return TITLE_TO_ID.get(heading.strip().lower(), heading), heading
+
+
+def split_sections(text):
+    """Pecah jadi (head, {kunci: [baris]}, {kunci: judul}) per batas H2.
+
+    head = semua sebelum H2 pertama (H1 + baris provenance). Dict judul juga
+    memegang urutan. Seksi tak dikenal ikut terbawa apa adanya — skrip ini tak
+    pernah membuang apa yang tak dimilikinya.
     """
     lines = text.splitlines()
-    head, sections, order = [], {}, []
+    head, sections, order = [], {}, {}
     current = None
     for line in lines:
         h = H2_RE.match(line)
         if h:
-            current = h.group(1)
+            current, title = section_key(h.group(1))
             if current not in sections:
                 sections[current] = []
-                order.append(current)
+                order[current] = title
             continue
         (sections[current] if current is not None else head).append(line)
     return head, sections, order
 
 
 def render_doc(head, sections, order) -> str:
+    """Seksi milik kontrak selalu ditulis berpenanda ID; seksi asing apa adanya."""
     parts = ["\n".join(head).rstrip("\n")]
-    for title in order:
-        body = "\n".join(sections[title]).strip("\n")
-        parts.append(f"## {title}\n{body}" if body else f"## {title}")
+    for key, title in order.items():
+        heading = f"{title} <!-- psm:{key} -->" if key in SECTIONS else title
+        body = "\n".join(sections[key]).strip("\n")
+        parts.append(f"## {heading}\n{body}" if body else f"## {heading}")
     return "\n\n".join(parts).rstrip("\n") + "\n"
 
 
-def stamp_updated(head, by):
-    """Perbarui klausa 'Diperbarui' di baris provenance (baris-3 gaya rumah KB)."""
+SEEDED_PREFIXES = ("Diseed ", "Seeded ")
+UPDATED_RE = re.compile(r"\s*(?:Diperbarui|Updated) .*$")
+
+
+def stamp_updated(head, by, lang="en"):
+    """Perbarui klausa 'Updated/Diperbarui' di baris provenance (baris-3 gaya rumah KB)."""
     who = by or "workflow psm"
-    clause = f"Diperbarui {today()} oleh {who}."
+    clause = TEXTS[lang]["updated"].format(date=today(), who=who)
     for i, line in enumerate(head):
-        if line.startswith("Diseed "):
-            base = re.sub(r"\s*Diperbarui .*$", "", line).rstrip()
+        if line.startswith(SEEDED_PREFIXES):
+            base = UPDATED_RE.sub("", line).rstrip()
             head[i] = f"{base} {clause}"
             return
     # tak ada baris provenance (artefak disunting tangan sampai hilang) — jangan
     # memaksa; skrip tak memiliki head.
 
 
-def skeleton(module, source) -> str:
-    src = source or "inventaris ps-module-inventory + sesi workflow psm"
-    return (
-        f"# Konteks module {module}\n\n"
-        f"Diseed {today()} dari {src}.\n\n"
-        f"## {SEC_KONVENSI}\n"
-        "_Konvensi khusus module ini: namespace, layout service, prefix tabel, kesepakatan tim._\n"
-        "_Yang benar untuk PrestaShop umum TIDAK ditulis di sini — rujuk `[[cross-version-patterns]]`,\n"
-        "`[[persistence]]`, `[[services-di]]` di `tech/`._\n\n"
-        f"## {SEC_KEPUTUSAN}\n"
-        "_Butir bertanggal: keputusan yang diambil dan alasannya._\n\n"
-        f"## {SEC_FAKTA}\n"
-        "_Milik `ps-module-context.py` (claim/drop). Jangan sunting tangan._\n\n"
-        f"## {SEC_JURNAL}\n"
-        "_Milik `ps-module-context.py` (note), append-only. Jangan sunting tangan._\n\n"
-        f"## {SEC_RINGKASAN}\n"
-        "_Opsional, dikurasi psm-agent-expert. Tak dibaca workflow._\n\n"
-        "Sumber: sesi workflow psm + inventaris ps-module-inventory.py; "
-        "pengetahuan PrestaShop umum di `tech/`.\n"
-    )
+def skeleton(module, source, lang="en") -> str:
+    t = TEXTS[lang]
+    src = source or t["default_src"]
+    out = f"# {t['h1'].format(module=module)}\n\n{t['seeded'].format(date=today(), src=src)}\n\n"
+    for sid in SECTIONS:
+        out += f"## {t['titles'][sid]} <!-- psm:{sid} -->\n{t['hints'][sid]}\n\n"
+    return out + t["footer"] + "\n"
 
 
 def load_doc(path: Path, args, autoinit_by=None):
@@ -191,16 +278,17 @@ def load_doc(path: Path, args, autoinit_by=None):
             print(f"error: {path} tak ada", file=sys.stderr)
             return 2
         path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(path, skeleton(module_name(args, path), None))
+        write_atomic(path, skeleton(module_name(args, path), None, doc_lang(args, path)))
     text = path.read_text(encoding="utf-8", errors="replace")
     if not text.lstrip().startswith("#"):
         print(f"error: {path} tak punya H1 — bukan artefak konteks module", file=sys.stderr)
         return 2
     head, sections, order = split_sections(text)
-    for title in SECTIONS:  # seksi yang hilang (disunting tangan) dipulihkan kosong
-        if title not in sections:
-            sections[title] = []
-            order.append(title)
+    titles = TEXTS[doc_lang(args, path)]["titles"]
+    for sid in SECTIONS:  # seksi yang hilang (disunting tangan) dipulihkan kosong
+        if sid not in sections:
+            sections[sid] = []
+            order[sid] = titles[sid]
     return head, sections, order
 
 
@@ -274,7 +362,7 @@ def cmd_init(args) -> int:
         print(f"error: {path} sudah ada; pakai note/claim untuk memperbaruinya", file=sys.stderr)
         return 2
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_atomic(path, skeleton(module_name(args, path), args.source))
+    write_atomic(path, skeleton(module_name(args, path), args.source, doc_lang(args, path)))
     _, sections, _ = split_sections(path.read_text(encoding="utf-8"))
     ack(path, sections)
     return 0
@@ -294,7 +382,7 @@ def cmd_note(args) -> int:
     body = [ln for ln in sections[SEC_JURNAL] if ln.strip()]
     body.append(entry)  # selalu di akhir — kronologis
     sections[SEC_JURNAL] = body
-    stamp_updated(head, args.by)
+    stamp_updated(head, args.by, doc_lang(args, path))
     write_atomic(path, render_doc(head, sections, order))
     ack(path, sections)
     return 0
@@ -332,7 +420,7 @@ def cmd_claim(args) -> int:
         out = [ln for ln in out if ln.strip()] or out
         out.append(render_fakta(fakta))
     sections[SEC_FAKTA] = out
-    stamp_updated(head, args.by)
+    stamp_updated(head, args.by, doc_lang(args, path))
     write_atomic(path, render_doc(head, sections, order))
     ack(path, sections)
     return 0
@@ -355,7 +443,7 @@ def cmd_drop(args) -> int:
             continue
         out.append(line)
     sections[SEC_FAKTA] = out
-    stamp_updated(head, args.by)
+    stamp_updated(head, args.by, doc_lang(args, path))
     write_atomic(path, render_doc(head, sections, order))
     ack(path, sections)
     return 0
@@ -403,7 +491,7 @@ def cmd_reconcile(args) -> int:
     for i, p in fakta_lines(sections[SEC_FAKTA]):
         if not p:  # baris Fakta rusak = artefak salah -> drift, bukan invokasi salah -> rc=2
             drift.append({"kind": "claim_malformed", "fact_kind": None, "key": None,
-                          "detail": f"baris Fakta di seksi '{SEC_FAKTA}' tak bisa di-parse "
+                          "detail": f"baris Fakta di seksi fakta (psm:fakta) tak bisa di-parse "
                                     f"(baris ke-{i + 1} seksi) — perbaiki lewat claim/drop"})
             continue
         kind, key, status = p["kind"], p["key"], p.get("status", "")
@@ -446,6 +534,8 @@ def add_target(sp) -> None:
     g.add_argument("--memory-dir", help="folder KB psm; artefak = <memory-dir>/projects/<module>.md")
     g.add_argument("--path", help="path artefak eksplisit (alternatif --memory-dir)")
     sp.add_argument("--module", help="nama module (wajib bersama --memory-dir)")
+    sp.add_argument("--lang", help="bahasa dokumen untuk kerangka/judul baru (mis. English); "
+                    "default: document_output_language dari _bmad/config.yaml, else English")
 
 
 def main() -> int:
@@ -459,14 +549,14 @@ def main() -> int:
     pi.add_argument("--source", help="sumber seed untuk baris provenance")
     pi.set_defaults(func=cmd_init)
 
-    pn = sub.add_parser("note", help=f"tambah satu entri '## {SEC_JURNAL}' di akhir (auto-init)")
+    pn = sub.add_parser("note", help="tambah satu entri seksi jurnal (psm:jurnal) di akhir (auto-init)")
     add_target(pn)
     pn.add_argument("--text", required=True)
     pn.add_argument("--type", help="jenis entri, dirender jadi tag inline")
     pn.add_argument("--by", help="skill/agen penulis entri")
     pn.set_defaults(func=cmd_note)
 
-    pc = sub.add_parser("claim", help=f"upsert satu Fakta by (kind,key) di '## {SEC_FAKTA}' (auto-init)")
+    pc = sub.add_parser("claim", help="upsert satu Fakta by (kind,key) di seksi fakta (psm:fakta) (auto-init)")
     add_target(pc)
     pc.add_argument("--kind", required=True, choices=KINDS, metavar="KIND",
                     help=f"salah satu: {'|'.join(KINDS)}")

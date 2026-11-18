@@ -54,12 +54,49 @@ STATUSES = ("baru", "dipilih", "terwujud", "ditolak")
 # biasanya tanda idenya lintas domain — tempatnya katalog, bukan backlog ini.
 ARAH = ("varian", "kelengkapan", "otomasi", "visibilitas", "ketahanan")
 
-SEC_DOMAIN = "Domain & posisi"
-SEC_BACKLOG = "Backlog"
+# Seksi dikenali lewat ID STABIL di penanda judul (`## Backlog <!-- psm:backlog -->`),
+# bukan judulnya: judul ditulis dalam bahasa dokumen (document_output_language) dan
+# boleh diterjemahkan tangan. Artefak lama tanpa penanda dikenali dari judul bawaan.
+# Pola sama dengan ps-module-context.py (disalin, bukan di-import — lihat write_atomic).
+SEC_DOMAIN = "domain"
+SEC_BACKLOG = "backlog"
 SECTIONS = (SEC_DOMAIN, SEC_BACKLOG)
 
+# Teks kerangka per bahasa dokumen. Bahasa lain jatuh ke 'en'; model menerjemahkan
+# judul & petunjuk sendiri — penanda ID yang membuat itu aman.
+TEXTS = {
+    "id": {
+        "titles": {SEC_DOMAIN: "Domain & posisi", SEC_BACKLOG: "Backlog"},
+        "h1": "Backlog ide module {module}",
+        "created": "Dibuat {date} oleh psm-ideate.",
+        "updated": "Diperbarui {date} oleh {who}.",
+        "domain_placeholder": "_Belum ditentukan — isi saat psm-ideate mengenali domain module dari inventaris._",
+        "hints": {
+            SEC_DOMAIN: "_Domain module + posisinya di keluarga fungsi (bila ada), diturunkan dari bukti\n"
+                        "inventaris: hook terdaftar, nama tabel, controller. Prosa, disunting tangan._",
+            SEC_BACKLOG: "_Milik `ps-idea-backlog.py` (add/drop). Jangan sunting tangan._",
+        },
+        "footer": "Sumber: sesi psm-ideate + inventaris ps-module-inventory.py; katalog fungsi di\n"
+                  "`psm-develop/references/ecommerce-function-catalog.md`.",
+    },
+    "en": {
+        "titles": {SEC_DOMAIN: "Domain & position", SEC_BACKLOG: "Backlog"},
+        "h1": "Module idea backlog {module}",
+        "created": "Created {date} by psm-ideate.",
+        "updated": "Updated {date} by {who}.",
+        "domain_placeholder": "_Not set yet — filled in when psm-ideate recognizes the module's domain from the inventory._",
+        "hints": {
+            SEC_DOMAIN: "_The module's domain + its position in the function family (if any), derived from\n"
+                        "inventory evidence: registered hooks, table names, controllers. Prose, edited by hand._",
+            SEC_BACKLOG: "_Owned by `ps-idea-backlog.py` (add/drop). Do not edit by hand._",
+        },
+        "footer": "Source: psm-ideate sessions + ps-module-inventory.py inventory; function catalog in\n"
+                  "`psm-develop/references/ecommerce-function-catalog.md`.",
+    },
+}
+
 MARKER_SCHEMA = """\
-Marker kanonik di seksi '## Backlog' (kontrak bersama psm-ideate/psm-plan):
+Marker kanonik di seksi backlog (psm:backlog) (kontrak bersama psm-ideate/psm-plan):
   - Ide: key=<slug> status=<baru|dipilih|terwujud|ditolak>
          arah=<varian|kelengkapan|otomasi|visibilitas|ketahanan>
          [prasyarat=<key,key>] [rencana=<nama fungsi di rencana>]
@@ -82,15 +119,27 @@ manusia akan diam-diam menandai ide yang salah sebagai terwujud.
 keluarga fungsi). sync memeriksanya hanya untuk ide 'dipilih' — itu momen ketika
 melompat anak tangga benar-benar berbiaya.
 
-Zona artefak <module-path>/.psm-ideas.md:
-  '## Domain & posisi' -> prosa terkurasi, disunting TANGAN (psm-ideate).
-  '## Backlog'         -> milik skrip ini saja; jangan disunting tangan.
-Tiap write hanya menyentuh satu seksi; sisanya disalin byte-for-byte.
+Zona artefak <module-path>/.psm-ideas.md — seksi dikenali lewat ID di penanda
+judul `## <judul> <!-- psm:<id> -->`, BUKAN lewat judulnya:
+  psm:domain  -> prosa terkurasi, disunting TANGAN (psm-ideate).
+  psm:backlog -> milik skrip ini saja; jangan disunting tangan.
+Bahasa: judul, petunjuk kerangka, H1, dan baris provenance ditulis dalam bahasa
+dokumen (--lang, else document_output_language di _bmad/config.yaml terdekat,
+else English; bawaan Indonesia & English, bahasa lain memakai English). Judul
+boleh diterjemahkan tangan asal penanda <!-- psm:<id> --> tetap di baris judul.
+Artefak lama tanpa penanda dikenali dari judul bawaan dan diberi penanda saat
+ditulis. Token marker (Ide:, key=, status=, arah=, nilai status/arah, dst.)
+adalah kontrak mesin — jangan diterjemahkan.
+Tiap write hanya menyentuh satu seksi; isi seksi lain disalin byte-for-byte.
 """
 
 IDE_RE = re.compile(r"^\s*(?:[-*]\s+)?Ide\s*:\s*(.+?)\s*$", re.IGNORECASE)
 FIELD_RE = re.compile(r"\b(key|status|arah|prasyarat|rencana|sejak|oleh|catatan)=")
 H2_RE = re.compile(r"^##\s+(.+?)\s*$")
+SEC_ID_RE = re.compile(r"\s*<!--\s*psm:([a-z_]+)\s*-->\s*$")
+DOC_LANG_RE = re.compile(r"^document_output_language\s*:\s*['\"]?([^'\"#\n]+?)['\"]?\s*(?:#.*)?$", re.M)
+# Judul bawaan semua bahasa -> ID, untuk artefak yang belum berpenanda.
+TITLE_TO_ID = {t.lower(): sid for txt in TEXTS.values() for sid, t in txt["titles"].items()}
 APPLIED = ("diterapkan", "applied")
 
 
@@ -125,60 +174,97 @@ def module_name(args, path: Path) -> str:
     return path.resolve().parent.name
 
 
+def normalize_lang(value) -> str:
+    """Nama bahasa bebas (config/flag) -> kunci TEXTS. Tak dikenal -> 'en'."""
+    v = (value or "").strip().lower()
+    if v in ("id", "ind") or v.startswith(("indo", "bahasa")):
+        return "id"
+    return "en"
+
+
+def doc_lang(args, path: Path) -> str:
+    """Bahasa dokumen: --lang menang; else document_output_language dari
+    `_bmad/config.yaml` terdekat di atas artefak; else 'en' (default psm-setup)."""
+    if getattr(args, "lang", None):
+        return normalize_lang(args.lang)
+    for parent in path.resolve().parents:
+        cfg = parent / "_bmad" / "config.yaml"
+        if cfg.is_file():
+            m = DOC_LANG_RE.search(cfg.read_text(encoding="utf-8", errors="replace"))
+            return normalize_lang(m.group(1) if m else None)
+    return "en"
+
+
 # --- struktur artefak -------------------------------------------------------
 
 def split_sections(text):
-    """Pecah jadi (head, {judul: [baris]}, urutan) per batas H2.
+    """Pecah jadi (head, {kunci: [baris]}, {kunci: judul}) per batas H2.
 
-    head = semua sebelum H2 pertama. Seksi tak dikenal ikut terbawa apa adanya —
+    head = semua sebelum H2 pertama. Dict judul juga memegang urutan. Seksi tak dikenal ikut terbawa apa adanya —
     skrip ini tak pernah membuang apa yang tak dimilikinya.
     """
-    head, sections, order = [], {}, []
+    head, sections, order = [], {}, {}
     current = None
     for line in text.splitlines():
         h = H2_RE.match(line)
         if h:
-            current = h.group(1)
+            current, title = section_key(h.group(1))
             if current not in sections:
                 sections[current] = []
-                order.append(current)
+                order[current] = title
             continue
         (sections[current] if current is not None else head).append(line)
     return head, sections, order
 
 
+def section_key(heading):
+    """Baris judul H2 (tanpa '## ') -> (kunci, judul tampil).
+
+    Kunci = ID penanda bila ada, else ID judul bawaan (artefak lama), else judul
+    mentah (seksi tak dikenal — dibawa apa adanya)."""
+    m = SEC_ID_RE.search(heading)
+    if m:
+        return m.group(1), heading[:m.start()].strip()
+    return TITLE_TO_ID.get(heading.strip().lower(), heading), heading
+
+
 def render_doc(head, sections, order) -> str:
+    """Seksi milik kontrak selalu ditulis berpenanda ID; seksi asing apa adanya."""
     parts = ["\n".join(head).rstrip("\n")]
-    for title in order:
-        body = "\n".join(sections[title]).strip("\n")
-        parts.append(f"## {title}\n{body}" if body else f"## {title}")
+    for key, title in order.items():
+        heading = f"{title} <!-- psm:{key} -->" if key in SECTIONS else title
+        body = "\n".join(sections[key]).strip("\n")
+        parts.append(f"## {heading}\n{body}" if body else f"## {heading}")
     return "\n\n".join(parts).rstrip("\n") + "\n"
 
 
-def stamp_updated(head, by):
-    """Perbarui klausa 'Diperbarui' di baris provenance (gaya rumah KB psm)."""
-    clause = f"Diperbarui {today()} oleh {by or 'psm-ideate'}."
+CREATED_PREFIXES = ("Dibuat ", "Created ")
+UPDATED_RE = re.compile(r"\s*(?:Diperbarui|Updated) .*$")
+
+
+def stamp_updated(head, by, lang="en"):
+    """Perbarui klausa 'Updated/Diperbarui' di baris provenance (gaya rumah KB psm)."""
+    clause = TEXTS[lang]["updated"].format(date=today(), who=by or "psm-ideate")
     for i, line in enumerate(head):
-        if line.startswith("Dibuat "):
-            base = re.sub(r"\s*Diperbarui .*$", "", line).rstrip()
+        if line.startswith(CREATED_PREFIXES):
+            base = UPDATED_RE.sub("", line).rstrip()
             head[i] = f"{base} {clause}"
             return
     # tak ada baris provenance (disunting tangan sampai hilang) — jangan memaksa.
 
 
-def skeleton(module, domain) -> str:
-    dom = domain or "_Belum ditentukan — isi saat psm-ideate mengenali domain module dari inventaris._"
+def skeleton(module, domain, lang="en") -> str:
+    t = TEXTS[lang]
+    dom = domain or t["domain_placeholder"]
     return (
-        f"# Backlog ide module {module}\n\n"
-        f"Dibuat {today()} oleh psm-ideate.\n\n"
-        f"## {SEC_DOMAIN}\n"
+        f"# {t['h1'].format(module=module)}\n\n"
+        f"{t['created'].format(date=today())}\n\n"
+        f"## {t['titles'][SEC_DOMAIN]} <!-- psm:{SEC_DOMAIN} -->\n"
         f"{dom}\n\n"
-        "_Domain module + posisinya di keluarga fungsi (bila ada), diturunkan dari bukti\n"
-        "inventaris: hook terdaftar, nama tabel, controller. Prosa, disunting tangan._\n\n"
-        f"## {SEC_BACKLOG}\n"
-        "_Milik `ps-idea-backlog.py` (add/drop). Jangan sunting tangan._\n\n"
-        "Sumber: sesi psm-ideate + inventaris ps-module-inventory.py; katalog fungsi di\n"
-        "`psm-develop/references/ecommerce-function-catalog.md`.\n"
+        f"{t['hints'][SEC_DOMAIN]}\n\n"
+        f"## {t['titles'][SEC_BACKLOG]} <!-- psm:{SEC_BACKLOG} -->\n"
+        f"{t['hints'][SEC_BACKLOG]}\n\n"
+        f"{t['footer']}\n"
     )
 
 
@@ -189,16 +275,17 @@ def load_doc(path: Path, args, autoinit=False):
             print(f"error: {path} tak ada — jalankan init dulu", file=sys.stderr)
             return 2
         path.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(path, skeleton(module_name(args, path), None))
+        write_atomic(path, skeleton(module_name(args, path), None, doc_lang(args, path)))
     text = path.read_text(encoding="utf-8", errors="replace")
     if not text.lstrip().startswith("#"):
         print(f"error: {path} tak punya H1 — bukan artefak backlog ide", file=sys.stderr)
         return 2
     head, sections, order = split_sections(text)
-    for title in SECTIONS:  # seksi yang hilang (disunting tangan) dipulihkan kosong
-        if title not in sections:
-            sections[title] = []
-            order.append(title)
+    titles = TEXTS[doc_lang(args, path)]["titles"]
+    for sid in SECTIONS:  # seksi yang hilang (disunting tangan) dipulihkan kosong
+        if sid not in sections:
+            sections[sid] = []
+            order[sid] = titles[sid]
     return head, sections, order
 
 
@@ -274,7 +361,7 @@ def cmd_init(args) -> int:
               file=sys.stderr)
         return 2
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_atomic(path, skeleton(module_name(args, path), args.domain))
+    write_atomic(path, skeleton(module_name(args, path), args.domain, doc_lang(args, path)))
     print(str(path))
     return 0
 
@@ -328,7 +415,7 @@ def cmd_add(args) -> int:
     if not replaced:
         out.append(entry)
     sections[SEC_BACKLOG] = [render_ide(d) for d in out]
-    stamp_updated(head, args.by)
+    stamp_updated(head, args.by, doc_lang(args, path))
     write_atomic(path, render_doc(head, sections, order))
     print(f"{'update' if replaced else 'tambah'}: {args.key} -> {args.status}")
     return 0
@@ -346,7 +433,7 @@ def cmd_drop(args) -> int:
         print(f"error: ide '{args.key}' tak ada di backlog", file=sys.stderr)
         return 2
     sections[SEC_BACKLOG] = [render_ide(d) for d in kept]
-    stamp_updated(head, args.by)
+    stamp_updated(head, args.by, doc_lang(args, path))
     write_atomic(path, render_doc(head, sections, order))
     print(f"hapus: {args.key}")
     return 0
@@ -454,6 +541,8 @@ def main() -> int:
         g = p.add_mutually_exclusive_group(required=True)
         g.add_argument("--module-path", help="Folder module (artefak: <module-path>/.psm-ideas.md)")
         g.add_argument("--path", help="Path artefak backlog langsung")
+        p.add_argument("--lang", help="Bahasa dokumen untuk kerangka/judul baru (mis. English); "
+                       "default: document_output_language dari _bmad/config.yaml, else English")
 
     p = sub.add_parser("init", help="Buat artefak backlog berkerangka")
     addr(p)

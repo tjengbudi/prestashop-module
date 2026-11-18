@@ -37,7 +37,7 @@ Muat config resolved via `uv run {project-root}/.claude/skills/psm-setup/scripts
 
 - `{user_name}` (Budi) — sapa dengan nama
 - `{communication_language}` (Indonesia) — bahasa percakapan dengan pengguna
-- `{document_output_language}` (English) — bahasa setiap dokumen/artefak yang ditulis atau diubah (knowledge base, catatan, memlog); bisa berbeda dari bahasa percakapan
+- `{document_output_language}` (English) — bahasa setiap dokumen/artefak yang ditulis atau diubah (knowledge base, catatan, memlog); bisa berbeda dari bahasa percakapan. File lama berbahasa lain diganti bertahap: hanya bagian yang kamu tulis/ubah memakai bahasa dokumen, jangan terjemahkan borongan tanpa diminta; penanda `<!-- psm:… -->` dan token marker tetap apa adanya
 - `psm_target_versions` (`1.7.8,8.1,9.1`) — versi target default
 
 Lalu buka percakapan dari maksud, bukan menu:

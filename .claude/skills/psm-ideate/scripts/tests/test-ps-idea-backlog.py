@@ -34,7 +34,7 @@ def main():
         mod = root / "psbankwire"
         mod.mkdir()
         art = mod / ".psm-ideas.md"
-        addr = ("--module-path", str(mod))
+        addr = ("--module-path", str(mod), "--lang", "Indonesia")
 
         # 1 — init menghasilkan kerangka bergaya rumah KB
         r = run("init", *addr, "--domain", "Pembayaran offline; tangga: transfer manual.")
@@ -43,7 +43,8 @@ def main():
         ok &= check("init: H1 + provenance + 2 seksi + domain terisi",
                     text.startswith("# Backlog ide module psbankwire")
                     and "\nDibuat " in text
-                    and "## Domain & posisi" in text and "## Backlog" in text
+                    and "## Domain & posisi <!-- psm:domain -->" in text
+                    and "## Backlog <!-- psm:backlog -->" in text
                     and "transfer manual" in text)
 
         # 2 — init di file existing = invokasi salah, bukan drift
@@ -192,6 +193,42 @@ def main():
         bad.write_text("{bukan json", encoding="utf-8")
         ok &= check("plan bukan JSON rc=2",
                     run("sync", *addr, "--plan", str(bad)).returncode == 2)
+
+        # 19 — BAHASA DOKUMEN: kerangka mengikuti document_output_language di
+        # _bmad/config.yaml terdekat (bukan bahasa skrip), seksi berpenanda ID.
+        proj = root / "proj"
+        (proj / "_bmad").mkdir(parents=True)
+        (proj / "_bmad" / "config.yaml").write_text(
+            "document_output_language: English\n", encoding="utf-8")
+        modp = proj / "modules" / "demo"
+        modp.mkdir(parents=True)
+        run("add", "--module-path", str(modp), "--key", "a", "--status", "baru", "--arah", "varian")
+        tp = (modp / ".psm-ideas.md").read_text(encoding="utf-8")
+        ok &= check("lang: config English -> kerangka English berpenanda ID",
+                    tp.startswith("# Module idea backlog demo") and "\nCreated " in tp
+                    and "## Domain & position <!-- psm:domain -->" in tp
+                    and "## Backlog <!-- psm:backlog -->" in tp and "- Ide: key=a" in tp
+                    and "Dibuat" not in tp and "Belum ditentukan" not in tp)
+
+        # 20 — judul diterjemahkan tangan: ID penanda yang dipakai, bukan judulnya
+        art3 = modp / ".psm-ideas.md"
+        art3.write_text(tp.replace("## Backlog <!-- psm:backlog -->", "## Pendientes <!-- psm:backlog -->"),
+                        encoding="utf-8")
+        r = run("add", "--module-path", str(modp), "--key", "b", "--status", "baru", "--arah", "otomasi")
+        t3 = art3.read_text(encoding="utf-8")
+        ok &= check("lang: judul terjemahan tetap dikenali lewat ID (tanpa seksi ganda)",
+                    r.returncode == 0 and t3.count("psm:backlog") == 1
+                    and "## Pendientes <!-- psm:backlog -->" in t3 and "key=a" in t3 and "key=b" in t3)
+
+        # 21 — artefak lama (judul Indonesia, tanpa penanda) dikenali & diberi penanda
+        legacy = root / "legacy.md"
+        legacy.write_text("# Backlog ide module x\n\nDibuat 2026-01-01 oleh psm-ideate.\n\n"
+                          "## Domain & posisi\nprosa lama\n\n## Backlog\n", encoding="utf-8")
+        r = run("add", "--path", str(legacy), "--key", "c", "--status", "baru", "--arah", "varian")
+        tl = legacy.read_text(encoding="utf-8")
+        ok &= check("lang: artefak lama dikenali, diberi penanda, prosa utuh",
+                    r.returncode == 0 and tl.count("psm:backlog") == 1
+                    and "## Domain & posisi <!-- psm:domain -->\nprosa lama" in tl and "key=c" in tl)
 
     print("\nSEMUA LULUS" if ok else "\nADA YANG GAGAL")
     return 0 if ok else 1

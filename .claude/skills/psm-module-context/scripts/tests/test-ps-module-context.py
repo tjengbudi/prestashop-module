@@ -39,7 +39,7 @@ def main():
         root = Path(td)
         mem = root / "mem"
         prof = mem / "projects" / "ctxmod.md"
-        addr = ("--memory-dir", str(mem), "--module", "ctxmod")
+        addr = ("--memory-dir", str(mem), "--module", "ctxmod", "--lang", "Indonesia")
         inv_file = root / "inv.json"
         inv_file.write_text(json.dumps(INV), encoding="utf-8")
 
@@ -60,7 +60,7 @@ def main():
 
         # 3 — note di artefak absen auto-init (menyimpang sadar dari memlog)
         mem2 = root / "mem2"
-        addr2 = ("--memory-dir", str(mem2), "--module", "ctxmod")
+        addr2 = ("--memory-dir", str(mem2), "--module", "ctxmod", "--lang", "Indonesia")
         r = run("note", *addr2, "--text", "entri pertama", "--by", "psm-plan")
         ack = json.loads(r.stdout) if r.stdout.strip() else {}
         ok &= check("note auto-init rc=0 + journal=1",
@@ -129,7 +129,7 @@ def main():
 
         # 10 — normalisasi hook: case-fold + awalan 'hook' (cermin reconcile_plan)
         mem3 = root / "mem3"
-        addr3 = ("--memory-dir", str(mem3), "--module", "ctxmod")
+        addr3 = ("--memory-dir", str(mem3), "--module", "ctxmod", "--lang", "Indonesia")
         run("claim", *addr3, "--kind", "hook", "--key", "displayheader",
             "--status", "live", "--by", "t")
         run("claim", *addr3, "--kind", "hook", "--key", "actionValidateOrder",
@@ -158,11 +158,11 @@ def main():
 
         # 16 — artefak salah -> drift, BUKAN rc=2 (cermin no_markers di pair_check)
         mem4 = root / "mem4"
-        addr4 = ("--memory-dir", str(mem4), "--module", "ctxmod")
+        addr4 = ("--memory-dir", str(mem4), "--module", "ctxmod", "--lang", "Indonesia")
         run("init", *addr4)
         p4 = mem4 / "projects" / "ctxmod.md"
         p4.write_text(p4.read_text(encoding="utf-8").replace(
-            "## Fakta terkonsiliasi\n", "## Fakta terkonsiliasi\n- Fakta: ngawur tanpa field\n"),
+            "## Fakta terkonsiliasi <!-- psm:fakta -->\n", "## Fakta terkonsiliasi\n- Fakta: ngawur tanpa field\n"),
             encoding="utf-8")
         r = run("reconcile", *addr4, "--inventory", str(inv_file))
         ok &= check("baris Fakta dirusak tangan -> rc=1 claim_malformed",
@@ -171,11 +171,11 @@ def main():
 
         # 17 — toleransi marker: bullet + bold (cermin parse_md_statuses)
         mem5 = root / "mem5"
-        addr5 = ("--memory-dir", str(mem5), "--module", "ctxmod")
+        addr5 = ("--memory-dir", str(mem5), "--module", "ctxmod", "--lang", "Indonesia")
         run("init", *addr5)
         p5 = mem5 / "projects" / "ctxmod.md"
         p5.write_text(p5.read_text(encoding="utf-8").replace(
-            "## Fakta terkonsiliasi\n",
+            "## Fakta terkonsiliasi <!-- psm:fakta -->\n",
             "## Fakta terkonsiliasi\n- **Fakta:** kind=hook key=displayHeader status=live "
             "sejak=2026-07-30 oleh=t\n"), encoding="utf-8")
         r = run("reconcile", *addr5, "--inventory", str(inv_file))
@@ -185,15 +185,15 @@ def main():
         # 18 — INVARIAN STRUKTURAL: zona terkurasi tak tersentuh jalur tulis skrip.
         # Ini yang membuat "satu jalur tulis" jadi fakta, bukan niat.
         mem6 = root / "mem6"
-        addr6 = ("--memory-dir", str(mem6), "--module", "ctxmod")
+        addr6 = ("--memory-dir", str(mem6), "--module", "ctxmod", "--lang", "Indonesia")
         run("init", *addr6)
         p6 = mem6 / "projects" / "ctxmod.md"
         prosa_k = ("Namespace PSR-4 `Budi\\CtxMod\\`, service di `config/services.yml`.\n"
                    "Prefix tabel `ctxmod_`. Umum PrestaShop -> [[persistence]].")
         prosa_d = "- 2026-07-12 — Doctrine ditolak, ObjectModel dipakai: target masih 1.7.8."
         t6 = p6.read_text(encoding="utf-8")
-        t6 = t6.replace("## Konvensi module\n", f"## Konvensi module\n{prosa_k}\n")
-        t6 = t6.replace("## Keputusan\n", f"## Keputusan\n{prosa_d}\n")
+        t6 = t6.replace("## Konvensi module <!-- psm:konvensi -->\n", f"## Konvensi module <!-- psm:konvensi -->\n{prosa_k}\n")
+        t6 = t6.replace("## Keputusan <!-- psm:keputusan -->\n", f"## Keputusan <!-- psm:keputusan -->\n{prosa_d}\n")
         p6.write_text(t6, encoding="utf-8")
         before = p6.read_text(encoding="utf-8")
         h2_before = [ln for ln in before.splitlines() if ln.startswith("## ")]
@@ -221,12 +221,64 @@ def main():
 
         # 20 — catatan non-ASCII & yang memuat 'status=' tak merusak parsing
         mem7 = root / "mem7"
-        addr7 = ("--memory-dir", str(mem7), "--module", "ctxmod")
+        addr7 = ("--memory-dir", str(mem7), "--module", "ctxmod", "--lang", "Indonesia")
         run("claim", *addr7, "--kind", "hook", "--key", "displayHeader", "--status", "live",
             "--by", "t", "--note", "dipakai buat status=aktif — ada tanda—panjang")
         r = run("reconcile", *addr7, "--inventory", str(inv_file))
         ok &= check("catatan bebas (non-ASCII + memuat 'status=') tak merusak parsing",
                     r.returncode == 0 and json.loads(r.stdout)["ok"])
+
+        # 21 — BAHASA DOKUMEN: kerangka mengikuti document_output_language di
+        # _bmad/config.yaml terdekat (bukan bahasa skrip), seksi berpenanda ID.
+        proj = root / "proj"
+        (proj / "_bmad").mkdir(parents=True)
+        (proj / "_bmad" / "config.yaml").write_text(
+            "document_output_language: English\npsm:\n  name: x\n", encoding="utf-8")
+        memp = proj / "_bmad" / "psm" / "memory"
+        addrp = ("--memory-dir", str(memp), "--module", "ctxmod")
+        run("init", *addrp)
+        tp = (memp / "projects" / "ctxmod.md").read_text(encoding="utf-8")
+        ok &= check("lang: config English -> kerangka English berpenanda ID",
+                    tp.startswith("# Module context ctxmod") and "\nSeeded " in tp
+                    and "## Journal <!-- psm:jurnal -->" in tp
+                    and "## Reconciled facts <!-- psm:fakta -->" in tp
+                    and "Konvensi" not in tp and "Jurnal" not in tp)
+        (proj / "_bmad" / "config.yaml").write_text(
+            "document_output_language: Indonesia\n", encoding="utf-8")
+        run("note", "--memory-dir", str(memp), "--module", "ctxmod2", "--text", "x")
+        tp2 = (memp / "projects" / "ctxmod2.md").read_text(encoding="utf-8")
+        ok &= check("lang: config Indonesia -> auto-init kerangka Indonesia",
+                    tp2.startswith("# Konteks module ctxmod2") and "## Jurnal <!-- psm:jurnal -->" in tp2)
+        ok &= check("lang: --lang menang atas config",
+                    run("init", "--memory-dir", str(memp), "--module", "ctxmod3", "--lang", "English")
+                    .returncode == 0
+                    and (memp / "projects" / "ctxmod3.md").read_text(encoding="utf-8")
+                    .startswith("# Module context"))
+
+        # 22 — judul diterjemahkan tangan: ID penanda yang dipakai, bukan judulnya
+        p8 = memp / "projects" / "ctxmod.md"
+        p8.write_text(p8.read_text(encoding="utf-8").replace(
+            "## Journal <!-- psm:jurnal -->", "## Bitácora <!-- psm:jurnal -->"), encoding="utf-8")
+        r = run("note", *addrp, "--text", "tras traducir", "--by", "t")
+        t8 = p8.read_text(encoding="utf-8")
+        ok &= check("lang: judul terjemahan tetap dikenali lewat ID (tanpa seksi ganda)",
+                    r.returncode == 0 and t8.count("psm:jurnal") == 1
+                    and "## Bitácora <!-- psm:jurnal -->" in t8
+                    and t8.split("psm:jurnal -->")[1].split("## ")[0].rstrip().endswith("tras traducir"))
+
+        # 23 — artefak lama (judul Indonesia, tanpa penanda) dikenali & diberi penanda
+        legacy = memp / "projects" / "legacy.md"
+        legacy.write_text("# Konteks module legacy\n\nDiseed 2026-01-01 dari x.\n\n"
+                          "## Konvensi module\nprosa lama\n\n## Keputusan\n\n"
+                          "## Fakta terkonsiliasi\n\n## Jurnal\n- lama\n\n## Ringkasan\n",
+                          encoding="utf-8")
+        r = run("note", "--path", str(legacy), "--text", "baru", "--by", "t")
+        tl = legacy.read_text(encoding="utf-8")
+        ok &= check("lang: artefak lama dikenali, diberi penanda, prosa utuh",
+                    r.returncode == 0 and json.loads(r.stdout)["journal"] == 2
+                    and "## Jurnal <!-- psm:jurnal -->" in tl and tl.count("psm:jurnal") == 1
+                    and "## Konvensi module <!-- psm:konvensi -->\nprosa lama" in tl
+                    and "Diperbarui " in tl)  # config proj kini Indonesia (tes 21)
 
     print("semua lolos" if ok else "ADA YANG GAGAL")
     return 0 if ok else 1
