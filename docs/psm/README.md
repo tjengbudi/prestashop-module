@@ -232,7 +232,9 @@ Panggil saat: module lama mau jalan di versi baru, atau psm-validate menemukan A
    → peta risiko per versi → rencana → konfirmasi → terapkan → psm-validate
 ```
 
-**Hasil:** module cross-version + `<module-path>/.psm-cross-plan.md`. Bila pindai sudah bersih, dia berhenti dengan status `sudah-aman` alih-alih mengarang perubahan.
+**Hasil:** module cross-version + `<module-path>/.psm-cross-plan.md`. Bila pindai sudah bersih **dan** tak ada file sisa yang belum dibersihkan, dia berhenti dengan status `sudah-aman` alih-alih mengarang perubahan.
+
+**File sisa rilis lama.** Deploy versi baru di atas instalasi lama (upload zip, salin folder, rsync tanpa `--delete`) tak pernah menghapus file yang dibuang saat porting. Repo jadi bersih, tapi toko tetap menjalankan front controller dan override lama. Contohnya `mycarrier_rj`: server masih memanggil `Tools::jsonEncode` lewat `controllers/front/AddressController.php` 1.x. Karena itu `scripts/ps-removed-files.py` menginventaris file yang pernah dibuang (dari sejarah git, tag rilis, atau folder rilis lama) beserta md5 tiap versinya. Skill lalu menulis skrip upgrade yang menghapus file itu hanya bila isinya persis rilis lama, dan mencabut override lewat `Module::removeOverride`. Skenario Lapis 5 membuktikan pembersihannya. Template dan aturannya ada di `references/upgrade-cleanup.md`.
 
 ---
 
