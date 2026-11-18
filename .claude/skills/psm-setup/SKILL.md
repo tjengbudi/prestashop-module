@@ -40,7 +40,7 @@ If the user provides arguments (e.g. `accept all defaults`, `--headless`, or inl
 
 Ask the user for values, showing the pre-pass defaults in brackets (name the provenance when a value came from existing or legacy config). Present all values together so the user can respond once with only the values they want to change (e.g. "change language to Swahili, rest are fine"). Never tell the user to "press enter" or "leave blank" — in a chat interface they must type something to respond.
 
-**Core config** (only when the pre-pass says `ask_core: true`): `user_name`, `communication_language` and `document_output_language` (ask as a single language question — both keys get the same answer), and `output_folder`, with defaults from `core_defaults`.
+**Core config** (only when the pre-pass says `ask_core: true`): `user_name`, `communication_language` (the language the agent chats in), `document_output_language` (the language of generated documents and artifacts), and `output_folder`, with defaults from `core_defaults`. Ask the two language keys as separate questions — never copy one answer into the other.
 
 **Module config**: ask each variable in `module_defaults` using its `prompt` field from `assets/module.yaml` with its resolved default.
 
@@ -79,4 +79,4 @@ Use the script JSON output to display what was written — the `install_type` (f
 
 ## Outcome
 
-Once the user's `user_name` and `communication_language` are known (from collected input, arguments, or existing config), use them consistently for the remainder of the session: address the user by their configured name and communicate in their configured `communication_language`.
+Once the user's `user_name` and `communication_language` are known (from collected input, arguments, or existing config), use them consistently for the remainder of the session: address the user by their configured name and communicate in their configured `communication_language`. Documents and artifacts are written in `document_output_language`, which may differ from the chat language.
