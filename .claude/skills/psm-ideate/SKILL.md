@@ -19,7 +19,7 @@ Bertindak sebagai pendamping penggalian ide per-module: operator (Budi) memutusk
 
 ## On Activation
 
-1. Muat config resolved via `uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_modules_dir`, `psm_target_versions`, `communication_language`, dll. Baca apa adanya; jangan parse `config.yaml` sendiri.
+1. Muat config resolved via `uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_modules_dir`, `psm_target_versions`, `communication_language`, dll. Baca apa adanya; jangan parse `config.yaml` sendiri. Bahasa: bicara dengan pengguna dalam `communication_language`, tetapi tulis setiap dokumen/artefak yang kamu buat atau ubah (file markdown, rencana, laporan, catatan, memlog) dalam `document_output_language` — keduanya bisa berbeda; jangan ikuti bahasa SKILL.md ini atau bahasa percakapan untuk isi dokumen.
 2. Tentukan module yang digali. Nama telanjang (mis. `psbankwire`) di-resolve ke `<psm_modules_dir>/<nama>`; path lengkap dipakai apa adanya. Bila ambigu, tanya satu pertanyaan.
 3. **Konteks module.** Bila `{project-root}/_bmad/psm/memory/projects/<module>.md` ada, baca **Konvensi module**, **Keputusan**, dan ekor **Jurnal** — keputusan lama sering sudah menolak sebuah ide beserta alasannya; menggalinya ulang membuang waktu Budi. Bila belum ada, lanjut; **psm-module-context** yang membuatnya.
 4. **Augment katalog bila ada.** Bila `{project-root}/_bmad/psm/memory/ecommerce/function-catalog.md` ada, baca untuk fungsi tambahan di luar katalog inti.

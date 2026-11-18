@@ -17,7 +17,7 @@ Bertindak sebagai pendamping pembuatan module PrestaShop: operator (Budi) memutu
 
 ## On Activation
 
-1. Muat config resolved via `uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `psm_modules_dir` (folder module), `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri).
+1. Muat config resolved via `uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `psm_modules_dir` (folder module), `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri). Bahasa: bicara dengan pengguna dalam `communication_language`, tetapi tulis setiap dokumen/artefak yang kamu buat atau ubah (file markdown, rencana, laporan, catatan, memlog) dalam `document_output_language` — keduanya bisa berbeda; jangan ikuti bahasa SKILL.md ini atau bahasa percakapan untuk isi dokumen.
 2. Kumpulkan dari Budi: nama module (lowercase, mis. `ps_mybanner`), author, dan maksud module satu kalimat (dasar display-name/description dan penawaran fungsi nanti). Tanya hanya yang belum jelas dari permintaan. Rentang versi target jangan ditanya: default dari `psm_target_versions` config, sebut sepintas saja ("kerangka untuk 1.7–9.x sesuai config"), dan tanya hanya bila permintaan Budi menyiratkan penyimpangan.
 
 ## Bangkitkan kerangka

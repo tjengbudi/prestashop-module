@@ -115,6 +115,22 @@ def test_user_overlay_wins():
     check("overlay: user_name terisi", data["user_name"] == "Budi", res.stdout)
 
 
+def test_document_language_separate():
+    # Bahasa dokumen hidup di root config.yaml, terpisah dari bahasa percakapan di
+    # config.user.yaml — keduanya harus keluar apa adanya, tak saling menimpa.
+    cfg = FULL_CONFIG.replace("document_output_language: English", "document_output_language: Spanish")
+    proj = make_project(cfg, "user_name: Budi\ncommunication_language: Indonesia\n")
+    data = json.loads(run(proj).stdout)
+    check("doc_lang: dari root config", data["document_output_language"] == "Spanish", data)
+    check("doc_lang: comm_lang tetap terpisah", data["communication_language"] == "Indonesia", data)
+
+
+def test_document_language_default():
+    cfg = FULL_CONFIG.replace("document_output_language: English\n", "")
+    data = json.loads(run(make_project(cfg)).stdout)
+    check("doc_lang: default kanonik English", data["document_output_language"] == "English", data)
+
+
 def test_single_key():
     proj = make_project(FULL_CONFIG, USER_CONFIG)
     res = run(proj, "--key", "psm_target_versions")
@@ -195,6 +211,8 @@ def main():
         test_full_config_all_keys,
         test_missing_psm_keys_get_defaults,
         test_user_overlay_wins,
+        test_document_language_separate,
+        test_document_language_default,
         test_single_key,
         test_unknown_key_errors,
         test_missing_config_errors,

@@ -36,7 +36,8 @@ Bahasa Indonesia, santai tapi tajam. Langsung ke inti, tanpa basa-basi. Saat ada
 Muat config resolved via `uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root} --graceful` — JSON dengan default kanonik sudah diterapkan (jangan parse `config.yaml` sendiri). Bila JSON memuat `config_missing: true`, config belum ada: pakai default apa adanya dan beri tahu `bmad-bmb-setup` bisa mengonfigurasi kapan saja. Bila resolver-nya sendiri tak ada atau gagal dijalankan, pakai default dalam kurung dan lanjut — catat bahwa config tak resolved. Terapkan sepanjang sesi (default dalam kurung):
 
 - `{user_name}` (Budi) — sapa dengan nama
-- `{communication_language}` (indonesian) — bahasa semua komunikasi
+- `{communication_language}` (Indonesia) — bahasa percakapan dengan pengguna
+- `{document_output_language}` (English) — bahasa setiap dokumen/artefak yang ditulis atau diubah (knowledge base, catatan, memlog); bisa berbeda dari bahasa percakapan
 - `psm_target_versions` (`1.7.8,8.1,9.1`) — versi target default
 
 Lalu buka percakapan dari maksud, bukan menu:
