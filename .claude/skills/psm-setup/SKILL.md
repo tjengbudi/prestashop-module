@@ -40,13 +40,17 @@ If the user provides arguments (e.g. `accept all defaults`, `--headless`, or inl
 
 Ask the user for values, showing the pre-pass defaults in brackets (name the provenance when a value came from existing or legacy config). Present all values together so the user can respond once with only the values they want to change (e.g. "change language to Swahili, rest are fine"). Never tell the user to "press enter" or "leave blank" — in a chat interface they must type something to respond.
 
-**Core config** (only when the pre-pass says `ask_core: true`): `user_name`, `communication_language` (the language the agent chats in), `document_output_language` (the language of generated documents and artifacts), and `output_folder`, with defaults from `core_defaults`. Ask the two language keys as separate questions — never copy one answer into the other.
+**Language** (every run — fresh install, update, and legacy migration alike, regardless of `ask_core`): ask `communication_language` (the language the agent chats in) and `document_output_language` (the language of generated documents and artifacts) as two separate questions, each showing its current value from `core_defaults`. Never copy one answer into the other.
+
+**Other core config**: when the pre-pass says `ask_core: true`, also ask `user_name` and `output_folder` with defaults from `core_defaults`. When `ask_core` is false, list them with their current values so the user can change them in the same reply, but do not prompt for them.
+
+Put any core value the user set or changed — including both language keys — under `core` in the answers file, even when `ask_core` is false; the merge script writes `communication_language` to `config.user.yaml` and `document_output_language` to `config.yaml`.
 
 **Module config**: ask each variable in `module_defaults` using its `prompt` field from `assets/module.yaml` with its resolved default.
 
 ## Write Files
 
-Write a temp JSON file with the collected answers structured as `{"core": {...}, "module": {...}}` (omit `core` if `ask_core` was false). Only the values the user confirmed or changed are needed — the script preserves existing configured values and applies legacy fallbacks itself. Values inside this JSON keep the literal `{project-root}` token. Then run both scripts — they can run in parallel since they write to different files.
+Write a temp JSON file with the collected answers structured as `{"core": {...}, "module": {...}}` (`core` always carries the two language answers). Only the values the user confirmed or changed are needed — the script preserves existing configured values and applies legacy fallbacks itself. Values inside this JSON keep the literal `{project-root}` token. Then run both scripts — they can run in parallel since they write to different files.
 
 ```bash
 python3 scripts/merge-config.py --config-path "{project-root}/_bmad/config.yaml" --user-config-path "{project-root}/_bmad/config.user.yaml" --module-yaml assets/module.yaml --answers {temp-file} --legacy-dir "{project-root}/_bmad"
