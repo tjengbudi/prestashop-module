@@ -13,7 +13,7 @@ bukti ke himpunan bukti module lain, dan agregat mengkreditkan vonisnya ke sana.
 | --- | --- | --- |
 | 1 static | `ps-static-scan.py --reports-dir … --per-version` | ya (tepat satu `--versions`) |
 | 2 flashlight | `ps-run-layer.py --layer flashlight --per-version` | ya |
-| 3 adversarial | — | **tidak**: satu review lintas-versi di Fase 2 |
+| 3 adversarial | — (4 subagent per lensa) | **tidak**: satu review lintas-versi di awal Fase 2 |
 | 4 e2e | `ps-run-layer.py --layer e2e --per-version` | ya |
 
 Teruskan `--config <psm_reports_dir>/psm-config.json` ke Lapis 1/2/4 dan ke plan, plus
@@ -38,6 +38,12 @@ Docker 1×, bukan 3×. Perbaiki spec di `e2e_scenario_notes` sebelum Lapis 4 boo
 
 ## Fase 2 — gerbang rilis
 
+**Mulai dari Lapis 3** bila plan menandainya `rerun`: spawn keempat subagent lensa dalam satu
+giliran, lalu lanjutkan lapis skrip selagi mereka bekerja — konteks mereka bersih, jadi output
+sweep tak mewarnai vonisnya selama tak kamu teruskan ke mereka. Isi prompt, aturan gabung, dan
+fallback inline (yang justru WAJIB dikerjakan sebelum kamu membaca output sweep apa pun):
+`references/adversarial-lens.md`.
+
 Segarkan tiap (lapis, versi) yang masih `rerun` dalam SATU panggilan per lapis:
 
 ```bash
@@ -50,9 +56,11 @@ turunkan di mesin kecil). Saat `all_reuse` true, satukan jadi kanonik dengan per
 sama ber-`--versions <semua> --merge-only`; versi tanpa file dihilangkan, jadi agregat tak
 konklusif dan `ready` jatuh.
 
-Lapis 1 & Lapis 3 dijalankan sekali lintas-versi langsung ke file kanonik.
+Lapis 1 & Lapis 3 dijalankan sekali lintas-versi langsung ke file kanonik — Lapis 3 di-spawn
+di awal fase dan digabung sebelum agregat (lihat atas).
 
-**Read-merge wajib pada file adversarial.** Bila `<psm_reports_dir>/<module>-adversarial.json`
-sudah memuat temuan (mis. cacat visual dari Lapis 4), Lapis 3 harus membaca `findings` yang
-ada, menambahkan miliknya, lalu menulis balik. Menimpanya membuang temuan pemblokir yang
-sudah dikonfirmasi peninjau, diam-diam, dan `ready` tetap true di atasnya.
+**Read-merge wajib pada file adversarial.** `<psm_reports_dir>/<module>-adversarial.json`
+ditulis dari dua arah — gabungan keempat lensa Lapis 3 (atau satu tulisan per lensa di
+fallback inline), plus cacat visual Lapis 4 — jadi **tiap** tulisan wajib membaca `findings` yang ada, menambahkan miliknya, lalu
+menulis balik dengan `versions` top-level di-union. Menimpanya membuang temuan pemblokir yang sudah dikonfirmasi, diam-diam, dan
+`ready` tetap true di atasnya.

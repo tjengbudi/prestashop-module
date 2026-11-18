@@ -16,6 +16,11 @@ Catat asumsi yang diambil (module-path di-infer, default resolver dipakai) ke
 dulu bila file itu belum ada (`append` ke file absen gagal), lalu
 `append --path <file> --type assumption --text <asumsi>`.
 
+Lapis 3 tetap empat subagent lensa seperti interaktif (kontrak `references/adversarial-lens.md`).
+Bila jatuh ke fallback inline — seluruhnya atau satu lensa — tak ada ringkasan prosa untuk
+mengakuinya: catat satu `assumption` ke memlog yang menyebut lensa mana yang ditinjau inline
+tanpa konteks bersih.
+
 ## Kembalian
 
 Objek JSON kecil, bukan prosa: `status` (`complete`|`blocked`), path laporan, path memlog,

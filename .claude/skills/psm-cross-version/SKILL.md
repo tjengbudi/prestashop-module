@@ -28,11 +28,13 @@ Bertindak sebagai insinyur migrasi PrestaShop yang cermat: operator (Budi) memeg
 
 Jalankan mesin analisis yang sudah ada alih-alih membangun ulang: `uv run <skills-dir>/psm-validate/scripts/ps-static-scan.py <module-path> --versions <target>` (lihat `--help`). Hasilnya peta JSON per versi — kelas/method/hook/konstanta/dependency yang pecah, plus `ps_versions_compliancy` & struktur. Ini fakta deterministik; jangan menilai ulang dengan tangan. Bila perlu, lengkapi dengan membaca source untuk memahami *bagaimana* API berisiko itu dipakai — konteks yang dibutuhkan untuk merancang perbaikan, bukan pengulangan scan.
 
-Bila scan bersih (tak ada temuan berisiko di semua versi target), lewati Rencana & Terapkan: langsung ke gerbang Verifikasi dan laporkan "module sudah cross-version-safe" dengan status per versi (headless: `status: sudah-aman`).
+**File sisa rilis lama.** Deploy di atas instalasi lama tak pernah menghapus file yang dibuang porting — repo bersih, toko tetap menjalankan front controller dan override lama. Jalankan `uv run scripts/ps-removed-files.py <module-path> --git-history` (tambah `--base-ref`/`--old-dir` bila rilis lama ada di luar sejarah git; `--help`) untuk tahu file mana yang pernah dibuang dan belum dibersihkan skrip upgrade mana pun (`uncovered`).
+
+Bila scan bersih **dan** `uncovered` 0, lewati Rencana & Terapkan: langsung ke gerbang Verifikasi dan laporkan "module sudah cross-version-safe" dengan status per versi (headless: `status: sudah-aman`). Scan bersih tapi `uncovered` > 0 bukan aman — rencanakan pembersihannya saja.
 
 ## Rencana perubahan
 
-Untuk setiap temuan berisiko, rancang perbaikan version-safe memakai `references/version-safe-patterns.md` sebagai rujukan (deteksi versi, cabang legacy/modern per area: hook, controller, template, persistence, service, dependency, konstanta). Tulis rencana ke working artifact `<module-path>/.psm-cross-plan.md`: per perubahan — file & lokasi, API lama, perbaikan yang diusulkan, versi yang terpengaruh, dan alasan. Rencana adalah artefak yang dapat direvisi dan sumber resume; perbarui saat keputusan berubah.
+Untuk setiap temuan berisiko, rancang perbaikan version-safe memakai `references/version-safe-patterns.md` sebagai rujukan (deteksi versi, cabang legacy/modern per area: hook, controller, template, persistence, service, dependency, konstanta). Tulis rencana ke working artifact `<module-path>/.psm-cross-plan.md`: per perubahan — file & lokasi, API lama, perbaikan yang diusulkan, versi yang terpengaruh, dan alasan. Tiap file yang akan dibuang atau diganti nama masuk bagian **Pembersihan file sisa**: versi baru module + skrip upgrade yang menghapusnya dari instalasi lama (`references/upgrade-cleanup.md`). Rencana adalah artefak yang dapat direvisi dan sumber resume; perbarui saat keputusan berubah.
 
 Tampilkan rencana ke Budi dan **minta persetujuan sebelum menyentuh file**. Ini gerbang yang tak boleh dilewati — perubahan source tak mudah dibalik. Bila Budi mengubah arah, revisi rencana dulu, jangan terapkan diam-diam.
 
@@ -40,7 +42,7 @@ Tampilkan rencana ke Budi dan **minta persetujuan sebelum menyentuh file**. Ini 
 
 Sebelum menyentuh file, pastikan `<module-path>` di repo git dengan working tree bersih (`git status`) — itu satu-satunya jaring undo untuk operasi tak-mudah-dibalik ini. Bila tidak, peringatkan Budi / tawarkan backup folder sebelum lanjut (headless: jangan terapkan diam tanpa jaring undo — buat backup folder otomatis lalu catat path-nya ke memlog, atau bila tak bisa kembalikan `butuh intervensi`).
 
-Setelah disetujui, terapkan perubahan sesuai rencana pada module di tempat. Setiap perubahan harus memakai cabang versi eksplisit (`version_compare(_PS_VERSION_, ...)`) — jangan menghapus jalur lama yang masih dibutuhkan versi target terendah, karena tujuannya tetap jalan di 1.7.x. Tandai status tiap perubahan di `.psm-cross-plan.md` saat diterapkan.
+Setelah disetujui, terapkan perubahan sesuai rencana pada module di tempat. Setiap perubahan harus memakai cabang versi eksplisit (`version_compare(_PS_VERSION_, ...)`) — jangan menghapus jalur lama yang masih dibutuhkan versi target terendah, karena tujuannya tetap jalan di 1.7.x. Tandai status tiap perubahan di `.psm-cross-plan.md` saat diterapkan. Setelah semua diterapkan, jalankan ulang inventaris file sisa dan tulis skrip upgrade pembersihnya persis menurut `references/upgrade-cleanup.md` — md5 dari inventaris, bukan diketik; override dicabut lewat `removeOverride`, bukan dihapus; versi module dinaikkan — plus skenario Lapis 5 yang membuktikannya.
 
 ## Verifikasi (gerbang wajib)
 
@@ -50,12 +52,12 @@ Panggil psm-validate atas module hasil terhadap ketiga versi target (lihat `<ski
 
 Bila psm-validate sendiri gagal berjalan atau vonisnya tak terbaca (skill absen, crash, non-JSON), perlakukan sebagai **BUKAN lolos** — jangan tafsir "tak ada error" sebagai hijau. Tulis kondisi ke plan dan serahkan (headless: `gagal`).
 
-Ringkas hasil akhir ke Budi: apa yang diubah per area, dan status lolos per versi.
+Ringkas hasil akhir ke Budi: apa yang diubah per area, file sisa yang dibersihkan skrip upgrade (dan yang sengaja dilewati), dan status lolos per versi.
 
 Catat satu baris ke konteks module: `uv run <skills-dir>/psm-module-context/scripts/ps-module-context.py note --memory-dir {project-root}/_bmad/psm/memory --module <module> --by psm-cross-version --type decision --text "<satu baris>"` (auto-init bila belum ada). Satu entri per run — ini bukan laporan.
 
 ## Mode headless
 
-Saat dipanggil dengan `--headless` atau oleh workflow/agent lain: ambil module-path & versi dari argumen alih-alih bertanya, dan jalankan alur normal **tanpa gerbang konfirmasi interaktif** (pemanggil bertanggung jawab atas persetujuan). Karena operator tak hadir, catat tiap asumsi ke memlog — memlog hidup di `<module-path>/.memlog.md` di samping `.psm-cross-plan.md` (`uv run {project-root}/_bmad/scripts/memlog.py init` bila belum ada, lalu `append`); itu path yang dikembalikan ke pemanggil. Yang dicatat: sumber versi & resolusi module-path bila ambigu, dan tiap revisi rencana setelah validate gagal. Kembalikan ringkasan satu baris + path `.psm-cross-plan.md` + path memlog + status lolos per versi. Bila scan bersih, kembalikan `status: sudah-aman` + status validate per versi tanpa field perubahan rencana — supaya pemanggil bisa bedakan no-op sukses dari run rusak. Tetap berlaku: jangan menyatakan lolos sebelum psm-validate hijau di ketiga versi.
+Saat dipanggil dengan `--headless` atau oleh workflow/agent lain: ambil module-path & versi dari argumen alih-alih bertanya, dan jalankan alur normal **tanpa gerbang konfirmasi interaktif** (pemanggil bertanggung jawab atas persetujuan). Karena operator tak hadir, catat tiap asumsi ke memlog — memlog hidup di `<module-path>/.memlog.md` di samping `.psm-cross-plan.md` (`uv run {project-root}/_bmad/scripts/memlog.py init` bila belum ada, lalu `append`); itu path yang dikembalikan ke pemanggil. Yang dicatat: sumber versi & resolusi module-path bila ambigu, sumber versi lama inventaris file sisa (dan bila `--old-dir` tak tersedia), dan tiap revisi rencana setelah validate gagal. Kembalikan ringkasan satu baris + path `.psm-cross-plan.md` + path memlog + status lolos per versi. Bila scan bersih, kembalikan `status: sudah-aman` + status validate per versi tanpa field perubahan rencana — supaya pemanggil bisa bedakan no-op sukses dari run rusak. Tetap berlaku: jangan menyatakan lolos sebelum psm-validate hijau di ketiga versi.
 
 Dua status berhenti yang dirujuk gerbang-gerbang di atas: **`gagal`** (tak terpulihkan — target bukan module, skrip scan/validate error) → kembalikan status + alasan satu baris + path memlog; **`butuh intervensi`** (butuh keputusan manusia — cap verify tercapai, tak ada jaring undo) → kembalikan status + path plan + path memlog dan berhenti agar pemanggil memutuskan. Keduanya: jangan lanjut diam menyentuh file.

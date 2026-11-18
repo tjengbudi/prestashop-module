@@ -94,6 +94,7 @@ dan terbaca, bukan pengecekan versi tersebar tak beraturan.
 - `PrestaShopAutoload` (PS9) → composer autoload + `prestashop/autoload`.
 - `PS_LEGACY_IMAGES`, `PS_HIGHT_DPI` (PS9) → hapus.
 - Untuk API yang berbeda total antar versi, sediakan shim privat di module yang mencabangkan implementasi.
+- File yang **dibuang atau diganti nama** saat porting tetap tinggal di toko yang memasang rilis lama → skrip upgrade pembersih (`references/upgrade-cleanup.md`).
 
 ## Batas versi MINOR: 9.0 vs 9.1
 

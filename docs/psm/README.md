@@ -79,14 +79,14 @@ Skill `psm-*` mengikuti **Agent Skills open standard** — frontmatter hanya `na
 
 Menunjuk seluruh folder berarti pi juga melihat semua skill bmad di pohon itu, bukan cuma sepuluh `psm-*`.
 
-**droid** belum disiapkan. Dia hanya memindai `<repo>/.factory/skills/`, `~/.factory/skills/`, dan folder kompat `.agent/skills/` — `.claude/skills/` tidak termasuk, jadi butuh symlink per-skill. Dua hal harus diuji lebih dulu:
+**droid** belum disiapkan. Dia hanya memindai `<repo>/.factory/skills/`, `~/.factory/skills/`, dan folder kompat `.agent/skills/` — `.claude/skills/` tidak termasuk, jadi butuh symlink per-skill. Dua hambatan harus diuji lebih dulu:
 
-- **Routing subagent BYOK** ([Factory-AI/factory#1061](https://github.com/Factory-AI/factory/issues/1061)) — subagent droid dilaporkan lari ke Anthropic alih-alih model BYOK. `psm-validate` kini memakai subagent di **satu** tempat saja: reviewer Lapis 3 (review adversarial). Paralelisme per-versi tak lagi memakai subagent sama sekali — itu milik `ps-run-layer.py --jobs`.
+- **Routing subagent BYOK** ([Factory-AI/factory#1061](https://github.com/Factory-AI/factory/issues/1061)) — subagent droid dilaporkan lari ke Anthropic alih-alih model BYOK. `psm-validate` memakai subagent di **satu** tempat: empat reviewer lensa Lapis 3 (review adversarial). Paralelisme per-versi tak memakai subagent — itu milik `ps-run-layer.py --jobs`.
 - **`droid exec --model` menolak model ID custom** ([#787](https://github.com/Factory-AI/factory/issues/787)) — `droid exec` adalah mode non-interaktif untuk run panjang.
 
 Keduanya bisa saja sudah diperbaiki di versi yang kamu pasang; keduanya belum diverifikasi di repo ini.
 
-> **Catatan subagent umum.** `psm-validate` memakai subagent untuk **satu** hal: reviewer Lapis 3, yang dibeli bukan kecepatan melainkan **konteks bersih** — peninjau yang sudah melihat hasil Lapis 1/2/4 cenderung membaca pindai bersih sebagai bukti sehat. Bila harness tak bisa men-spawn subagent, skill meninjau sendiri di bawah kontrak yang sama dan menyebutkan itu di ringkasan, jadi ia tetap jalan utuh — hanya dengan konteks yang diakui tak bersih. Kecepatan lintas-versi tak pernah lewat subagent: itu `ps-run-layer.py --jobs`.
+> **Catatan subagent umum.** `psm-validate` memakai subagent untuk **satu** hal: Lapis 3, dipecah jadi **empat reviewer paralel, satu per lensa** (keamanan transaksi, cart/order/stock, lintas versi, performa). Yang dibeli bukan kecepatan, melainkan **konteks bersih**: peninjau yang sudah melihat hasil Lapis 1/2/4 cenderung membaca pindai bersih sebagai bukti sehat. Para reviewer hanya mengembalikan JSON, lalu orkestrator menggabungkannya sekali ke file lapis adversarial. Bila harness tak bisa men-spawn subagent, skill meninjau sendiri lewat fallback inline (empat lensa berurutan, ditulis per lensa) dan menyebutkan itu di ringkasan, jadi ia tetap jalan utuh, hanya dengan konteks yang diakui tak bersih. Kecepatan lintas-versi tak pernah lewat subagent: itu `ps-run-layer.py --jobs`.
 
 ---
 
@@ -232,7 +232,9 @@ Panggil saat: module lama mau jalan di versi baru, atau psm-validate menemukan A
    → peta risiko per versi → rencana → konfirmasi → terapkan → psm-validate
 ```
 
-**Hasil:** module cross-version + `<module-path>/.psm-cross-plan.md`. Bila pindai sudah bersih, dia berhenti dengan status `sudah-aman` alih-alih mengarang perubahan.
+**Hasil:** module cross-version + `<module-path>/.psm-cross-plan.md`. Bila pindai sudah bersih **dan** tak ada file sisa yang belum dibersihkan, dia berhenti dengan status `sudah-aman` alih-alih mengarang perubahan.
+
+**File sisa rilis lama.** Deploy versi baru di atas instalasi lama (upload zip, salin folder, rsync tanpa `--delete`) tak pernah menghapus file yang dibuang saat porting. Repo jadi bersih, tapi toko tetap menjalankan front controller dan override lama. Contohnya `mycarrier_rj`: server masih memanggil `Tools::jsonEncode` lewat `controllers/front/AddressController.php` 1.x. Karena itu `scripts/ps-removed-files.py` menginventaris file yang pernah dibuang (dari sejarah git, tag rilis, atau folder rilis lama) beserta md5 tiap versinya. Skill lalu menulis skrip upgrade yang menghapus file itu hanya bila isinya persis rilis lama, dan mencabut override lewat `Module::removeOverride`. Skenario Lapis 5 membuktikan pembersihannya. Template dan aturannya ada di `references/upgrade-cleanup.md`.
 
 ---
 
@@ -350,7 +352,7 @@ Hanya ada dua arah, dan keduanya searah:
 
 Tiga workflow juga **mengarahkan ke `psm-scaffold` lalu berhenti** bila targetnya ternyata bukan module (`looks_like_module: false`): `psm-develop`, `psm-plan`, `psm-ideate`. Itu gerbang target — mereka menolak merancang di atas ketiadaan, alih-alih menghasilkan scan kosong yang menyerupai sukses.
 
-Di dalam dirinya sendiri, `psm-validate` mendelegasikan ke **satu** subagent (bukan skill): reviewer Lapis 3, supaya lensa adversarialnya bekerja di konteks bersih. Konkurensi lintas-versi bukan urusan subagent — `ps-run-layer.py` mem-boot beberapa versi serentak sebagai subproses lewat `--jobs`, dan vonis tetap milik skrip.
+Di dalam dirinya sendiri, `psm-validate` mendelegasikan ke **empat** subagent (bukan skill): reviewer Lapis 3, satu per lensa, supaya lensa adversarialnya bekerja di konteks bersih. Konkurensi lintas-versi juga bukan urusan subagent — `ps-run-layer.py` mem-boot beberapa versi serentak sebagai subproses lewat `--jobs`, dan vonis tetap milik skrip.
 
 ### 2. Skrip milik bersama (skill X menjalankan skrip milik skill Y)
 
