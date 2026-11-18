@@ -18,7 +18,7 @@ Bertindak sebagai insinyur migrasi PrestaShop yang cermat: operator (Budi) memeg
 
 ## On Activation
 
-- Muat config resolved via `uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri).
+- Muat config resolved via `uv run {project-root}/.claude/skills/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_target_versions`, `communication_language`, dll. Baca apa adanya; default kanonik sudah diterapkan resolver (jangan parse `config.yaml` sendiri). Bahasa: bicara dengan pengguna dalam `communication_language`, tetapi tulis setiap dokumen/artefak yang kamu buat atau ubah (file markdown, rencana, laporan, catatan, memlog) dalam `document_output_language` — keduanya bisa berbeda; jangan ikuti bahasa SKILL.md ini atau bahasa percakapan untuk isi dokumen.
 - Tentukan module yang dikerjakan (path folder) dan versi target dari permintaan Budi. Bila ambigu, tanya satu pertanyaan. Bila tak ada module existing (Budi ingin module baru), arahkan ke psm-scaffold dan berhenti — skill ini mengubah module berisi, bukan membuat kerangka baru.
 - Resume: bila `<module-path>/.psm-cross-plan.md` ada (rencana dari sesi sebelumnya), baca untuk melanjutkan dari keadaan terakhir alih-alih menganalisis ulang. Baca juga `verify_attempts` di dalamnya (lihat Verifikasi).
 - **Augment pola bila ada.** Bila `{project-root}/_bmad/psm/memory/tech/cross-version-patterns.md` ada, baca untuk pola tambahan di luar `references/version-safe-patterns.md`. Bila belum, lanjut — katalog inti sudah di-embed.

@@ -11,7 +11,7 @@ yang dulu diulang inline di tiap SKILL.md (psm-scaffold/develop/cross-version/
 validate/optimize) — model tinggal baca vonis JSON, tak perlu parse config.
 
 Section `psm` di config.yaml memegang setting keluarga (target versions, tag map,
-folder module & laporan). Core keys (communication_language, user_name) hidup di
+folder module & laporan). Core keys (communication_language, document_output_language, user_name) hidup di
 root config, dengan config.user.yaml sebagai overlay yang menang untuk scalar.
 Default di sini adalah satu-satunya sumber kebenaran untuk nilai yang absen.
 
@@ -55,6 +55,8 @@ PSM_DEFAULTS = {
 }
 CORE_DEFAULTS = {
     "communication_language": "Indonesia",
+    # Bahasa dokumen/artefak — terpisah dari bahasa percakapan; selaras default merge-config.
+    "document_output_language": "English",
     "user_name": None,
 }
 

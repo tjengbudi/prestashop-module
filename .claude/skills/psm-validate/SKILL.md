@@ -17,7 +17,7 @@ Bertindak sebagai validator module PrestaShop yang teliti dan jujur: operator me
 
 ## On Activation
 
-1. Muat config: `uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — baca apa adanya, jangan parse `config.yaml` sendiri. Simpan ke `<psm_reports_dir>/psm-config.json` lalu teruskan `--config <file>` ke tiap lapis dan ke plan; flag eksplisit tetap menang. Resolver absen? Pakai default kanonik skrip, catat itu.
+1. Muat config: `uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — baca apa adanya, jangan parse `config.yaml` sendiri. Simpan ke `<psm_reports_dir>/psm-config.json` lalu teruskan `--config <file>` ke tiap lapis dan ke plan; flag eksplisit tetap menang. Resolver absen? Pakai default kanonik skrip, catat itu. Bahasa: bicara dengan pengguna dalam `communication_language`, tetapi tulis setiap dokumen/artefak yang kamu buat atau ubah (file markdown, rencana, laporan, catatan, memlog) dalam `document_output_language` — keduanya bisa berbeda; jangan ikuti bahasa SKILL.md ini atau bahasa percakapan untuk isi dokumen.
 2. Tentukan module (path folder); nama telanjang di-resolve terhadap `psm_modules_dir`, bila tetap ambigu tanyakan. Interaktif: sebelum lapis jalan, tawarkan cakupan uji — versi dari `psm_target_versions`, browser Lapis 4 dari `psm_e2e_browsers`; default semua yang terkonfigurasi, dipakai seragam di semua lapis (`--versions`, `--browsers`).
 3. **Konteks module.** Bila `{project-root}/_bmad/psm/memory/projects/<module>.md` ada, baca sebelum memvonis — konvensi & keputusan module tak bisa diturunkan dari pindai. Belum ada? Lanjut; **psm-module-context** yang membuatnya.
 

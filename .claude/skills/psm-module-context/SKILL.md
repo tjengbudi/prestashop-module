@@ -19,7 +19,7 @@ Bertindak sebagai perawat memori per-module: operator (Budi) memutuskan apa yang
 
 ## On Activation
 
-1. Muat config resolved via `uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_modules_dir`, `communication_language`, dll. Baca apa adanya; jangan parse `config.yaml` sendiri.
+1. Muat config resolved via `uv run <skills-dir>/psm-setup/scripts/resolve-psm-config.py --project-root {project-root}` — JSON berisi `psm_modules_dir`, `communication_language`, dll. Baca apa adanya; jangan parse `config.yaml` sendiri. Bahasa: bicara dengan pengguna dalam `communication_language`, tetapi tulis setiap dokumen/artefak yang kamu buat atau ubah (file markdown, rencana, laporan, catatan, memlog) dalam `document_output_language` — keduanya bisa berbeda; jangan ikuti bahasa SKILL.md ini atau bahasa percakapan untuk isi dokumen.
 2. Tentukan module dari permintaan Budi. Nama telanjang (mis. `psbanner`) di-resolve ke `<psm_modules_dir>/<nama>`; path lengkap dipakai apa adanya. Bila ambigu, tanya satu pertanyaan.
 3. Jalankan `uv run <skills-dir>/psm-develop/scripts/ps-module-inventory.py <module-path>` → JSON inventaris. **Gerbang target:** bila folder hilang atau inventaris emit `looks_like_module: false`, arahkan Budi ke **psm-scaffold** dan berhenti; jangan merawat konteks atas ketiadaan. Bila skrip exit non-zero, tampilkan error apa adanya (headless: `gagal`).
 4. Baca `<memory-dir>/projects/<module>.md` bila ada. Bila belum, `uv run scripts/ps-module-context.py init --memory-dir <memory-dir> --module <module> --source "<sumber seed>"` — kontrak marker & pembagian zona seksi ada di `--help` skrip; jangan menyusun format sendiri.
