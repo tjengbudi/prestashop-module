@@ -421,6 +421,8 @@ def main():
         print(f"error: bukan folder: {module_dir}", file=sys.stderr)
         return 2
     fl.progress_init(args.progress_file, args.slow_after)
+    if not fl.job_start(args, module_dir.name, "scenario"):
+        return 2
 
     scenarios, notes = discover_scenarios(module_dir)
 

@@ -40,6 +40,13 @@ dilewati.
    karena Lapis 1/2/4 lolos — yang dicari lapis ini justru cacat yang lolos mereka.
 3. **Tetap di lensamu.** Cacat di luar lensa yang kebetulan terlihat boleh dicatat sebagai
    `warning`, tapi jangan berburu di luar lensa — itu tugas peninjau lain.
+4. **Hanya membaca — tanpa Docker.** Review ini membaca source; ia tak menjalankan apa pun.
+   Dilarang menjalankan uji Docker/flashlight, skrip psm-validate, perintah `docker`, atau
+   perintah hentikan/bersihkan (`kill`, `docker rm|stop`, `--cleanup-orphans`, `--stop-job`).
+   Empat peninjau jalan paralel SELAGI orkestrator menjalankan lapis Docker di daemon yang
+   sama: uji tambahan dari kalian memperebutkan RAM sampai job macet, dan perintah bersih-bersih
+   membunuh job yang sedang dinilai. Temuan yang butuh bukti runtime tetap ditulis dari source
+   (`location` yang kamu baca) — pembuktian runtime milik Lapis 2/4/5.
 
 ## Delegasi (default)
 
@@ -57,7 +64,9 @@ skrip Fase 2. Agregat **tak boleh** jalan sebelum keempat kembalian digabung.
   pertanyaan tambahan — bagian yang relevan dengan lensanya;
 - `{project-root}/_bmad/psm/memory/projects/<module>.md` bila ada (konvensi module);
 - perintah: id temuan berawalan `adv-<lensa>-` (`sec`, `cart`, `xver`, `perf`) supaya tak
-  bertabrakan, dan kembalikan **HANYA JSON** — jangan menulis file apa pun.
+  bertabrakan, dan kembalikan **HANYA JSON** — jangan menulis file apa pun;
+- perintah: **hanya membaca source** — jangan jalankan uji Docker, skrip psm-validate,
+  `docker`, atau perintah hentikan/bersihkan apa pun (Aturan peninjau 4).
 
 **Jangan** beri path `<psm_reports_dir>`, output skrip, ringkasan lapis lain, atau temuan
 lensa lain. Satu kalimat "Lapis 1 hijau" saja sudah mencemari konteks yang dibayar mahal.

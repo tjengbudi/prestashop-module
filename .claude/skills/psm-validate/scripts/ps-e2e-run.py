@@ -1102,6 +1102,8 @@ def main():
         return 2
     mod_name = module_dir.name
     fl.progress_init(args.progress_file, args.slow_after)
+    if not fl.job_start(args, mod_name, "e2e"):
+        return 2
 
     if not playwright_available():
         _emit({"module": mod_name, "e2e_available": False, "status": "skipped",

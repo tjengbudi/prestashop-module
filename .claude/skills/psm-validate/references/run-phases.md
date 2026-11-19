@@ -28,7 +28,7 @@ Skrip lapis Docker (flashlight/e2e/scenario) menulis satu baris per kejadian ke 
 File dikosongkan tiap run baru.
 
 ```
-2026-11-19T10:02:15 pid=4242 run=1a2b3c4d5e6f v=8.1 ALIVE wait-healthy 45s/180s psm-fl-ps-… starting
+2026-11-19T10:02:15 job=bankwire-e2e-1002-a3f9 pid=4242 run=1a2b3c4d5e6f v=8.1 ALIVE wait-healthy 45s/180s … starting
 ```
 
 | Token | Arti | Tindakan |
@@ -48,14 +48,39 @@ panggilan pendek, dan baca log-nya di antara panggilan.
 
 **Diduga macet** bila (a) baris terakhir `SLOW`, atau (b) mtime log tak berubah ±3 menit dan
 belum ada `DONE` — artinya proses menggantung di luar fase berlog atau sudah mati. Laporkan
-ke Budi: versi, fase, durasi, dan container run itu
-(`docker ps -a --filter label=psm.run=<run>`; `<run>` dari baris log). Tawarkan pilihan:
-tunggu sampai batas waktu fasenya (skrip lalu degrade jujur sendiri), atau hentikan proses
-`pid=<pid>` lalu `uv run scripts/ps-flashlight-run.py --cleanup-orphans`. **Jangan
+ke Budi: job, versi, fase, durasi. Tawarkan pilihan: tunggu sampai batas waktu fasenya (skrip
+lalu degrade jujur sendiri), atau hentikan job itu (`--stop-job`, di bawah). **Jangan
 menghentikan sendiri tanpa persetujuan** — run sesi lain bisa sedang berbagi daemon yang
 sama, dan `SLOW` saat banyak sesi jalan sering berarti lambat, bukan mati. Macet berulang di
 `wait-healthy`/`bring-up` saat banyak sesi paralel biasanya tanda RAM/daemon penuh: turunkan
 `--jobs`.
+
+## Job ID — menghentikan secara terarah
+
+Tiap pemanggilan uji Docker adalah satu **job** dengan ID terlihat `<module>-<lapis>-<HHMM>-<hex>`
+(mis. `bankwire-e2e-1002-a3f9`). `ps-run-layer.py` membuat SATU ID untuk semua versi anaknya;
+skrip lapis yang dipanggil langsung membuat sendiri (`--job-id` untuk menentukannya). ID
+dicetak ke stderr di awal (`JOB <id>  (hentikan terarah: …)`), ada di tiap baris log
+kemajuan (`job=`), dicap label `psm.job`, dan menjadi bagian nama container/project
+(`psm-fl-<job>-…`), jadi `docker ps` pun menunjukkan siapa pemiliknya. **Catat ID job yang
+kamu mulai** — itu satu-satunya pegangan untuk menghentikannya.
+
+```bash
+uv run scripts/ps-flashlight-run.py --list-jobs          # job di host ini: proses + container
+uv run scripts/ps-flashlight-run.py --stop-job <job-id>  # hentikan SATU job
+```
+
+`--stop-job` mengirim SIGTERM ke proses job itu saja (identitas PID diverifikasi: host, boot,
+PID namespace, dan nama skrip — PID daur-ulang tak tersentuh), skrip menangkapnya dan
+membongkar container miliknya sendiri (log: `DONE rc=stopped`); yang belum keluar sesudah 60
+dtk di-SIGKILL, lalu container/network berlabel **persis** `psm.job=<id>` dihapus. Job lain —
+paralel di sesi ini atau milik sesi lain — tak tersentuh. Hentikan hanya job yang kamu mulai;
+job lain hanya atas izin Budi.
+
+**Dilarang** (semuanya ikut membunuh job lain): `pkill`/`killall`/`kill` atas PID yang bukan
+dari job-mu, `docker rm|kill|stop` berdasarkan nama, prefix `psm-fl`, atau
+`$(docker ps -q …)`, `docker compose down` tanpa project job-mu, dan `docker … prune`. Sisa
+run yang prosesnya sudah mati: `--cleanup-orphans`.
 
 Semua perintah docker pendek (run/network/inspect/rm/down) berbatas waktu 120 dtk; bongkar yang
 timeout meninggalkan artefak berlabel yang dibereskan `--cleanup-orphans` setelah proses keluar.

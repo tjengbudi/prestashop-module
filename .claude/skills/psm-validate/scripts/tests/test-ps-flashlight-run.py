@@ -292,7 +292,7 @@ def main():
     # dijaga di sini: namanya DITURUNKAN dari konstanta yang sama, bukan hardcode terpisah.
     fl_src = MOD_PATH.read_text(encoding="utf-8")
     ok &= check("nama container jalur manual diturunkan dari CONTAINER_PREFIX yang sama",
-                all(f'f"{{CONTAINER_PREFIX}}-{part}-{{uid}}"' in fl_src
+                all(f'f"{{CONTAINER_PREFIX}}-{{_name_infix()}}{part}-{{uid}}"' in fl_src
                     for part in ("net", "db", "ps")))
     # Perintah cleanup hidup di PROSA (SKILL.md gotcha Lapis 2 + quickstart) sementara
     # mekanismenya hidup di KODE. Gerbang ini DIGANTI SECARA SADAR (arch-9): dulu ia mengunci
@@ -713,6 +713,7 @@ def main():
         ok &= check("--config absen -> exit 2, bukan diam-diam pakai default", rc == 2)
 
     ok &= test_progress_log()
+    ok &= test_job_id()
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
@@ -748,7 +749,7 @@ def test_progress_log():
             with mod.phase("install+phpstan", 600, "detil"):
                 _t.sleep(0.4)
             ls = lines(log)
-            toks = [ln.split()[4] for ln in ls]
+            toks = [ln.split()[5] for ln in ls]
             ok &= check("progress: START dulu, END terakhir",
                         toks[0] == "START" and toks[-1] == "END")
             ok &= check("progress: denyut ALIVE lalu SLOW setelah ambang",
@@ -811,6 +812,111 @@ def test_progress_log():
         mod._PROGRESS.clear()
         mod._PROGRESS.update(saved[2])
         mod.subprocess.run = saved[3]
+    return ok
+
+
+def test_job_id():
+    """Job ID terlihat + stop terarah: label/nama/log memuatnya, registry per proses,
+    --stop-job hanya menyentuh job-nya sendiri (proses + artefak berlabel eksak)."""
+    import signal as _sig
+    import subprocess
+    import time as _t
+    ok = True
+    saved = (dict(mod._JOB), mod.JOB_REGISTRY, mod.subprocess.run, mod.docker_available,
+             mod._remove_artifact, dict(mod._PROGRESS))
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            mod.JOB_REGISTRY = Path(td) / "reg"
+            jid = mod.make_job_id("Bank Wire_Module", "flashlight")
+            ok &= check("job id: bentuk <module>-<lapis>-<HHMM>-<hex>, slug aman",
+                        re.fullmatch(r"bank-wire-module-flashlight-\d{4}-[0-9a-f]{4}", jid) is not None
+                        and mod.valid_job_id(jid))
+            ok &= check("job id: tolak wildcard/kosong/huruf besar",
+                        not any(mod.valid_job_id(x) for x in ("", "*", "a", "Bank-1", "a b c", "x;rm")))
+
+            # tanpa job: nama & label seperti sebelumnya
+            mod._JOB.update({"id": None, "entry_path": None})
+            ok &= check("tanpa job: tak ada label psm.job & nama tanpa sisipan",
+                        mod.LABEL_JOB not in mod.owner_labels() and mod._name_infix() == "")
+
+            log = Path(td) / "p.log"
+            mod.progress_init(str(log))
+            mod.job_register(jid, module="bankwire", layer="flashlight", versions="9.1")
+            entry = mod.JOB_REGISTRY / jid / f"{mod.OWNER_PID}.json"
+            ok &= check("job: label psm.job dicap & nama container/project memuat job",
+                        mod.owner_labels().get(mod.LABEL_JOB) == jid
+                        and mod._project_name("9.1").startswith(f"{mod.CONTAINER_PREFIX}-{jid}-91-"))
+            ok &= check("job: registry per proses ditulis (pid/script/progress_file)",
+                        entry.is_file() and json.loads(entry.read_text())["pid"] == mod.OWNER_PID
+                        and json.loads(entry.read_text())["progress_file"] == str(log))
+            mod.progress("START", "x")
+            ok &= check("job: baris log kemajuan memuat job=<id>",
+                        f" job={jid} " in log.read_text(encoding="utf-8"))
+            ok &= check("job: SIGTERM -> JobStopped (BaseException, bukan Exception)",
+                        _sig.getsignal(_sig.SIGTERM) is mod._on_sigterm
+                        and issubclass(mod.JobStopped, BaseException)
+                        and not issubclass(mod.JobStopped, Exception))
+            ok &= check("job: proses sendiri terbaca alive",
+                        mod.entry_state(json.loads(entry.read_text())) == ("alive", "alive"))
+            mod._job_unregister()
+            ok &= check("job: unregister menghapus entry & folder kosong",
+                        not entry.exists() and not (mod.JOB_REGISTRY / jid).exists())
+            _sig.signal(_sig.SIGTERM, _sig.SIG_DFL)
+
+            # entry_state: konteks asing / PID daur-ulang tak pernah 'alive'
+            me = {"pid": mod.OWNER_PID, "host": mod.OWNER_HOST, "boot": mod.OWNER_BOOT,
+                  "ns": mod.OWNER_NS, "script": Path(sys.argv[0]).name}
+            ok &= check("entry_state: host lain -> foreign",
+                        mod.entry_state(me | {"host": "lain"})[0] == "foreign")
+            if mod.OWNER_NS:
+                ok &= check("entry_state: pid-ns lain -> foreign",
+                            mod.entry_state(me | {"ns": "999"})[0] == "foreign")
+            ok &= check("entry_state: cmdline tak menyebut skrip -> dead (pid-reused)",
+                        mod.entry_state(me | {"script": "bukan-skrip-ini.py"}) == ("dead", "pid-reused"))
+
+            # stop_job end-to-end dgn proses nyata (sleep) & docker tiruan
+            victim = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+            bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+            other = "other-flashlight-0000-beef"
+            for job, proc in ((jid, victim), (other, bystander)):
+                d = mod.JOB_REGISTRY / job
+                d.mkdir(parents=True)
+                (d / f"{proc.pid}.json").write_text(json.dumps(
+                    me | {"pid": proc.pid, "script": "-c", "job": job}), encoding="utf-8")
+            calls, removed = [], []
+
+            def fake_run(cmd, **kw):
+                calls.append(cmd)
+                lab = next((c for c in cmd if c.startswith("label=")), "")
+                out = ""
+                if lab == f"label={mod.LABEL_JOB}={jid}":
+                    out = "psm-fl-x-ps-1\n" if "ps" in cmd else "psm-fl-x-net\n"
+                return subprocess.CompletedProcess(cmd, 0, out, "")
+            mod.subprocess.run = fake_run
+            mod.docker_available = lambda: True
+            mod._remove_artifact = lambda kind, name: (removed.append((kind, name)), ("removed", None))[1]
+            t0 = _t.monotonic()
+            r = mod.stop_job(jid, grace=5, poll=0.1)
+            victim.wait(timeout=5)
+            ok &= check("stop_job: SIGTERM ke proses job ini, selesai cepat",
+                        r["status"] == "stopped" and [x["pid"] for x in r["signaled"]] == [victim.pid]
+                        and victim.returncode is not None and _t.monotonic() - t0 < 5)
+            ok &= check("stop_job: proses job LAIN tak tersentuh", bystander.poll() is None)
+            ok &= check("stop_job: artefak dihapus EKSAK per label psm.job (container dulu)",
+                        removed == [("container", "psm-fl-x-ps-1"), ("network", "psm-fl-x-net")]
+                        and all(f"label={mod.LABEL_JOB}={jid}" in c for c in calls if "--filter" in c))
+            ok &= check("stop_job: id tak valid ditolak tanpa menyentuh apa pun",
+                        mod.stop_job("*")["status"] == "rejected")
+            bystander.kill()
+            bystander.wait()
+            ok &= check("stop_job: job tak dikenal -> not-found",
+                        mod.stop_job("nope-flashlight-0000-0000")["status"] == "not-found")
+    finally:
+        mod._JOB.clear()
+        mod._JOB.update(saved[0])
+        (mod.JOB_REGISTRY, mod.subprocess.run, mod.docker_available, mod._remove_artifact) = saved[1:5]
+        mod._PROGRESS.clear()
+        mod._PROGRESS.update(saved[5])
     return ok
 
 
