@@ -744,7 +744,8 @@ def wait_http(url, timeout, poll=2.0):
 def install_module(session, mod_name, timeout):
     """Salin + install module via PS console di container. Return (info, err_or_None)."""
     try:
-        cp = fl._exec(session, {"MOD_NAME": mod_name}, INSTALL_SH, timeout)
+        with fl.phase("install", timeout):
+            cp = fl._exec(session, {"MOD_NAME": mod_name}, INSTALL_SH, timeout)
     except subprocess.TimeoutExpired:
         return {"ok": False}, "timeout menjalankan install di container"
     out = (cp.stdout or "") + (cp.stderr or "")
@@ -877,6 +878,7 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
     """
     requested_browsers = requested_browsers if requested_browsers is not None else list(browsers)
     image_ref = f"{fl.IMAGE}:{tag}"
+    fl.progress_version(full_ver)
     res = {"version": full_ver, "tag": tag, "image": image_ref, "orchestrator": None,
            "browsers": [], "install": None, "findings": [], "inconclusive": [],
            "errors": [], "browser_notes": [], "console_errors": 0, "screenshots": [],
@@ -912,13 +914,9 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
                 f"image belum ada lokal & pull tak diizinkan: {', '.join(missing)} — lewati versi ini")
             return res
         for i in missing:
-            try:
-                p = subprocess.run(["docker", "pull", i], capture_output=True, text=True, timeout=op_timeout)
-            except subprocess.TimeoutExpired:
-                res["errors"].append(f"timeout pull {i}")
-                return res
-            if p.returncode != 0:
-                res["errors"].append(f"gagal pull {i}: {p.stderr.strip()[-200:]}")
+            perr = fl.pull_image(i, op_timeout)
+            if perr:
+                res["errors"].append(perr[:300])
                 return res
 
     # Port host dipilih dinamis SEBELUM boot: PS_DOMAIN & publish memakai port yang SAMA
@@ -977,7 +975,8 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
             return res
 
         fo, bo = base_urls(ps_domain_eff, admin_path)
-        reach_ok, rstatus, responded = wait_http(fo + "/", startup_timeout)
+        with fl.phase("wait-http", startup_timeout, fo):
+            reach_ok, rstatus, responded = wait_http(fo + "/", startup_timeout)
         if not reach_ok and not responded:
             # Tak ada respons TCP sama sekali → port publish / boot memang gagal (infra jujur).
             res["errors"].append(f"PS tak terjangkau di {fo} ({rstatus}) — port publish/boot gagal")
@@ -990,7 +989,8 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
         # flaky karena kompilasi halaman login lambat) — best-effort, gagal tak memvonis:
         # login tetap best-effort di _bo_login (plus satu retry di sana).
         if _needs_bo(scenarios):
-            wait_http(f"{bo}/index.php?controller=AdminLogin", startup_timeout)
+            with fl.phase("warmup-bo", startup_timeout):
+                wait_http(f"{bo}/index.php?controller=AdminLogin", startup_timeout)
 
         ver_shot_dir = None
         if screenshot_dir:
@@ -1004,7 +1004,8 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
                "screenshot_dir": ver_shot_dir}
         driven = []
         for engine in browsers:
-            eng = drive_engine(engine, scenarios, ctx, headed=headed)
+            with fl.phase(f"browser:{engine}", None, f"{len(scenarios)} skenario"):
+                eng = drive_engine(engine, scenarios, ctx, headed=headed)
             if eng.get("launch_error"):
                 # Gagal luncur SATU engine = masalah per-browser -> browser_notes (BUKAN errors).
                 # Jangan cemari kanal infra version-level: temuan konklusif engine lain harus tetap.
@@ -1089,6 +1090,7 @@ def main():
                                              "folder ini (artefak visual '<ver>/<engine>-<scenario>-...png').")
     ap.add_argument("--timeout", type=int, default=600, help="Timeout operasi per versi (detik): pull/up/exec")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
+    fl.add_progress_args(ap)
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
     if args.config:
@@ -1099,6 +1101,7 @@ def main():
         print(f"error: bukan folder: {module_dir}", file=sys.stderr)
         return 2
     mod_name = module_dir.name
+    fl.progress_init(args.progress_file, args.slow_after)
 
     if not playwright_available():
         _emit({"module": mod_name, "e2e_available": False, "status": "skipped",
@@ -1149,4 +1152,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(fl.run_main_with_progress(main))

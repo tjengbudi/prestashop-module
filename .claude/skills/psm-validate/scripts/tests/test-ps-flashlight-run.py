@@ -712,8 +712,106 @@ def main():
             rc = e.code
         ok &= check("--config absen -> exit 2, bukan diam-diam pakai default", rc == 2)
 
+    ok &= test_progress_log()
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
+
+
+def test_progress_log():
+    """Log kemajuan: fase menulis START/ALIVE/SLOW/END, DONE selalu ada, perintah docker
+    yang menggantung berbatas waktu — tanpa Docker nyata (subprocess di-monkeypatch)."""
+    import subprocess
+    import time as _t
+    ok = True
+    saved = (mod.PROGRESS_HEARTBEAT, mod.PROGRESS_SLOW_AFTER, dict(mod._PROGRESS), mod.subprocess.run)
+
+    def lines(path):
+        return Path(path).read_text(encoding="utf-8").splitlines()
+
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            # nonaktif = no-op: tanpa path tak ada file & tak ada thread denyut
+            mod.progress_init(None)
+            with mod.phase("x", 5) as ph:
+                pass
+            ok &= check("progress: tanpa --progress-file -> no-op", ph._thread is None)
+
+            log = Path(td) / "sub" / "a.progress.log"
+            log.parent.mkdir()
+            log.write_text("sisa run lama\n", encoding="utf-8")
+            mod.PROGRESS_HEARTBEAT = 0.05
+            mod.progress_init(str(log), slow_after=0.15)
+            ok &= check("progress: file dikosongkan saat init (bukan sisa run lama)",
+                        lines(log) == [])
+            mod.progress_version("9.1")
+            with mod.phase("install+phpstan", 600, "detil"):
+                _t.sleep(0.4)
+            ls = lines(log)
+            toks = [ln.split()[4] for ln in ls]
+            ok &= check("progress: START dulu, END terakhir",
+                        toks[0] == "START" and toks[-1] == "END")
+            ok &= check("progress: denyut ALIVE lalu SLOW setelah ambang",
+                        "ALIVE" in toks and "SLOW" in toks
+                        and toks.index("ALIVE") < toks.index("SLOW"))
+            ok &= check("progress: baris memuat pid/run/versi/fase",
+                        all(f"pid={mod.OWNER_PID}" in ln and f"run={mod.RUN_ID}" in ln
+                            and " v=9.1 " in ln and "install+phpstan" in ln for ln in ls))
+            ok &= check("progress: END membawa status ok + durasi",
+                        re.search(r"END install\+phpstan ok \d+s$", ls[-1]) is not None)
+
+            # TimeoutExpired di dalam fase -> END timeout (dan exception tetap naik)
+            raised = False
+            try:
+                with mod.phase("pull", 1):
+                    raise subprocess.TimeoutExpired(["docker", "pull"], 1)
+            except subprocess.TimeoutExpired:
+                raised = True
+            ok &= check("progress: TimeoutExpired -> END timeout & tetap dilempar",
+                        raised and " END pull timeout " in lines(log)[-1])
+
+            # perintah bongkar menggantung -> berbatas waktu, tak menggantung run
+            def hang(cmd, **kw):
+                ok_timeout = "timeout" in kw
+                raise subprocess.TimeoutExpired(cmd, kw.get("timeout") if ok_timeout else -1)
+            mod.subprocess.run = hang
+            t0 = _t.monotonic()
+            mod._teardown({"mode": "manual", "ps_container": "c1", "db": "c2", "network": "n1"})
+            ok &= check("teardown: docker menggantung -> selesai cepat, END menyebut cleanup-orphans",
+                        _t.monotonic() - t0 < 2 and "cleanup-orphans" in lines(log)[-1]
+                        and " END teardown timeout" in lines(log)[-1])
+            ok &= check("health: docker inspect menggantung -> 'unknown' (poll berikutnya mencoba lagi)",
+                        mod._health_status("c1") == "unknown")
+            ok &= check("bring-up manual: docker menggantung -> error berpesan, bukan hang/crash",
+                        (lambda r: r[1] is not None and "timeout" in r[1] and r[0] is not None)(
+                            mod._bring_up_manual("/m", "img", "db", "localhost:8000", 5)))
+            mod.subprocess.run = saved[3]
+
+            # DONE selalu ditulis — juga saat crash
+            ok &= check("DONE: rc normal", mod.run_main_with_progress(lambda: 1) == 1
+                        and lines(log)[-1].split()[-2:] == ["DONE", "rc=1"])
+            crashed = False
+            try:
+                mod.run_main_with_progress(lambda: 1 / 0)
+            except ZeroDivisionError:
+                crashed = True
+            ok &= check("DONE: crash tetap menulis rc=crash", crashed and lines(log)[-1].endswith("rc=crash"))
+
+            # kontrak token tertulis di skrip & flag CLI terdaftar di ketiga skrip lapis Docker
+            src = MOD_PATH.read_text(encoding="utf-8")
+            ok &= check("kontrak token START/ALIVE/SLOW/END/DONE terdokumentasi",
+                        all(t in src for t in ("START", "ALIVE", "SLOW", "END", "DONE")))
+            for name in ("ps-flashlight-run.py", "ps-e2e-run.py", "ps-scenario-run.py"):
+                sp = (MOD_PATH.parent / name).read_text(encoding="utf-8")
+                ok &= check(f"{name}: --progress-file terdaftar & DONE dibungkus",
+                            "add_progress_args(ap)" in sp and "run_main_with_progress(main)" in sp
+                            and "progress_init(args.progress_file" in sp)
+    finally:
+        mod.PROGRESS_HEARTBEAT, mod.PROGRESS_SLOW_AFTER = saved[0], saved[1]
+        mod._PROGRESS.clear()
+        mod._PROGRESS.update(saved[2])
+        mod.subprocess.run = saved[3]
+    return ok
 
 
 if __name__ == "__main__":
