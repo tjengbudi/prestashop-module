@@ -25,3 +25,11 @@ Target dinaikkan dari 9.0→**9.1** (stable kini 9.1.4, rilis 6/3/2026). Tag `9.
 Detail operasional ada di skill psm-validate (`{project-root}/.claude/skills/psm-validate/SKILL.md`).
 
 Sumber: flashlight README (Docker Hub). Status & tag diverifikasi 2026-07-08.
+
+## Verified additions 2026-11-18 `[core]`
+
+- Local status: Docker 29.7.0; images present locally — `1.7.8.11`, `8.1.6-nginx`, `9.1.4-nginx` plus `latest` and `nightly`. Tag pins unchanged, so the 2026-07-08 tag-scheme note still holds (plain `9.1` / `9.1.4` are not pullable; use the `-nginx` patch tag).
+- Runtime measured inside the images: 1.7.8.11 → PHP 7.4, 8.1.6-nginx → PHP 8.1, 9.1.4-nginx → PHP 8.5.
+- Harness coordinates as resolved by config and `scripts/ps-flashlight-run.py` defaults: db image `mariadb:lts`, orchestrator `auto`, `PS_DOMAIN=localhost:8000`, startup timeout 180s, tag map `1.7.8=1.7.8.11, 8.1=8.1.6-nginx, 9.1=9.1.4-nginx`; Lapis 4 publishes the host port (8000) and the other layers do not.
+- Verification trap worth repeating: a BO HTTP probe without a valid security token gets an "Invalid token" interstitial at HTTP 200 — a hook looks dead when it is not.
+- Four unresolved inconsistencies in the `psm-validate` references (recorded rather than smoothed): `run-phases.md` says Lapis 1 is per-version in its layer table and once-cross-version in its phase-2 text; the "full 4-layer verdict" example in `e2e-quickstart.md` omits the Lapis 2 and Lapis 3 inputs that `headless.md` treats as default-required; all three describe four layers while `ps-run-layer.py --layer scenario` (Lapis 5) exists; port handling is described as floating per version in `e2e-quickstart.md` but forwarded as uniform coordinates in `run-phases.md`.

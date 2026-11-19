@@ -25,3 +25,9 @@ Lihat [[breaking-changes-9]] — guzzle, swiftmailer, tactician, framework-extra
 Pola → [[cross-version-patterns]].
 
 Sumber: devdocs.prestashop-project.org/9/modules/concepts/composer.
+
+## Verified additions 2026-11-18 `[core]`
+
+- `main_class` is a **1.7-era Addons concept**: the string appears at 1.7.8.11 only, in `src/Core/Addon/Module/ModuleRepository.php`, and nowhere under `classes/`, `src/` or `config/` at 8.1.6-nginx or 9.1.4-nginx. Module discovery on 8/9 relies on `name` + `ps_versions_compliancy` (line 11), not on it.
+- The literal `upgrade.php` appears nowhere in `classes/module/Module.php` on any of the three tags — module upgrade dispatch is not wired in `Module`; keep the SQL in `upgrade/upgrade-x.y.z.php` and expect the core/Update Assistant path to drive it. → [[persistence]]
+- Dependency rules now also cover `pear/archive_tar` (gone in 9) and the six Symfony components never shipped on these targets; `soundasleep/html2text` is still in core vendor at 9.1.4 despite the upgrade notes. → [[validator-rules]]

@@ -46,3 +46,11 @@ Bungkus jadi helper privat (`isPs8Plus()`), jangan sebar cek versi.
 - [ ] Lolos psm-validate di 1.7.x, 8.x, 9.x
 
 Sumber: devdocs.prestashop-project.org (core-updates 8.0/9.0/9.1). Diseed 2026-06-29 dari katalog skill; bagian 9.0↔9.1 ditambah 2026-07-30 dari [[breaking-changes-9]] (audit 2026-07-08).
+
+## Verified additions 2026-11-18 `[core]`
+
+- Measured runtimes of the pinned images: `1.7.8.11` → PHP 7.4, `8.1.6-nginx` → PHP 8.1, `9.1.4-nginx` → PHP 8.5. Treat 7.2/7.4 as the practical 1.7.8 window (the "PHP 5.6" figure floating around the family is for early 1.7.0–1.7.6, not 1.7.8).
+- The minor-key gate described in "Catatan gerbang" is still live and now carries more rules: `hook-displaysearch`, `hook-orderdetail-var`, `smarty-hardcoded-theme` (9.1) plus the additions recorded in [[validator-rules]]. A bare `9` target silently skips all of them.
+- Cross-version-safe persistence wording at line 16 stands: `Db::getInstance()` + `DbQuery` is the portable builder — `Db::getInstance()->createQueryBuilder()` does not exist on any target (zero matches in `classes/Db.php` at 1.7.8.11, 8.1.6, 9.1.4). → [[persistence]]
+- Cross-version-safe DI wording at line 20 stands and is now explained by core: there is no `Module::getServices()` / `presetStaticServices()` on any target, and core's own `ServiceLocator` (`src/Adapter/ServiceLocator.php`) is fed FQCN strings rather than a `'service.container'` id. → [[services-di]]
+- New 9-side traps to add to the checklist above: `HookDispatcherAwareTrait`, `Validate::isPlaintextPassword|isAnything|isPasswdAdmin`, `Translate::getAdminTranslation`, `ajaxDie()`, `pear/archive_tar`. Each is a rule as of 2026-11-18. → [[validator-rules]]

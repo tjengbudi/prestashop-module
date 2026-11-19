@@ -57,3 +57,12 @@ Detail per-fungsi → [[hooks]].
 Lihat juga [[breaking-changes-8]], [[cross-version-patterns]], [[validator-rules]], [[services-di]], [[hooks]].
 
 Sumber: devdocs.prestashop-project.org/9/modules/core-updates/9.0 & /9.1, validator.prestashop.com/changelog (v5.10–5.14.2). Audit 2026-07-08.
+
+## Verified additions 2026-11-18 `[core]`
+
+Verified inside the pinned flashlight images (1.7.8.11 / 8.1.6-nginx / 9.1.4-nginx); this section only adds or corrects what is above.
+- **`Validate` purge is wider than documented:** `isPlaintextPassword`, `isAnything`, `isPasswd` and `isPasswdAdmin` all exist at 1.7.8.11 (the first two also at 8.1.6, `isPasswdAdmin` also at 8.1.6 where it is the only password helper left) and all four are absent at 9.1.4. `PrestaShop\PrestaShop\Core\Security\PasswordPolicyConfiguration` is the 9-side path (`src/Core/Security/PasswordPolicyConfiguration.php`, with the BO form type at `PrestaShopBundle/Form/Admin/Configure/AdvancedParameters/Security/PasswordPolicyType.php`).
+- **`HookDispatcherAwareTrait` removed in 9** (present 1.7.8 & 8.1) — line 16 covers `Context`, not this; see [[hooks]] for the 9.1 `src/Core/Hook/` listing.
+- **`ajaxDie()` and `Translate::getAdminTranslation` removed in 9** (both present 1.7.8 & 8.1) — not in any rule before 2026-11-18. → [[validator-rules]]
+- **Dependency list corrections (line 6-10) from `vendor/` on the images:** `pear/archive_tar` is present at 1.7.8 & 8.1 and **gone at 9.1.4** — a real 9 break, now a rule. `soundasleep/html2text` appears in the 9.0 upgrade notes but `vendor/soundasleep/html2text` is **present at 9.1.4** — do not treat it as removed. `symfony/inflector`, `notifier`, `rate-limiter`, `semaphore`, `uid`, `workflow` are absent from `vendor/` at **8.1.6 and 1.7.8.11 too** — they were never shipped on the current targets, so code using them breaks on 8 as well; the rule `dep-symfony-components` therefore affects 1.7/8/9.
+- **Runtime floors, measured:** `1.7.8.11` image runs PHP 7.4, `8.1.6-nginx` runs PHP 8.1, `9.1.4-nginx` runs PHP 8.5 — line 33's "PHP 8.5 didukung" confirmed, and the practical 1.7.8 window is 7.2/7.4, not 5.6.

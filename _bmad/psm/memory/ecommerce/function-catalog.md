@@ -25,3 +25,12 @@ Kelompok di atas untuk maksud yang masih terbuka. Untuk "perkaya module ini" (te
 - Fungsi yang simpan data pelanggan → pertimbangkan GDPR.
 
 Pertimbangan default: hook display/action + ObjectModel + Configuration (aman semua versi). Pertimbangkan multistore, multilang, GDPR sejak awal.
+
+## Verified additions 2026-11-18 `[core]`
+
+Re-seeded in project `whatsappchat` (its copy carries the extended index with hook/persistence anchors and version tags per entry). Only genuine gaps are recorded here; the skill catalog stays canonical.
+- Three function families the `psm-develop` catalog does not cover, each anchored in core hooks:
+  - **Messaging / notifications** (chat, WhatsApp, e-mail/SMS alerts): `actionValidateOrder`, `actionOrderStatusUpdate`, `actionCartSave`, `actionObject*Update`, plus a tokened `ModuleFrontController` for cron/webhook entry; per-block schedule and display rules belong in module tables, global toggles in `Configuration`. `[all]`
+  - **Marketplace / multi-vendor**: order splitting and vendor scoping ride `actionCarrierProcess` + `OrderHistory::changeIdState`, uploads for proof/voucher, and BO grid actions; beware `displayAdminOrderMain` / `displayAdminOrderSide` vs `displayAdminOrder` (1.7.7+) → [[breaking-changes-9]].
+  - **B2B / quote-to-order**: cart rules for negotiated prices (server-side only), `paymentOptions` for invoiced/offline payment, customer-group scoping via `Configuration` + group tables.
+- Adding any of these to an existing module still follows the rules at the end of this file: new hook registered in `install()` **and** in an upgrade script so already-installed shops pick it up.

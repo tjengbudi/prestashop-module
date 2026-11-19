@@ -13,3 +13,9 @@ Saat Budi sebut maksud module, gali lewat lensa berikut — tawarkan, jangan pak
 - **Operasional merchant:** siapa yang mengelola (config BO)? Perlu penjadwalan/cron? Perlu laporan?
 
 Tujuan: dari satu kalimat maksud module → daftar fungsi konkret + pertimbangan teknis siap di-scaffold/develop.
+
+## Verified additions 2026-11-18 `[core]`
+
+- Recorded in project `whatsappchat` with the handoff format that makes an idea actionable for `psm-plan` / `psm-develop`: **candidate function → hook anchor → persistence anchor → cross-version note → effort**. Without the last three the next workflow has to re-derive them, and the idea loses the context that justified it.
+- The five adjacency directions are quoted from the `psm-develop` catalog and stay there: varian → kelengkapan alur → otomasi langkah manual → visibilitas → ketahanan & kepatuhan. Use them for "perkaya module ini" (one topic); use the business lenses (konversi, AOV, retensi, effort) for open-ended exploration.
+- `bmad-advanced-elicitation` owns the generic questioning technique — do not restate it here; only the e-commerce lens selection belongs to this file.

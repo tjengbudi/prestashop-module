@@ -21,3 +21,11 @@ Diseed 2026-06-29 dari katalog cross-version + riset devdocs doctrine.
 Pola → [[cross-version-patterns]], [[services-di]]. Fungsi → [[function-catalog]].
 
 Sumber: devdocs.prestashop-project.org/9/modules/concepts/doctrine.
+
+## Verified additions 2026-11-18 `[core]`
+
+Verified inside the pinned flashlight images (1.7.8.11 / 8.1.6-nginx / 9.1.4-nginx).
+- `Db::getInstance()->createQueryBuilder()` **does not exist** on any target — zero matches in `classes/Db.php` at all three tags. `DbQuery` (line 8) is the real builder; the Doctrine path is a container service (`doctrine.dbal.default_connection`, `doctrine.orm.entity_manager`), never a `Db` method.
+- `Tools::b2h()` / `Tools::h2b()` and `Tools::isValidateOfShop()` are absent from `classes/Tools.php` on all three tags — hex transport stays an informal convention, not a helper.
+- `Validate::isAnything` is gone in 9.1.4 (present 1.7.8 & 8.1) and every `Validate` password helper (`isPasswd`, `isPasswdAdmin`, `isPlaintextPassword`) is gone in 9.1.4 → [[breaking-changes-9]].
+- Adding a column to an existing table still means `upgrade/upgrade-x.y.z.php` plus a matching `$definition`; `Configuration::updateValue/get` remains the version-stable key/value store, remember `id_shop` for multistore.
