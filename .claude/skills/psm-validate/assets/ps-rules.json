@@ -58,6 +58,24 @@
       "pattern": "use\\s+PrestaShopBundle\\\\Security\\\\Annotation",
       "message": "Anotasi PrestaShopBundle\\Security ditandai warning oleh Validator untuk PS9.",
       "fix": "Migrasi ke atribut keamanan PrestaShopAdminController."
+    },
+    {
+      "id": "dep-archive-tar",
+      "severity": "error",
+      "affects": ["9"],
+      "kind": "dependency",
+      "pattern": "pear/archive_tar|\\bArchive_Tar\\b",
+      "message": "pear/archive_tar tidak lagi ada di vendor core PrestaShop 9 (ada di 1.7.8 & 8.1).",
+      "fix": "Bundle `pear/archive_tar` di composer.json module (vendor ikut ter-distribusi), atau pakai `ZipArchive` native."
+    },
+    {
+      "id": "dep-symfony-components",
+      "severity": "error",
+      "affects": ["1.7", "8", "9"],
+      "kind": "dependency",
+      "pattern": "symfony/(inflector|notifier|rate-limiter|semaphore|uid|workflow)|Symfony\\\\Component\\\\(Inflector|Notifier|RateLimiter|Semaphore|Uid|Workflow)\\\\",
+      "message": "Komponen Symfony ini tidak ada di vendor core pada KETIGA target (1.7.8, 8.1, 9.1) — kode yang memakainya tanpa bundling fatal di semua versi.",
+      "fix": "Deklarasikan di composer.json module dan pastikan vendor/ ikut ter-bundle, atau ganti: Notifier -> Symfony Mailer/HTTP client, Uid -> ramsey/uuid, Workflow -> state machine sendiri."
     }
   ],
   "removed_classes_methods": [
@@ -69,9 +87,10 @@
         "9"
       ],
       "kind": "class",
-      "pattern": "\\bnew\\s+Attribute\\b|\\bAttribute::",
-      "message": "Kelas Attribute di-rename jadi ProductAttribute di PrestaShop 8.",
-      "fix": "Ganti Attribute -> ProductAttribute."
+      "pattern": "\\bnew\\s+Attribute\\b|extends\\s+Attribute\\b|(?<![\\\\A-Za-z0-9_])Attribute::",
+      "negate_pattern": "#\\[|->getAttributes\\(|use\\s+Attribute\\s*;",
+      "message": "Kelas core `Attribute` di-rename jadi `ProductAttribute` di PrestaShop 8 — referensi `Attribute` global mati di 8/9.",
+      "fix": "Ganti `Attribute` -> `ProductAttribute`. Atribut PHP 8 (`#[\\Attribute]`, `new \\Attribute`, `$r->getAttributes()`) sengaja di-negate: itu bukan kelas core."
     },
     {
       "id": "cls-hookdispatcher",
@@ -81,9 +100,9 @@
         "9"
       ],
       "kind": "class",
-      "pattern": "\\bHookDispatcher\\b",
-      "message": "HookDispatcher dihapus di PrestaShop 8 (deprecated sejak 1.7.5).",
-      "fix": "Pakai Hook::exec atau dispatchHook (Symfony)."
+      "pattern": "PrestaShopBundle\\\\Service\\\\Hook\\\\HookDispatcher",
+      "message": "Kelas `PrestaShopBundle\\Service\\Hook\\HookDispatcher` dihapus di PrestaShop 8 (deprecated sejak 1.7.5). `PrestaShop\\PrestaShop\\Core\\Hook\\HookDispatcher` TIDAK kena — ia masih ada sampai 9.1.",
+      "fix": "Main file: pakai `Hook::exec('<hook>', $params)`. Controller/service Symfony: inject `PrestaShop\\PrestaShop\\Core\\Hook\\HookDispatcherInterface` (masih ada di 9.1)."
     },
     {
       "id": "mth-tools-jsonencode",
@@ -111,15 +130,15 @@
     },
     {
       "id": "mth-hook-alias",
-      "severity": "warning",
+      "severity": "error",
       "affects": [
         "8",
         "9"
       ],
       "kind": "method",
       "pattern": "Hook::getHookAliasList|Hook::getRetroHookName",
-      "message": "Hook alias API dihapus/deprecated di PrestaShop 8.",
-      "fix": "Pakai nama hook kanonik, hindari alias."
+      "message": "Hook::getHookAliasList / Hook::getRetroHookName dihapus di PrestaShop 8 (nol di core 8.1.6 & 9.1.4).",
+      "fix": "Pakai nama hook kanonik dan registrasi hook eksplisit; jangan andalkan mapping alias."
     },
     {
       "id": "mth-validate-ispasswd",
@@ -131,7 +150,7 @@
       "kind": "method",
       "pattern": "Validate::isPasswd\\b",
       "message": "Validate::isPasswd dihapus di PrestaShop 8.",
-      "fix": "Pakai Validate::isPlaintextPassword / isHashedPassword sesuai konteks."
+      "fix": "1.7/8: `Validate::isPasswdAdmin` (masih ada di 8.1, hilang di 9). 9: pakai `PrestaShop\\PrestaShop\\Core\\Security\\PasswordPolicyConfiguration` atau `password_verify`/`password_get_info` native."
     },
     {
       "id": "cls-prestashopautoload",
@@ -165,6 +184,51 @@
       "pattern": "function\\s+(initContent|initHeader|initFooter)\\s*\\(",
       "message": "Override method legacy controller (initContent/initHeader/initFooter) tidak lagi dipanggil langsung di PS9 untuk halaman termigrasi.",
       "fix": "Cek apakah halaman target sudah Symfony; sesuaikan."
+    },
+    {
+      "id": "cls-hookdispatcher-aware-trait",
+      "severity": "error",
+      "affects": ["9"],
+      "kind": "class",
+      "pattern": "\\bHookDispatcherAwareTrait\\b",
+      "message": "Trait `PrestaShop\\PrestaShop\\Core\\Hook\\HookDispatcherAwareTrait` dihapus di PrestaShop 9 (ada di 1.7.8 & 8.1).",
+      "fix": "Terapkan manual: simpan `PrestaShop\\PrestaShop\\Core\\Hook\\HookDispatcherInterface` lewat constructor injection dan panggil dispatcher-nya sendiri; trait core tak ada lagi di 9."
+    },
+    {
+      "id": "mth-validate-isplaintextpassword",
+      "severity": "error",
+      "affects": ["9"],
+      "kind": "method",
+      "pattern": "Validate::isPlaintextPassword",
+      "message": "Validate::isPlaintextPassword dihapus di PrestaShop 9 (ada di 1.7.8 & 8.1).",
+      "fix": "Di 9 pakai `PrestaShop\\PrestaShop\\Core\\Security\\PasswordPolicyConfiguration` atau cek native (`password_verify`, panjang/regex manual). `Validate::isPasswdAdmin` juga hilang di 9."
+    },
+    {
+      "id": "mth-validate-isanything",
+      "severity": "error",
+      "affects": ["9"],
+      "kind": "method",
+      "pattern": "Validate::isAnything",
+      "message": "Validate::isAnything dihapus di PrestaShop 9 (ada di 1.7.8 & 8.1).",
+      "fix": "Tak ada pengganti; `null !== $v` / `isset($v)` eksplisit."
+    },
+    {
+      "id": "mth-validate-ispasswdadmin",
+      "severity": "error",
+      "affects": ["9"],
+      "kind": "method",
+      "pattern": "Validate::isPasswdAdmin",
+      "message": "Validate::isPasswdAdmin dihapus di PrestaShop 9 (di 8.1 ia satu-satunya validasi password yang tersisa di Validate).",
+      "fix": "Di 9 pakai `PasswordPolicyConfiguration` (`src/Core/Security/`) atau `password_verify` native."
+    },
+    {
+      "id": "mth-translate-getadmintranslation",
+      "severity": "error",
+      "affects": ["9"],
+      "kind": "method",
+      "pattern": "Translate::getAdminTranslation",
+      "message": "Translate::getAdminTranslation dihapus di PrestaShop 9 (ada di 1.7.8 & 8.1).",
+      "fix": "Pakai `$this->trans('Teks', 'Domain.Subdomain')`; `transCount()` untuk jamak. Core 9 meng-escape keluarannya."
     }
   ],
   "removed_hooks": [
@@ -264,6 +328,15 @@
       "pattern": "\\b(passthru|shell_exec|system|proc_open|popen)\\s*\\(",
       "message": "Fungsi eksekusi sistem dilarang oleh PrestaShop Validator.",
       "fix": "Hapus; tidak boleh menjalankan program sistem dari module."
+    },
+    {
+      "id": "fn-ajaxdie",
+      "severity": "error",
+      "affects": ["9"],
+      "kind": "function",
+      "pattern": "\\bajaxDie\\s*\\(",
+      "message": "Fungsi global `ajaxDie()` dihapus dari core PrestaShop 9 (ada di 1.7.8 & 8.1).",
+      "fix": "Controller Symfony: `return new JsonResponse([...])`. Legacy controller: `echo json_encode($data); exit;`."
     }
   ],
   "structure": [
