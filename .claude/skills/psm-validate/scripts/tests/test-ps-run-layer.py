@@ -153,6 +153,22 @@ def test_pure():
     ok &= check("plan: -o per versi di direktori temp", _out_of(c0) == str(Path("/tmp/x") / "9.1.json"))
     ok &= check("plan: passthrough diteruskan apa adanya", c0[-2:] == ["--browsers", "chromium"])
     ok &= check("plan: module diteruskan sebagai argumen posisional", "/m" in c0)
+    ok &= check("plan: tanpa progress -> tak ada --progress-file", "--progress-file" not in c0)
+
+    # Log kemajuan anak: nama DITURUNKAN di reports dir (bukan folder temp bukti) supaya
+    # pemanggil bisa memantau macet selagi run berjalan.
+    planp = mod.plan_children("/s/ps-e2e-run.py", "/x/mymod", ["9.1", "8.1"], "/tmp/x",
+                              ["--browsers", "chromium"], progress=("/rep", "e2e"))
+    cp0, cp1 = planp[0][1], planp[1][1]
+    ok &= check("plan: --progress-file per versi diturunkan di reports dir",
+                cp0[cp0.index("--progress-file") + 1] == "/rep/mymod-e2e-9.1.progress.log"
+                and cp1[cp1.index("--progress-file") + 1] == "/rep/mymod-e2e-8.1.progress.log")
+    ok &= check("progress_file: bentuk <module>-<lapis>-<versi>.progress.log",
+                mod.progress_file("/rep", "/x/mymod", "flashlight", "1.7.8")
+                == "/rep/mymod-flashlight-1.7.8.progress.log")
+    ok &= check("reserved: --progress-file (dan singkatannya) tak boleh di passthrough",
+                mod.reserved_in_passthrough(["--progress-file", "/a"]) == ["--progress-file"]
+                and mod.reserved_in_passthrough(["--progress=/a"]) == ["--progress-file"])
     return ok
 
 

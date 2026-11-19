@@ -67,7 +67,7 @@ SERIAL_LAYERS = {
 # `--cleanup-orphans` bukan milik skrip ini tapi MENGGANTI pekerjaan anak: tiap anak akan
 # menjalankan pembersihan destruktif alih-alih memvalidasi, lalu keluar 0 — dan operator cuma
 # diberitahu "versi tak berbukti", tak pernah bahwa mode lain yang jalan.
-RESERVED_PASSTHROUGH = ("--versions", "-o", "--output", "--cleanup-orphans")
+RESERVED_PASSTHROUGH = ("--versions", "-o", "--output", "--cleanup-orphans", "--progress-file")
 
 DEFAULT_JOBS = 3  # tiap job mem-boot container PS + DB (Lapis 4 plus engine browser)
 
@@ -249,7 +249,7 @@ def reserved_in_passthrough(extra):
         elif tok.startswith("-o") and len(tok) > 2 and not tok.startswith("--"):
             hits.append("-o")  # bentuk menempel: -o/path/file.json
         elif head.startswith("--") and len(head) > 2:
-            for full in ("--versions", "--output"):
+            for full in ("--versions", "--output", "--progress-file"):
                 if len(head) >= 4 and full.startswith(head):
                     hits.append(full)  # singkatan awalan yang argparse anak terima
                     break
@@ -301,13 +301,27 @@ def per_version_file(reports_dir, module_path, layer, ver):
     return str(Path(reports_dir) / f"{Path(module_path).resolve().name}-{layer}-{ver}.json")
 
 
-def plan_children(script, module_path, versions, out_dir, extra):
-    """(versi, cmd, out_path) untuk tiap versi. Murni — bisa diuji tanpa men-spawn apa pun."""
+def progress_file(reports_dir, module_path, layer, ver):
+    """Path log kemajuan anak — `<reports>/<module>-<lapis>-<versi>.progress.log`, DITURUNKAN.
+
+    Bukti anak mendarat di folder temp, tapi log kemajuan harus terlihat pemanggil SELAMA run
+    (untuk memantau macet), jadi ia ditulis di reports dir dengan nama yang bisa ditebak.
+    Akhiran `.progress.log` tak pernah dibaca agregat/plan sebagai file lapis.
+    """
+    return str(Path(reports_dir) / f"{Path(module_path).resolve().name}-{layer}-{ver}.progress.log")
+
+
+def plan_children(script, module_path, versions, out_dir, extra, progress=None):
+    """(versi, cmd, out_path) untuk tiap versi. Murni — bisa diuji tanpa men-spawn apa pun.
+
+    `progress` = (reports_dir, layer) → tiap anak diberi `--progress-file` turunan."""
     plan = []
     for ver in versions:
         out = str(Path(out_dir) / f"{ver}.json")
         cmd = ["uv", "run", str(script), str(module_path),
                "--versions", ver, "-o", out, *extra]
+        if progress:
+            cmd += ["--progress-file", progress_file(progress[0], module_path, progress[1], ver)]
         plan.append((ver, cmd, out))
     return plan
 
@@ -585,7 +599,9 @@ def main(argv=None):
     tmp = tempfile.mkdtemp(prefix="psm-layer-")
     keep = False
     try:
-        plan = plan_children(script, args.module, versions, tmp, extra)
+        plan = plan_children(script, args.module, versions, tmp, extra,
+                             progress=(args.reports_dir, args.layer))
+        log(f"log kemajuan: {progress_file(args.reports_dir, args.module, args.layer, '<versi>')}")
         if args.verbose:
             log(f"lapis {args.layer}: {len(plan)} versi, {min(args.jobs, len(plan))} serentak")
         codes = execute(plan, args.jobs, log=log if args.verbose else None)

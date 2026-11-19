@@ -284,7 +284,8 @@ def install_module(session, mod_name, timeout):
     """Salin + install module via PS console di container. Return (info, err_or_None)."""
     import subprocess as _sp
     try:
-        cp = fl._exec(session, {"MOD_NAME": mod_name}, fl.INSTALL_BLOCK_SH, timeout)
+        with fl.phase("install", timeout):
+            cp = fl._exec(session, {"MOD_NAME": mod_name}, fl.INSTALL_BLOCK_SH, timeout)
     except _sp.TimeoutExpired:
         return {"ok": False}, "timeout menjalankan install di container"
     out = (cp.stdout or "") + (cp.stderr or "")
@@ -300,6 +301,7 @@ def run_one_version(module_dir, mod_name, full_ver, tag, scenarios, *, orchestra
     import subprocess as _sp
 
     image_ref = f"{fl.IMAGE}:{tag}"
+    fl.progress_version(full_ver)
     res = {"version": full_ver, "tag": tag, "image": image_ref, "install": {"ok": False},
            "scenarios": [], "errors": [], "inconclusive": [], "pass": True, "conclusive": False}
 
@@ -325,13 +327,9 @@ def run_one_version(module_dir, mod_name, full_ver, tag, scenarios, *, orchestra
                 f"image belum ada lokal & pull tak diizinkan: {', '.join(missing)} — lewati versi ini")
             return res
         for i in missing:
-            try:
-                p = _sp.run(["docker", "pull", i], capture_output=True, text=True, timeout=op_timeout)
-            except _sp.TimeoutExpired:
-                res["errors"].append(f"timeout pull {i}")
-                return res
-            if p.returncode != 0:
-                res["errors"].append(f"gagal pull {i}: {p.stderr.strip()[-200:]}")
+            perr = fl.pull_image(i, op_timeout)
+            if perr:
+                res["errors"].append(perr[:300])
                 return res
 
     if mode == "compose":
@@ -363,7 +361,8 @@ def run_one_version(module_dir, mod_name, full_ver, tag, scenarios, *, orchestra
             return res
         res["db_prefix"] = prefix
 
-        snap_ok, snap_err = snapshot_db(session)
+        with fl.phase("snapshot-db", op_timeout):
+            snap_ok, snap_err = snapshot_db(session)
         if not snap_ok:
             # Tanpa snapshot tak ada isolasi, dan skenario urut-bergantung adalah persis
             # yang lapis ini ada untuk dihindari. Lebih baik tak menilai daripada menilai
@@ -372,7 +371,8 @@ def run_one_version(module_dir, mod_name, full_ver, tag, scenarios, *, orchestra
             return res
 
         for scenario in scenarios:
-            out = run_scenario(session, scenario, mod_name, prefix, op_timeout)
+            with fl.phase("scenario", op_timeout, str(scenario.get("name", ""))):
+                out = run_scenario(session, scenario, mod_name, prefix, op_timeout)
             res["scenarios"].append(out)
             if not out["conclusive"]:
                 res["inconclusive"].append({"scenario": out["name"], "note": out["note"]})
@@ -410,6 +410,7 @@ def main():
     ap.add_argument("--allow-image-pull", action="store_true",
                     help="Izinkan tarik image (multi-GB). Tanpa ini, image absen = degrade jujur.")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
+    fl.add_progress_args(ap)
     args = ap.parse_args()
 
     if args.config:
@@ -419,6 +420,7 @@ def main():
     if not module_dir.is_dir():
         print(f"error: bukan folder: {module_dir}", file=sys.stderr)
         return 2
+    fl.progress_init(args.progress_file, args.slow_after)
 
     scenarios, notes = discover_scenarios(module_dir)
 
@@ -463,4 +465,4 @@ def _emit(result, output):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(fl.run_main_with_progress(main))

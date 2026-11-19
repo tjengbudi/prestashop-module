@@ -49,8 +49,10 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 DEFAULT_TAG_MAP = {"1.7.8": "1.7.8.11", "8.1": "8.1.6-nginx", "9.1": "9.1.4-nginx"}
@@ -276,12 +278,139 @@ def parse_phpstan(out):
             "error_messages": messages[:50]}
 
 
+# --- log kemajuan -----------------------------------------------------------
+# Uji Docker bisa diam belasan menit (pull, boot, install+phpstan per versi), dan saat banyak
+# sesi berbagi satu daemon, run yang MACET tak bisa dibedakan dari run yang LAMBAT. Skrip
+# lapis Docker (flashlight/e2e/scenario) menulis satu baris bertimestamp per kejadian ke file
+# log kemajuan supaya pemanggil bisa memantau tanpa menunggu hasil akhir:
+#   <iso-waktu> pid=<pid> run=<id> v=<versi> <TOKEN> <fase> <detail>
+# TOKEN (kontrak, dibaca pemanggil — jangan diganti):
+#   START  fase mulai            ALIVE  fase masih jalan (denyut tiap PROGRESS_HEARTBEAT detik)
+#   SLOW   fase melewati ambang lambat (diduga macet; uji tetap jalan sampai batas waktunya)
+#   END    fase selesai (ok|timeout|error|<status>)   DONE  proses selesai (rc=<kode>|crash)
+# Tak ada baris baru > ~3 menit tanpa DONE = proses menggantung di luar fase atau mati.
+# Log kemajuan tak pernah menggagalkan uji: error tulis ditelan.
+PROGRESS_HEARTBEAT = 15          # detik antar denyut ALIVE/SLOW
+PROGRESS_SLOW_AFTER = 180        # detik sebelum fase ditandai SLOW
+PROGRESS_SLOW_AFTER_PHASE = {"pull": 900}  # unduh image multi-GB memang lama
+DOCKER_CMD_TIMEOUT = 120         # perintah docker pendek (run/network/inspect/rm/down) —
+                                 # tanpa batas, daemon yang tersendat menggantung run selamanya
+_PROGRESS = {"path": None, "version": "-", "slow_after": None}
+_PROGRESS_LOCK = threading.Lock()
+
+
+def progress_init(path, slow_after=None):
+    """Aktifkan log kemajuan ke `path` (dikosongkan dulu). None = nonaktif (no-op)."""
+    _PROGRESS["path"] = Path(path) if path else None
+    _PROGRESS["slow_after"] = slow_after
+    if path:
+        try:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text("", encoding="utf-8")
+        except OSError:
+            _PROGRESS["path"] = None
+
+
+def progress_version(full_ver):
+    _PROGRESS["version"] = full_ver or "-"
+
+
+def progress(token, phase_name="", detail=""):
+    path = _PROGRESS["path"]
+    if not path:
+        return
+    parts = [datetime.now().isoformat(timespec="seconds"), f"pid={OWNER_PID}", f"run={RUN_ID}",
+             f"v={_PROGRESS['version']}", token, phase_name, detail]
+    line = " ".join(p for p in parts if p)
+    try:
+        with _PROGRESS_LOCK, open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+            f.flush()
+    except OSError:
+        pass
+
+
+class phase:
+    """Context manager satu fase: START, denyut ALIVE/SLOW di thread latar, lalu END.
+
+    `ph.detail` boleh diperbarui selama fase (mis. status health terakhir) — denyut
+    menyertakannya; `ph.status` (opsional) menggantikan 'ok' di baris END.
+    """
+
+    def __init__(self, name, timeout=None, detail=""):
+        self.name, self.timeout, self.detail, self.status = name, timeout, detail, None
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _elapsed(self):
+        return int(time.monotonic() - self._t0)
+
+    def _budget(self):
+        return f"{self._elapsed()}s" + (f"/{self.timeout}s" if self.timeout else "")
+
+    def _beat(self):
+        slow = _PROGRESS["slow_after"] or PROGRESS_SLOW_AFTER_PHASE.get(self.name, PROGRESS_SLOW_AFTER)
+        while not self._stop.wait(PROGRESS_HEARTBEAT):
+            token = "SLOW" if time.monotonic() - self._t0 >= slow else "ALIVE"
+            progress(token, self.name, f"{self._budget()} {self.detail}".rstrip())
+
+    def __enter__(self):
+        self._t0 = time.monotonic()
+        progress("START", self.name, (f"batas {self.timeout}s " if self.timeout else "") + self.detail)
+        if _PROGRESS["path"]:
+            self._thread = threading.Thread(target=self._beat, daemon=True)
+            self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+        if exc_type is None:
+            st = self.status or "ok"
+        elif issubclass(exc_type, subprocess.TimeoutExpired):
+            st = "timeout"
+        else:
+            st = f"error({exc_type.__name__})"
+        progress("END", self.name, f"{st} {self._elapsed()}s")
+        return False
+
+
+def run_main_with_progress(main_fn):
+    """Bungkus main() skrip lapis: baris DONE selalu ditulis, juga saat crash."""
+    try:
+        rc = main_fn()
+    except BaseException:
+        progress("DONE", "", "rc=crash")
+        raise
+    progress("DONE", "", f"rc={rc}")
+    return rc
+
+
+def pull_image(image, timeout):
+    """`docker pull` berlog kemajuan. Return pesan error, atau None bila sukses."""
+    with phase("pull", timeout, image) as ph:
+        try:
+            p = subprocess.run(["docker", "pull", image], capture_output=True, text=True,
+                               timeout=timeout)
+        except subprocess.TimeoutExpired:
+            ph.status = "timeout"
+            return f"timeout pull {image}"
+        if p.returncode != 0:
+            ph.status = "gagal"
+            return f"gagal pull {image}: {p.stderr.strip()[-300:]}"
+    return None
+
+
 def _health_status(container):
-    """Status health container: 'healthy'|'unhealthy'|'starting'|'nohealth'|'gone'."""
-    r = subprocess.run(
-        ["docker", "inspect", "--format",
-         "{{if .State.Health}}{{.State.Health.Status}}{{else}}nohealth{{end}}", container],
-        capture_output=True, text=True)
+    """Status health container: 'healthy'|'unhealthy'|'starting'|'nohealth'|'gone'|'unknown'."""
+    try:
+        r = subprocess.run(
+            ["docker", "inspect", "--format",
+             "{{if .State.Health}}{{.State.Health.Status}}{{else}}nohealth{{end}}", container],
+            capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "unknown"  # daemon tersendat — poll berikutnya mencoba lagi sampai deadline
     if r.returncode != 0:
         return "gone"
     return (r.stdout or "").strip() or "unknown"
@@ -289,20 +418,28 @@ def _health_status(container):
 
 def wait_healthy(container, timeout, poll=3.0):
     """Poll status health sampai 'healthy' / 'unhealthy' / timeout. Return (ok, status)."""
-    deadline = time.monotonic() + timeout
-    last = "unknown"
-    while time.monotonic() < deadline:
-        last = _health_status(container)
-        if last == "healthy":
-            return True, "healthy"
-        if last in ("unhealthy", "gone"):
-            return False, last
-        time.sleep(poll)
-    return False, f"timeout ({last})"
+    with phase("wait-healthy", timeout, container) as ph:
+        deadline = time.monotonic() + timeout
+        last = "unknown"
+        while time.monotonic() < deadline:
+            last = _health_status(container)
+            ph.detail = f"{container} {last}"
+            if last == "healthy":
+                return True, "healthy"
+            if last in ("unhealthy", "gone"):
+                ph.status = last
+                return False, last
+            time.sleep(poll)
+        ph.status = f"timeout({last})"
+        return False, f"timeout ({last})"
 
 
 def _logs(container):
-    r = subprocess.run(["docker", "logs", container], capture_output=True, text=True)
+    try:
+        r = subprocess.run(["docker", "logs", container], capture_output=True, text=True,
+                           timeout=DOCKER_CMD_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "(docker logs timeout)"
     return (r.stdout or "") + (r.stderr or "")
 
 
@@ -447,6 +584,16 @@ def _project_name(full_ver):
 
 
 def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout, publish=None):
+    with phase("bring-up", op_timeout, "compose") as ph:
+        session, err = _bring_up_compose_inner(module_dir, full_ver, image_ref, db_image,
+                                               ps_domain, op_timeout, publish)
+        if err:
+            ph.status = "gagal"
+        return session, err
+
+
+def _bring_up_compose_inner(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout,
+                            publish=None):
     proj = _project_name(full_ver)
     tmpdir = tempfile.mkdtemp(prefix="psm-fl-")
     compose_path = Path(tmpdir) / "docker-compose.yml"
@@ -454,12 +601,18 @@ def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_t
                             encoding="utf-8")
     session = {"mode": "compose", "project": proj, "compose_file": str(compose_path),
                "tmpdir": tmpdir, "ps_container": None}
-    up = subprocess.run(["docker", "compose", "-f", str(compose_path), "-p", proj, "up", "-d"],
-                        capture_output=True, text=True, timeout=op_timeout)
+    try:
+        up = subprocess.run(["docker", "compose", "-f", str(compose_path), "-p", proj, "up", "-d"],
+                            capture_output=True, text=True, timeout=op_timeout)
+    except subprocess.TimeoutExpired:
+        return session, f"timeout docker compose up ({op_timeout}s) — daemon Docker tersendat?"
     if up.returncode != 0:
         return session, f"docker compose up gagal: {up.stderr.strip()[-300:]}"
-    q = subprocess.run(["docker", "compose", "-f", str(compose_path), "-p", proj, "ps", "-q", "ps"],
-                       capture_output=True, text=True)
+    try:
+        q = subprocess.run(["docker", "compose", "-f", str(compose_path), "-p", proj, "ps", "-q", "ps"],
+                           capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return session, "timeout docker compose ps — daemon Docker tersendat?"
     cid = [c for c in (q.stdout or "").strip().splitlines() if c]
     if not cid:
         return session, "tak bisa resolve container flashlight dari compose"
@@ -468,11 +621,30 @@ def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_t
 
 
 def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout, publish=None):
+    with phase("bring-up", None, "manual") as ph:
+        try:
+            session, err = _bring_up_manual_inner(module_dir, image_ref, db_image, ps_domain,
+                                                  startup_timeout, publish)
+        except subprocess.TimeoutExpired as e:
+            # Sesi parsial (network/DB sudah dibuat) tetap dibongkar pemanggil lewat _teardown;
+            # nama-namanya deterministik dari uid, jadi direkonstruksi di _MANUAL_PARTIAL.
+            session = _MANUAL_PARTIAL.pop("session", None)
+            err = f"timeout perintah docker ({' '.join(map(str, e.cmd[:3]))}) — daemon Docker tersendat?"
+        if err:
+            ph.status = "gagal"
+        return session, err
+
+
+_MANUAL_PARTIAL = {}
+
+
+def _bring_up_manual_inner(module_dir, image_ref, db_image, ps_domain, startup_timeout, publish=None):
     uid = uuid.uuid4().hex[:8]
     session = {"mode": "manual", "network": f"{CONTAINER_PREFIX}-net-{uid}",
                "db": f"{CONTAINER_PREFIX}-db-{uid}", "ps_container": f"{CONTAINER_PREFIX}-ps-{uid}"}
+    _MANUAL_PARTIAL["session"] = session
     n = subprocess.run(["docker", "network", "create", *_label_flags(), session["network"]],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
     if n.returncode != 0:
         return session, f"gagal buat network: {n.stderr.strip()[-200:]}"
     db = subprocess.run(
@@ -482,7 +654,7 @@ def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout
          "-e", f"MYSQL_ROOT_PASSWORD={DB_PASSWORD}", "-e", f"MYSQL_DATABASE={DB_NAME}",
          "--health-cmd", "healthcheck.sh --connect", "--health-interval", "5s",
          "--health-timeout", "10s", "--health-retries", "20", db_image],
-        capture_output=True, text=True)
+        capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
     if db.returncode != 0:
         return session, f"gagal start DB: {db.stderr.strip()[-200:]}"
     ok, status = wait_healthy(session["db"], startup_timeout)
@@ -496,7 +668,8 @@ def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout
          "-e", f"MYSQL_DATABASE={DB_NAME}",
          *(["-p", publish] if publish else []),
          "-v", f"{module_dir}:/ps-module-src:ro", image_ref],
-        capture_output=True, text=True)
+        capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
+    _MANUAL_PARTIAL.pop("session", None)
     if ps.returncode != 0:
         return session, f"gagal start flashlight: {ps.stderr.strip()[-200:]}"
     return session, None
@@ -514,21 +687,31 @@ def _exec(session, env, inner, timeout):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
+def _teardown_cmd(cmd, ph):
+    """Satu perintah bongkar berbatas waktu. Timeout tak fatal: artefak berlabel milik run ini
+    jadi yatim setelah proses keluar, dan `--cleanup-orphans` yang membereskannya."""
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        ph.status = "timeout(sisa-artefak: jalankan --cleanup-orphans)"
+
+
 def _teardown(session):
     if not session:
         return
-    if session.get("mode") == "compose":
-        if session.get("compose_file"):
-            subprocess.run(["docker", "compose", "-f", session["compose_file"],
-                            "-p", session["project"], "down", "-v"], capture_output=True, text=True)
-        if session.get("tmpdir"):
-            shutil.rmtree(session["tmpdir"], ignore_errors=True)
-    else:
-        for c in (session.get("ps_container"), session.get("db")):
-            if c:
-                subprocess.run(["docker", "rm", "-f", c], capture_output=True, text=True)
-        if session.get("network"):
-            subprocess.run(["docker", "network", "rm", session["network"]], capture_output=True, text=True)
+    with phase("teardown", None, session.get("mode", "")) as ph:
+        if session.get("mode") == "compose":
+            if session.get("compose_file"):
+                _teardown_cmd(["docker", "compose", "-f", session["compose_file"],
+                               "-p", session["project"], "down", "-v"], ph)
+            if session.get("tmpdir"):
+                shutil.rmtree(session["tmpdir"], ignore_errors=True)
+        else:
+            for c in (session.get("ps_container"), session.get("db")):
+                if c:
+                    _teardown_cmd(["docker", "rm", "-f", c], ph)
+            if session.get("network"):
+                _teardown_cmd(["docker", "network", "rm", session["network"]], ph)
 
 
 def _pid_alive(pid):
@@ -725,6 +908,7 @@ def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_ima
     memblok). Install ditolak / phpstan-error (neon module) → sinyal konklusif.
     """
     image_ref = f"{IMAGE}:{tag}"
+    progress_version(full_ver)
     res = {"version": full_ver, "tag": tag, "image": image_ref, "orchestrator": None,
            "db_image": db_image, "install": None, "coding_standard": None,
            "errors": [], "pass": False}
@@ -746,13 +930,9 @@ def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_ima
                 f"image belum ada lokal & pull tak diizinkan: {', '.join(missing)} — lewati versi ini")
             return res
         for i in missing:
-            try:
-                p = subprocess.run(["docker", "pull", i], capture_output=True, text=True, timeout=op_timeout)
-            except subprocess.TimeoutExpired:
-                res["errors"].append(f"timeout pull {i}")
-                return res
-            if p.returncode != 0:
-                res["errors"].append(f"gagal pull {i}: {p.stderr.strip()[-300:]}")
+            perr = pull_image(i, op_timeout)
+            if perr:
+                res["errors"].append(perr)
                 return res
 
     if mode == "compose":
@@ -772,7 +952,8 @@ def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_ima
             res["boot_log"] = _logs(session["ps_container"])[-2000:]
             return res
         try:
-            cp = _exec(session, {"MOD_NAME": mod_name}, INNER_SH, op_timeout)
+            with phase("install+phpstan", op_timeout):
+                cp = _exec(session, {"MOD_NAME": mod_name}, INNER_SH, op_timeout)
         except subprocess.TimeoutExpired:
             res["errors"].append(f"timeout menjalankan uji di container ({image_ref})")
             return res
@@ -805,6 +986,17 @@ CONFIG_KEY_TO_DEST = {
     "psm_flashlight_startup_timeout": "startup_timeout",
     "psm_e2e_browsers": "browsers",
 }
+
+
+def add_progress_args(ap):
+    """Flag log kemajuan — satu definisi untuk ketiga skrip lapis Docker."""
+    ap.add_argument("--progress-file",
+                    help="Tulis log kemajuan bertimestamp ke file ini (START/ALIVE/SLOW/END/DONE; "
+                         "format di komentar 'log kemajuan' skrip ini). ps-run-layer.py mengisinya "
+                         "otomatis: <reports>/<module>-<lapis>-<versi>.progress.log")
+    ap.add_argument("--slow-after", type=int, default=None,
+                    help=f"Detik sebelum fase ditandai SLOW (default {PROGRESS_SLOW_AFTER}; "
+                         f"pull {PROGRESS_SLOW_AFTER_PHASE['pull']})")
 
 
 def apply_config_file(args, parser, path):
@@ -876,6 +1068,7 @@ def main():
                          f"(label {LABEL_OWNER_PID}); run sesi lain yang masih jalan dilewati, "
                          "bukan dibunuh. Eksklusif: tanpa module_path, tanpa -o (laporan ke stdout).")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
+    add_progress_args(ap)
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
     if args.config:
@@ -901,6 +1094,7 @@ def main():
         print(f"error: bukan folder: {module_dir}", file=sys.stderr)
         return 2
     mod_name = module_dir.name
+    progress_init(args.progress_file, args.slow_after)
 
     if not docker_available():
         result = {"module": mod_name, "docker_available": False, "status": "skipped",
@@ -936,4 +1130,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_main_with_progress(main))
