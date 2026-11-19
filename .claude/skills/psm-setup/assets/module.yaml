@@ -1,7 +1,7 @@
 code: psm
 name: PrestaShop Module Builder
 description: Bikin, kembangkan, buat cross-version (1.7/8/9), validasi, dan optimasi module PrestaShop dengan standar baku & uji flashlight.
-version: 1.0.0
+module_version: 1.0.0
 default_selected: false
 module_greeting: >
   Selamat datang di PrestaShop Module Builder! Module ini membantumu membuat,
