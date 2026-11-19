@@ -35,6 +35,22 @@ Gerbang CI membaca **`ready`**: lolos + lapis yang di-`--require` tuntas (defaul
 Runner tanpa Docker/browser menghasilkan `ready: false` — jujur, bukan cacat module; `pass`
 tetap menampung temuan nyata. Menggating lebih sempit: nyatakan di `--require`.
 
+## Pemantauan & menghentikan job (tanpa operator)
+
+Log kemajuan dan Job ID tetap berlaku (`references/run-phases.md`), tapi tak ada Budi untuk
+diberi laporan atau dimintai izin — jadi aturannya lebih sempit, bukan lebih longgar:
+
+- **`SLOW` → tunggu.** Tiap fase dibatasi batas waktunya sendiri, lalu skrip degrade jujur
+  (tak konklusif, bukan lolos). Menghentikan job yang cuma lambat karena daemon sedang ramai
+  membuang bukti yang hampir jadi.
+- **Log diam ±3 menit tanpa `DONE`** (proses menggantung di luar fase berlog) → hentikan
+  **hanya job yang dimulai run ini**: `uv run scripts/ps-flashlight-run.py --stop-job <id>`
+  (`<id>` dari baris `JOB` / `job=`). Catat satu `assumption` ke memlog (job, versi, fase
+  terakhir), lalu kembalikan `blocked` + `reason` yang menyebut job & fasenya.
+- Job yang **bukan** dimulai run ini tak pernah disentuh — tak ada operator yang bisa
+  mengizinkannya. Larangan perintah luas di SKILL.md (pkill, `docker rm|kill|stop` berdasarkan
+  nama/prefix, `compose down` tanpa project, prune) berlaku penuh.
+
 ## Yang tak boleh di headless
 
 - **Jangan pernah** teruskan `--allow-image-pull` ke Lapis 2/4 — jangan tarik image tanpa

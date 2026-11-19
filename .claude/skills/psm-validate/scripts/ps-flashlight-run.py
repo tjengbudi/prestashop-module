@@ -40,11 +40,13 @@ Bila Docker/compose tak tersedia, keluar dengan status terstruktur (`skipped` /
 Pemetaan tag default mengikuti tag resmi Docker Hub prestashop/prestashop-flashlight.
 """
 import argparse
+import atexit
 import json
 import os
 import pathlib
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -283,7 +285,7 @@ def parse_phpstan(out):
 # sesi berbagi satu daemon, run yang MACET tak bisa dibedakan dari run yang LAMBAT. Skrip
 # lapis Docker (flashlight/e2e/scenario) menulis satu baris bertimestamp per kejadian ke file
 # log kemajuan supaya pemanggil bisa memantau tanpa menunggu hasil akhir:
-#   <iso-waktu> pid=<pid> run=<id> v=<versi> <TOKEN> <fase> <detail>
+#   <iso-waktu> job=<job-id> pid=<pid> run=<id> v=<versi> <TOKEN> <fase> <detail>
 # TOKEN (kontrak, dibaca pemanggil — jangan diganti):
 #   START  fase mulai            ALIVE  fase masih jalan (denyut tiap PROGRESS_HEARTBEAT detik)
 #   SLOW   fase melewati ambang lambat (diduga macet; uji tetap jalan sampai batas waktunya)
@@ -319,8 +321,8 @@ def progress(token, phase_name="", detail=""):
     path = _PROGRESS["path"]
     if not path:
         return
-    parts = [datetime.now().isoformat(timespec="seconds"), f"pid={OWNER_PID}", f"run={RUN_ID}",
-             f"v={_PROGRESS['version']}", token, phase_name, detail]
+    parts = [datetime.now().isoformat(timespec="seconds"), f"job={_JOB['id'] or '-'}",
+             f"pid={OWNER_PID}", f"run={RUN_ID}", f"v={_PROGRESS['version']}", token, phase_name, detail]
     line = " ".join(p for p in parts if p)
     try:
         with _PROGRESS_LOCK, open(path, "a", encoding="utf-8") as f:
@@ -377,14 +379,263 @@ class phase:
 
 
 def run_main_with_progress(main_fn):
-    """Bungkus main() skrip lapis: baris DONE selalu ditulis, juga saat crash."""
+    """Bungkus main() skrip lapis: baris DONE selalu ditulis, juga saat crash / dihentikan."""
     try:
         rc = main_fn()
+    except JobStopped:
+        # --stop-job: finally/_teardown di jalur run sudah jalan saat exception ini naik.
+        progress("DONE", "", "rc=stopped")
+        print(f"dihentikan: job {_JOB['id']} (SIGTERM dari --stop-job)", file=sys.stderr)
+        return 143
     except BaseException:
         progress("DONE", "", "rc=crash")
         raise
     progress("DONE", "", f"rc={rc}")
     return rc
+
+
+# --- Job ID -------------------------------------------------------------------
+# Satu pemanggilan = satu JOB yang TERLIHAT: `<module>-<lapis>-<HHMM>-<4hex>`. ps-run-layer
+# membuat satu ID dan semua anak per-versinya memakainya. ID ini dicap ke label `psm.job`,
+# ke NAMA container/project (terbaca di `docker ps`), ke tiap baris log kemajuan, dan ke
+# registry proses lokal. Tujuannya satu: menghentikan run secara TERARAH lewat
+# `--stop-job <id>` — bukan lewat pkill/`docker rm` berbasis nama yang ikut membunuh job
+# lain (satu sesi banyak job, atau banyak sesi berbagi daemon).
+LABEL_JOB = "psm.job"
+JOB_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,62}$")
+JOB_REGISTRY = Path(tempfile.gettempdir()) / "psm-jobs"
+JOB_STOP_GRACE = 60   # detik menunggu job membongkar dirinya sendiri sebelum SIGKILL
+_JOB = {"id": None, "entry_path": None}
+
+
+class JobStopped(BaseException):
+    """SIGTERM dari --stop-job, dilempar di thread utama. BaseException supaya tak ditelan
+    `except Exception`; subprocess.run membunuh anaknya, lalu finally/_teardown jalan."""
+
+
+def _slug(text, limit):
+    out = re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:limit].strip("-")
+    return out or "x"
+
+
+def make_job_id(module, layer):
+    return f"{_slug(module, 20)}-{_slug(layer, 12)}-{datetime.now():%H%M}-{uuid.uuid4().hex[:4]}"
+
+
+def valid_job_id(job_id):
+    return bool(job_id) and JOB_RE.match(job_id) is not None
+
+
+def _name_infix():
+    """Sisipan nama container/project: `<job>-` bila job aktif, else kosong."""
+    return f"{_JOB['id']}-" if _JOB["id"] else ""
+
+
+def _on_sigterm(signum, frame):
+    raise JobStopped()
+
+
+def _job_unregister():
+    path = _JOB.get("entry_path")
+    if not path:
+        return
+    try:
+        path.unlink(missing_ok=True)
+        path.parent.rmdir()  # hanya bila kosong — job lain/anak lain masih terdaftar
+    except OSError:
+        pass
+
+
+def job_register(job_id, *, module, layer, versions=""):
+    """Aktifkan job untuk proses ini: label, nama, registry, penangkap SIGTERM.
+
+    Registry `<tmp>/psm-jobs/<job>/<pid>.json` hidup selama proses hidup — --stop-job
+    memakainya untuk menemukan PROSES job (container belum ada saat pull/bring-up).
+    """
+    _JOB["id"] = job_id
+    entry = {"job": job_id, "pid": OWNER_PID, "run": RUN_ID, "host": OWNER_HOST,
+             "boot": OWNER_BOOT, "ns": OWNER_NS, "script": Path(sys.argv[0]).name,
+             "module": module, "layer": layer, "versions": versions,
+             "started": datetime.now().isoformat(timespec="seconds"),
+             "progress_file": str(_PROGRESS["path"]) if _PROGRESS["path"] else None}
+    path = JOB_REGISTRY / job_id / f"{OWNER_PID}.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+        _JOB["entry_path"] = path
+        atexit.register(_job_unregister)
+    except OSError:
+        _JOB["entry_path"] = None
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError):
+        pass  # bukan thread utama / platform tanpa SIGTERM — stop-job jatuh ke SIGKILL
+    print(f"JOB {job_id}  (hentikan terarah: ps-flashlight-run.py --stop-job {job_id})",
+          file=sys.stderr)
+
+
+def _registry_entries(job_id=None):
+    """{job: [entry...]} dari registry lokal; file rusak dilewati."""
+    out = {}
+    dirs = [JOB_REGISTRY / job_id] if job_id else (
+        sorted(JOB_REGISTRY.iterdir()) if JOB_REGISTRY.is_dir() else [])
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.json")):
+            try:
+                e = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(e, dict):
+                e["_file"] = str(f)
+                out.setdefault(d.name, []).append(e)
+    return out
+
+
+def _proc_cmdline(pid):
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+    except OSError:
+        return None
+
+
+def entry_state(entry):
+    """('alive'|'dead'|'foreign', alasan) untuk satu proses terdaftar.
+
+    Hanya 'alive' yang boleh disinyal. PID baru bermakna bila host, boot, dan PID namespace
+    sama dengan pemanggil; cmdline harus masih menyebut skripnya (PID daur-ulang = 'dead').
+    """
+    if entry.get("host") != OWNER_HOST:
+        return "foreign", "foreign-host"
+    if OWNER_BOOT and entry.get("boot") and entry.get("boot") != OWNER_BOOT:
+        return "dead", "owner-boot-gone"
+    if OWNER_NS and entry.get("ns") and entry.get("ns") != OWNER_NS:
+        return "foreign", "foreign-pid-ns"
+    pid = entry.get("pid")
+    if not isinstance(pid, int) or pid <= 0:
+        return "foreign", "bad-pid"
+    if not _pid_alive(pid):
+        return "dead", "pid-gone"
+    cmd = _proc_cmdline(pid)
+    if cmd is not None and entry.get("script") and entry["script"] not in cmd:
+        return "dead", "pid-reused"
+    return "alive", "alive"
+
+
+def _job_artifacts(job_id):
+    """({'container': [nama], 'network': [nama]}, error) — EKSAK per label psm.job."""
+    found, errs = {"container": [], "network": []}, []
+    for kind, base in (("container", ["docker", "ps", "-a"]), ("network", ["docker", "network", "ls"])):
+        fmt = "{{.Names}}" if kind == "container" else "{{.Name}}"
+        try:
+            r = subprocess.run([*base, "--filter", f"label={LABEL_JOB}={job_id}", "--format", fmt],
+                               capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
+        except (subprocess.SubprocessError, OSError) as e:
+            errs.append(f"gagal melisting {kind}: {str(e)[-200:]}")
+            continue
+        if r.returncode != 0:
+            errs.append(f"gagal melisting {kind}: {(r.stderr or '').strip()[-200:]}")
+            continue
+        found[kind] = [n.strip() for n in (r.stdout or "").splitlines() if n.strip()]
+    return found, ("; ".join(errs) or None)
+
+
+def _labelled_jobs():
+    """Job yang punya container berlabel psm.job (termasuk yang prosesnya sudah tiada)."""
+    try:
+        r = subprocess.run(["docker", "ps", "-a", "--filter", f"label={LABEL_JOB}",
+                            "--format", f'{{{{.Label "{LABEL_JOB}"}}}}'],
+                           capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
+    except (subprocess.SubprocessError, OSError):
+        return set()
+    return {j.strip() for j in (r.stdout or "").splitlines() if valid_job_id(j.strip())}
+
+
+def list_jobs():
+    """Ringkas job psm di host ini: proses terdaftar (+status) dan container berlabel."""
+    reg = _registry_entries()
+    docker_ok = docker_available()
+    jobs = sorted(set(reg) | (_labelled_jobs() if docker_ok else set()))
+    out = {"mode": "list-jobs", "host": OWNER_HOST, "docker_available": docker_ok, "jobs": []}
+    for job in jobs:
+        procs = []
+        for e in reg.get(job, []):
+            state, reason = entry_state(e)
+            procs.append({k: e.get(k) for k in ("pid", "script", "layer", "module", "versions",
+                                                "started", "progress_file")}
+                         | {"state": state, "reason": reason})
+        arts = _job_artifacts(job)[0] if docker_ok else {"container": [], "network": []}
+        out["jobs"].append({"job": job, "active": any(p["state"] == "alive" for p in procs),
+                            "processes": procs, "containers": arts["container"],
+                            "networks": arts["network"]})
+    return out
+
+
+def stop_job(job_id, grace=JOB_STOP_GRACE, poll=1.0):
+    """Hentikan SATU job: SIGTERM ke prosesnya (bongkar sendiri), SIGKILL bila lewat tenggat,
+    lalu hapus artefak berlabel psm.job=<job_id>. Job lain tak tersentuh — pencocokan eksak."""
+    res = {"mode": "stop-job", "job": job_id, "signaled": [], "killed": [], "skipped": [],
+           "removed": [], "errors": []}
+    if not valid_job_id(job_id):
+        res["status"] = "rejected"
+        res["errors"].append(f"job id tak valid: {job_id!r} (bentuk <module>-<lapis>-<HHMM>-<hex>)")
+        return res
+    entries = _registry_entries(job_id).get(job_id, [])
+    targets = []
+    for e in entries:
+        state, reason = entry_state(e)
+        rec = {"pid": e.get("pid"), "script": e.get("script"), "reason": reason}
+        if state != "alive":
+            res["skipped"].append(rec)
+            if state == "dead":
+                try:
+                    Path(e["_file"]).unlink(missing_ok=True)
+                except OSError:
+                    pass
+            continue
+        try:
+            os.kill(e["pid"], signal.SIGTERM)
+            res["signaled"].append(rec)
+            targets.append(e)
+        except ProcessLookupError:
+            res["skipped"].append(rec | {"reason": "pid-gone"})
+        except OSError as err:
+            res["errors"].append(rec | {"error": str(err)})
+    deadline = time.monotonic() + grace
+    while targets and time.monotonic() < deadline:
+        targets = [e for e in targets if entry_state(e)[0] == "alive"]
+        if targets:
+            time.sleep(poll)
+    for e in targets:  # masih hidup sesudah tenggat — cek ulang identitas sebelum SIGKILL
+        if entry_state(e)[0] == "alive":
+            try:
+                os.kill(e["pid"], signal.SIGKILL)
+                res["killed"].append({"pid": e["pid"], "script": e.get("script")})
+            except OSError:
+                pass
+    if targets:
+        time.sleep(2)
+    if docker_available():
+        arts, err = _job_artifacts(job_id)
+        if err:
+            res["errors"].append({"error": err})
+        for kind in ("container", "network"):  # container dulu: network tak lepas selama ditempeli
+            for name in arts[kind]:
+                status, rerr = _remove_artifact(kind, name)
+                if status == "error":
+                    res["errors"].append({"kind": kind, "name": name, "error": rerr})
+                elif status == "removed":
+                    res["removed"].append({"kind": kind, "name": name})
+    try:
+        (JOB_REGISTRY / job_id).rmdir()
+    except OSError:
+        pass
+    if not (res["signaled"] or res["removed"] or res["killed"]):
+        res["status"] = "not-found"
+    else:
+        res["status"] = "partial" if res["errors"] else "stopped"
+    return res
 
 
 def pull_image(image, timeout):
@@ -544,6 +795,8 @@ def owner_labels():
     (pembersih menolak menghapus apa yang tak berlabel — lihat cleanup_decision).
     """
     lab = {LABEL_RUN: RUN_ID, LABEL_OWNER_PID: str(OWNER_PID), LABEL_OWNER_HOST: OWNER_HOST}
+    if _JOB["id"]:
+        lab[LABEL_JOB] = _JOB["id"]  # target --stop-job; bukan syarat cleanup_decision
     # Hanya dicap bila platform ini bisa menghasilkannya — supaya syarat kelengkapan di
     # cleanup_decision menuntut persis yang bisa ditulis di sini, tak lebih.
     if OWNER_BOOT:
@@ -580,7 +833,7 @@ def _project_name(full_ver):
     prefix = satu filter (`--filter name=psm-fl`) menangkap keduanya.
     """
     v = re.sub(r"[^a-z0-9]", "", full_ver.lower())
-    return f"{CONTAINER_PREFIX}-{v}-{uuid.uuid4().hex[:8]}"
+    return f"{CONTAINER_PREFIX}-{_name_infix()}{v}-{uuid.uuid4().hex[:8]}"
 
 
 def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout, publish=None):
@@ -640,8 +893,8 @@ _MANUAL_PARTIAL = {}
 
 def _bring_up_manual_inner(module_dir, image_ref, db_image, ps_domain, startup_timeout, publish=None):
     uid = uuid.uuid4().hex[:8]
-    session = {"mode": "manual", "network": f"{CONTAINER_PREFIX}-net-{uid}",
-               "db": f"{CONTAINER_PREFIX}-db-{uid}", "ps_container": f"{CONTAINER_PREFIX}-ps-{uid}"}
+    session = {"mode": "manual", "network": f"{CONTAINER_PREFIX}-{_name_infix()}net-{uid}",
+               "db": f"{CONTAINER_PREFIX}-{_name_infix()}db-{uid}", "ps_container": f"{CONTAINER_PREFIX}-{_name_infix()}ps-{uid}"}
     _MANUAL_PARTIAL["session"] = session
     n = subprocess.run(["docker", "network", "create", *_label_flags(), session["network"]],
                        capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
@@ -988,12 +1241,27 @@ CONFIG_KEY_TO_DEST = {
 }
 
 
+def job_start(args, module, layer):
+    """Validasi/buat --job-id lalu daftarkan job. False = ID tak valid (pemanggil exit 2)."""
+    job_id = args.job_id or make_job_id(module, layer)
+    if not valid_job_id(job_id):
+        print(f"error: --job-id tak valid: {job_id!r} — huruf kecil/angka/'-', 3-63 karakter",
+              file=sys.stderr)
+        return False
+    job_register(job_id, module=module, layer=layer, versions=getattr(args, "versions", ""))
+    return True
+
+
 def add_progress_args(ap):
     """Flag log kemajuan — satu definisi untuk ketiga skrip lapis Docker."""
     ap.add_argument("--progress-file",
                     help="Tulis log kemajuan bertimestamp ke file ini (START/ALIVE/SLOW/END/DONE; "
                          "format di komentar 'log kemajuan' skrip ini). ps-run-layer.py mengisinya "
                          "otomatis: <reports>/<module>-<lapis>-<versi>.progress.log")
+    ap.add_argument("--job-id",
+                    help="ID job yang terlihat (label psm.job, nama container, log kemajuan). "
+                         "Default dibuat: <module>-<lapis>-<HHMM>-<hex>; ps-run-layer mengisinya "
+                         "sama untuk semua versi. Hentikan terarah: ps-flashlight-run.py --stop-job <id>")
     ap.add_argument("--slow-after", type=int, default=None,
                     help=f"Detik sebelum fase ditandai SLOW (default {PROGRESS_SLOW_AFTER}; "
                          f"pull {PROGRESS_SLOW_AFTER_PHASE['pull']})")
@@ -1067,12 +1335,35 @@ def main():
                          "HANYA menghapus yang proses pemiliknya sudah mati di host ini "
                          f"(label {LABEL_OWNER_PID}); run sesi lain yang masih jalan dilewati, "
                          "bukan dibunuh. Eksklusif: tanpa module_path, tanpa -o (laporan ke stdout).")
+    ap.add_argument("--list-jobs", action="store_true",
+                    help="Tampilkan job psm di host ini (proses terdaftar + container berlabel psm.job), "
+                         "lalu keluar. Eksklusif.")
+    ap.add_argument("--stop-job", metavar="JOB_ID",
+                    help="Hentikan SATU job secara terarah: SIGTERM ke prosesnya (bongkar sendiri), "
+                         f"SIGKILL bila lewat {JOB_STOP_GRACE} dtk, lalu hapus container/network "
+                         "berlabel psm.job=<JOB_ID>. Job lain tak tersentuh. Eksklusif.")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     add_progress_args(ap)
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
     if args.config:
         apply_config_file(args, ap, args.config)
+
+    exclusive = [f for f, on in ((CLEANUP_FLAG, args.cleanup_orphans), ("--list-jobs", args.list_jobs),
+                                 ("--stop-job", args.stop_job)) if on]
+    if len(exclusive) > 1:
+        print(f"error: {', '.join(exclusive)} saling eksklusif", file=sys.stderr)
+        return 2
+    if args.list_jobs or args.stop_job:
+        if args.module_path or args.output:
+            print(f"error: {exclusive[0]} tak menerima module_path maupun -o/--output", file=sys.stderr)
+            return 2
+        if args.list_jobs:
+            print(json.dumps(list_jobs(), indent=2, ensure_ascii=False))
+            return 0
+        r = stop_job(args.stop_job)
+        print(json.dumps(r, indent=2, ensure_ascii=False))
+        return 2 if r["status"] == "rejected" else 0
 
     if args.cleanup_orphans:
         # Mode ini eksklusif. Digabung dgn module_path, validasi diam-diam TAK PERNAH jalan
@@ -1095,6 +1386,8 @@ def main():
         return 2
     mod_name = module_dir.name
     progress_init(args.progress_file, args.slow_after)
+    if not job_start(args, mod_name, "flashlight"):
+        return 2
 
     if not docker_available():
         result = {"module": mod_name, "docker_available": False, "status": "skipped",

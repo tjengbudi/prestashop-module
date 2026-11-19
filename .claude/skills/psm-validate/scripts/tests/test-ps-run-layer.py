@@ -166,6 +166,14 @@ def test_pure():
     ok &= check("progress_file: bentuk <module>-<lapis>-<versi>.progress.log",
                 mod.progress_file("/rep", "/x/mymod", "flashlight", "1.7.8")
                 == "/rep/mymod-flashlight-1.7.8.progress.log")
+    planj = mod.plan_children("/s/ps-e2e-run.py", "/x/mymod", ["9.1", "8.1"], "/tmp/x", [],
+                              job_id="mymod-e2e-1204-abcd")
+    ok &= check("plan: SEMUA anak berbagi satu --job-id (stop-job menghentikan pemanggilan ini)",
+                all(c[c.index("--job-id") + 1] == "mymod-e2e-1204-abcd" for _v, c, _o in planj))
+    ok &= check("reserved: --job-id/--stop-job/--list-jobs tak boleh di passthrough",
+                set(mod.reserved_in_passthrough(["--job-id", "x", "--stop-job", "y", "--list-jobs"]))
+                == {"--job-id", "--stop-job", "--list-jobs"}
+                and mod.reserved_in_passthrough(["--job=x"]) == ["--job-id"])
     ok &= check("reserved: --progress-file (dan singkatannya) tak boleh di passthrough",
                 mod.reserved_in_passthrough(["--progress-file", "/a"]) == ["--progress-file"]
                 and mod.reserved_in_passthrough(["--progress=/a"]) == ["--progress-file"])

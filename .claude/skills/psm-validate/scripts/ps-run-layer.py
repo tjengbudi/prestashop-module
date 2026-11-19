@@ -67,7 +67,8 @@ SERIAL_LAYERS = {
 # `--cleanup-orphans` bukan milik skrip ini tapi MENGGANTI pekerjaan anak: tiap anak akan
 # menjalankan pembersihan destruktif alih-alih memvalidasi, lalu keluar 0 — dan operator cuma
 # diberitahu "versi tak berbukti", tak pernah bahwa mode lain yang jalan.
-RESERVED_PASSTHROUGH = ("--versions", "-o", "--output", "--cleanup-orphans", "--progress-file")
+RESERVED_PASSTHROUGH = ("--versions", "-o", "--output", "--cleanup-orphans", "--progress-file",
+                        "--job-id", "--stop-job", "--list-jobs")
 
 DEFAULT_JOBS = 3  # tiap job mem-boot container PS + DB (Lapis 4 plus engine browser)
 
@@ -115,6 +116,10 @@ def _sibling(name, modname):
 
 def aggregate():
     return _sibling("ps-aggregate.py", "ps_aggregate")
+
+
+def flashlight():
+    return _sibling("ps-flashlight-run.py", "ps_flashlight_run")
 
 
 def _canon(v):
@@ -249,7 +254,7 @@ def reserved_in_passthrough(extra):
         elif tok.startswith("-o") and len(tok) > 2 and not tok.startswith("--"):
             hits.append("-o")  # bentuk menempel: -o/path/file.json
         elif head.startswith("--") and len(head) > 2:
-            for full in ("--versions", "--output", "--progress-file"):
+            for full in ("--versions", "--output", "--progress-file", "--job-id"):
                 if len(head) >= 4 and full.startswith(head):
                     hits.append(full)  # singkatan awalan yang argparse anak terima
                     break
@@ -311,10 +316,12 @@ def progress_file(reports_dir, module_path, layer, ver):
     return str(Path(reports_dir) / f"{Path(module_path).resolve().name}-{layer}-{ver}.progress.log")
 
 
-def plan_children(script, module_path, versions, out_dir, extra, progress=None):
+def plan_children(script, module_path, versions, out_dir, extra, progress=None, job_id=None):
     """(versi, cmd, out_path) untuk tiap versi. Murni — bisa diuji tanpa men-spawn apa pun.
 
-    `progress` = (reports_dir, layer) → tiap anak diberi `--progress-file` turunan."""
+    `progress` = (reports_dir, layer) → tiap anak diberi `--progress-file` turunan.
+    `job_id` → SEMUA anak berbagi satu job, supaya `--stop-job` menghentikan seluruh
+    pemanggilan ini (dan hanya ini)."""
     plan = []
     for ver in versions:
         out = str(Path(out_dir) / f"{ver}.json")
@@ -322,6 +329,8 @@ def plan_children(script, module_path, versions, out_dir, extra, progress=None):
                "--versions", ver, "-o", out, *extra]
         if progress:
             cmd += ["--progress-file", progress_file(progress[0], module_path, progress[1], ver)]
+        if job_id:
+            cmd += ["--job-id", job_id]
         plan.append((ver, cmd, out))
     return plan
 
@@ -515,6 +524,9 @@ def main(argv=None):
                          "`<module>-<lapis>-<versi>.json` untuk --versions lalu satukan jadi file "
                          "kanonik untuk sweep rilis. mtime kanonik = mtime bukti per-versi TERTUA "
                          "(kanonik tak lebih segar dari bukti terbasinya).")
+    ap.add_argument("--job-id",
+                    help="ID job (default dibuat: <module>-<lapis>-<HHMM>-<hex>) — dibagikan ke semua "
+                         "anak versi; hentikan terarah: ps-flashlight-run.py --stop-job <id>")
     ap.add_argument("extra", nargs=argparse.REMAINDER,
                     help="Setelah `--`: flag yang diteruskan apa adanya ke skrip lapis")
     args = ap.parse_args(argv)
@@ -589,6 +601,15 @@ def main(argv=None):
         log(f"error: skrip lapis tak ada: {script}")
         return 2
 
+    fl = flashlight()
+    job_id = args.job_id or fl.make_job_id(Path(args.module).resolve().name, args.layer)
+    if not fl.valid_job_id(job_id):
+        log(f"error: --job-id tak valid: {job_id!r} — huruf kecil/angka/'-', 3-63 karakter")
+        return 2
+    # Orkestrator ikut terdaftar di job: --stop-job menyinyal anak DAN pemanggil ini.
+    fl.job_register(job_id, module=Path(args.module).resolve().name, layer=args.layer,
+                    versions=",".join(versions))
+
     output = layer_file(args.reports_dir, args.module, args.layer)
 
     # Direktori bukti dibuat manual, bukan lewat context manager: pada kegagalan pasca-spawn
@@ -600,7 +621,7 @@ def main(argv=None):
     keep = False
     try:
         plan = plan_children(script, args.module, versions, tmp, extra,
-                             progress=(args.reports_dir, args.layer))
+                             progress=(args.reports_dir, args.layer), job_id=job_id)
         log(f"log kemajuan: {progress_file(args.reports_dir, args.module, args.layer, '<versi>')}")
         if args.verbose:
             log(f"lapis {args.layer}: {len(plan)} versi, {min(args.jobs, len(plan))} serentak")
@@ -695,5 +716,15 @@ def main(argv=None):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _run():
+    try:
+        return main()
+    except BaseException as e:  # JobStopped milik ps-flashlight-run (dimuat lazy)
+        if type(e).__name__ == "JobStopped":
+            print("dihentikan: job ini (SIGTERM dari --stop-job)", file=sys.stderr)
+            return 143
+        raise
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_run())
