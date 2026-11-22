@@ -1,0 +1,75 @@
+{
+  "scanner": "workflow-integrity-prepass",
+  "script": "prepass-workflow-integrity.py",
+  "version": "1.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-review-loop",
+  "timestamp": "2026-11-22T05:25:01.302637+00:00",
+  "status": "pass",
+  "metadata": {
+    "frontmatter": {
+      "name": "psm-review-loop",
+      "description": "Repeatedly review a spec or plan document until no high findings remain. Use when the user says \"psm-review-loop\", \"review loop\", \"review spec sampai bersih\", or \"loop review rencana\"."
+    },
+    "sections": [
+      {
+        "level": 2,
+        "title": "Overview",
+        "line": 8
+      },
+      {
+        "level": 2,
+        "title": "Resolution rules",
+        "line": 14
+      },
+      {
+        "level": 2,
+        "title": "On Activation",
+        "line": 21
+      },
+      {
+        "level": 2,
+        "title": "Review round",
+        "line": 28
+      },
+      {
+        "level": 2,
+        "title": "Triage & fix",
+        "line": 42
+      },
+      {
+        "level": 2,
+        "title": "Stop",
+        "line": 56
+      },
+      {
+        "level": 2,
+        "title": "Gotchas",
+        "line": 64
+      },
+      {
+        "level": 2,
+        "title": "Headless mode",
+        "line": 70
+      }
+    ],
+    "workflow_type": "simple-workflow"
+  },
+  "stage_summary": {
+    "total_stages": 0,
+    "referenced": [],
+    "actual": [],
+    "missing_stages": [],
+    "orphaned_stages": []
+  },
+  "prompt_details": [],
+  "issues": [],
+  "summary": {
+    "total_issues": 0,
+    "by_severity": {
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    }
+  }
+}

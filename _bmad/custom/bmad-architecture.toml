@@ -1,0 +1,10 @@
+# Team override: run psm-review-loop on ARCHITECTURE-SPINE.md after the Reviewer Gate/Triage,
+# before renderings, handoffs and Close.
+# Hook: persistent_facts. finalize_reviewers is unsuitable (review-only lenses writing
+# reviews/review-*.md and returning a summary, not a fix loop); on_complete fires after `status: final`.
+
+[workflow]
+
+persistent_facts = [
+  '''Review loop (team policy): in Finalize after step 4 Triage and before step 5 Renderings & polish, and in Update after the Reviewer Gate and before close (never under Validate), invoke skill `psm-review-loop` on `{doc_workspace}/ARCHITECTURE-SPINE.md`. Sources: the driving inputs reconciled in step 2 (spec package, PRD, raw intent, brownfield path) and the parent spine when inherited. Companions: sibling files the spine cites, if any. Headless run: pass `--headless`; otherwise run it interactively. Always invoke it (it skips itself when the spine is unchanged since its last clean pass). Its fixes are logged in `{doc_workspace}/.memlog.md`; treat them as decisions of record on any re-distill, keeping AD IDs stable. Outcome: `selesai` -> continue. `butuh intervensi` -> interactive: show its remaining escalations and settle them with the user before renderings, handoffs and Close; headless: skip handoffs, leave the spine not final, return `{"status": "blocked", "intent": ..., "reason": "<loop reason + summary>", "doc_workspace": ...}` so nothing downstream proceeds. `gagal` -> report it (headless: blocked). Skip the loop only if the user says to skip the review loop, and say it was skipped.''',
+]

@@ -1,0 +1,97 @@
+{
+  "scanner": "prompt-metrics-prepass",
+  "script": "prepass-prompt-metrics.py",
+  "version": "2.0.0",
+  "skill_path": "/home/budi/dev/prestashop-module/.claude/skills/psm-review-loop",
+  "timestamp": "2026-11-22T05:25:00.572180+00:00",
+  "budgets": {
+    "skill_md_tokens": [
+      1500,
+      2500
+    ],
+    "multi_branch_reference_tokens": 4500,
+    "single_purpose_reference_tokens": 9000
+  },
+  "skill_md": {
+    "tokens": 2237,
+    "token_method": "tiktoken",
+    "section_count": 8,
+    "frontmatter": {
+      "name": "psm-review-loop",
+      "description": "Repeatedly review a spec or plan document until no high findings remain. Use when the user says \"psm-review-loop\", \"review loop\", \"review spec sampai bersih\", or \"loop review rencana\".",
+      "description_chars": 184,
+      "description_has_angle_brackets": false,
+      "keys": [
+        "description",
+        "name"
+      ]
+    }
+  },
+  "aggregate": {
+    "total_files_scanned": 1,
+    "total_tokens": 2237,
+    "total_waste_patterns": 0,
+    "total_back_references": 0,
+    "files_with_numbered_prefix": 0
+  },
+  "reference_sizes": {},
+  "files": [
+    {
+      "file": "SKILL.md",
+      "tokens": 2237,
+      "token_method": "tiktoken",
+      "sections": [
+        {
+          "level": 2,
+          "title": "Overview"
+        },
+        {
+          "level": 2,
+          "title": "Resolution rules"
+        },
+        {
+          "level": 2,
+          "title": "On Activation"
+        },
+        {
+          "level": 2,
+          "title": "Review round"
+        },
+        {
+          "level": 2,
+          "title": "Triage & fix"
+        },
+        {
+          "level": 2,
+          "title": "Stop"
+        },
+        {
+          "level": 2,
+          "title": "Gotchas"
+        },
+        {
+          "level": 2,
+          "title": "Headless mode"
+        }
+      ],
+      "table_count": 0,
+      "table_rows": 0,
+      "fenced_block_count": 1,
+      "allcaps_directive_count": 0,
+      "numbered_prefix_filename": false,
+      "waste_patterns": [],
+      "back_references": [],
+      "frontmatter": {
+        "name": "psm-review-loop",
+        "description": "Repeatedly review a spec or plan document until no high findings remain. Use when the user says \"psm-review-loop\", \"review loop\", \"review spec sampai bersih\", or \"loop review rencana\".",
+        "description_chars": 184,
+        "description_has_angle_brackets": false,
+        "keys": [
+          "description",
+          "name"
+        ]
+      },
+      "is_skill_md": true
+    }
+  ]
+}

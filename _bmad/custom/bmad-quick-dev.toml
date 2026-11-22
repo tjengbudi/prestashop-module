@@ -1,0 +1,9 @@
+# Team override: run psm-review-loop on the spec right before CHECKPOINT 1 (step-02).
+# Hook: persistent_facts. on_complete fires only after implementation and review (step-05 /
+# step-oneshot), too late for a pre-implementation spec review.
+
+[workflow]
+
+persistent_facts = [
+  '''Review loop (team policy): only on the plan-code-review route, in step-02 after the token-count check and before presenting CHECKPOINT 1, invoke skill `psm-review-loop` on `{spec_file}`. Never on the one-shot route (step-oneshot), when resuming straight into step-03/04, or on the return from [E] unless the user asks. Sources: intent files ingested in step-01, the epic context `{implementation_artifacts}/epic-<N>-context.md` (or the planning docs loaded on the freeform path), and the previous story spec if loaded. Companions: the files in the spec `context:` frontmatter. Run interactively; pass `--headless` only when this run has no human operator (invoked by another skill or an unattended runner). Always invoke it (it skips itself when the spec is unchanged since its last clean pass). Outcome: `selesai` -> present CHECKPOINT 1. `butuh intervensi` -> interactive: show its remaining escalations in the CHECKPOINT 1 summary before [A]/[E]; headless: keep the spec `draft`, report blocked with the reason, do not go to step-03. `gagal` -> report it at CHECKPOINT 1 (headless: blocked). Skip the loop only if the user says to skip the review loop, and say so at the checkpoint.''',
+]

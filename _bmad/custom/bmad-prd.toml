@@ -1,0 +1,9 @@
+# Team override: run psm-review-loop on prd.md at Finalize, after Polish, before handoffs/Close.
+# Hook: persistent_facts. finalize_reviewers is unsuitable (review-only subagents returning a
+# summary file, not a fix loop); on_complete fires after `status: final` and external handoffs.
+
+[workflow]
+
+persistent_facts = [
+  '''Review loop (team policy): in Finalize (Create and Update intents, never Validate), after step 5 Polish and before step 6 External handoffs, invoke skill `psm-review-loop` on `{doc_workspace}/prd.md`. Sources: every user-supplied input reconciled in step 2 (brief, research, parent docs). Companions: `{doc_workspace}/addendum.md` if present. Headless run: pass `--headless`; otherwise run it interactively. Always invoke it (it skips itself when prd.md is unchanged since its last clean pass). Outcome: `selesai` -> continue to step 6. `butuh intervensi` -> interactive: show its remaining escalations and settle them with the user before steps 6-7 (deferrals logged via memlog.py); headless: skip steps 6-7, leave `status: draft`, return `status: "blocked"` with `reason` = the loop's reason and summary plus the workspace path, so nothing downstream proceeds. `gagal` -> report it (headless: blocked). Skip the loop only if the user says to skip the review loop, and say it was skipped.''',
+]

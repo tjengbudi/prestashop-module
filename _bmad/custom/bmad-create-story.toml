@@ -1,0 +1,6 @@
+# Team override: run psm-review-loop on the new story file at Step 6, after it is saved,
+# before the hand-off to dev-story. Default on_complete is empty, so nothing is lost.
+
+[workflow]
+
+on_complete = '''Invoke skill `psm-review-loop` on the story file just written (`{default_output_file}`). Sources: the epics file plus the PRD, architecture and UX docs the story cites (whole or sharded, as loaded in steps 2-3) and the previous story file if one was used. No companions. Run interactively; pass `--headless` when this run has no human operator (invoked by another skill or an unattended runner). Always invoke it (it skips itself when the story is unchanged since its last clean pass). Outcome: `selesai` -> done. `butuh intervensi` -> interactive: show its remaining escalations and tell the user to resolve them before running dev-story; headless: report blocked with the loop's reason and state the story must not go to implementation yet. `gagal` -> report it. Skip the loop only if the user says to skip the review loop, and say it was skipped.'''
