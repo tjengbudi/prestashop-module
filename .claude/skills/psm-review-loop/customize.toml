@@ -1,0 +1,27 @@
+# DO NOT EDIT -- overwritten on every update.
+#
+# Workflow customization surface for psm-review-loop.
+# Team overrides:     {project-root}/_bmad/custom/psm-review-loop.toml
+# Personal overrides: {project-root}/_bmad/custom/psm-review-loop.user.toml
+#
+# Merge: scalars override (last layer wins), tables deep-merge, arrays append.
+# No removal: base entries cannot be dropped by an override.
+
+[workflow]
+
+# --- Universal defaults ---
+activation_steps_prepend = []
+activation_steps_append = []
+persistent_facts = ["file:{project-root}/**/project-context.md"]
+on_complete = ""
+
+# --- Skill-specific points ---
+
+# Maximum review rounds before stopping and reporting what is left.
+max_rounds = 5
+
+# Extra review lenses, run as additional parallel subagents every round on top of
+# the three core lenses (adversarial, edge case, implementer simulation), which
+# are fixed in SKILL.md. Each entry: `skill:<name>`, `file:<path>`, or a plain-text
+# reviewer prompt. Example: "skill:psm-agent-expert" for a PrestaShop cross-version lens.
+review_lenses = []

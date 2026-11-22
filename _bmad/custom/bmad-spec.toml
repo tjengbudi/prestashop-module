@@ -1,0 +1,8 @@
+# Team override: run psm-review-loop on SPEC.md before it is presented / returned.
+# Hook: persistent_facts (on_complete fires after Output, i.e. after the headless JSON is returned).
+
+[workflow]
+
+persistent_facts = [
+  '''Review loop (team policy): after Self-Validate on every create or update (not on validate-only or no-change runs) and before Output, invoke skill `psm-review-loop` on `<spec-folder>/SPEC.md`. Sources: the input files this run distilled plus frontmatter `sources:`. Companions: every path in frontmatter `companions:`. Headless run: pass `--headless`; otherwise run it interactively. Always invoke it (it skips itself when SPEC.md is unchanged since its last clean pass). Its fixes are logged in the spec `.memlog.md`; treat them as decisions of record on later derives. Outcome: `selesai` -> continue to Output. `butuh intervensi` -> interactive: list its remaining escalations next to assumptions/open questions in Output and say the spec is not ready for downstream use until they are resolved; headless: return `{"status": "blocked", "error_code": "review_loop_blocked", "reason": "<loop reason + summary>"}` and stop. `gagal` -> report it (headless: blocked, error_code `review_loop_failed`). Skip the loop only if the user says to skip the review loop, and say it was skipped.''',
+]
