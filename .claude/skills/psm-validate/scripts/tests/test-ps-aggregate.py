@@ -8,7 +8,9 @@ Fokus kontrak: pass per-versi & keseluruhan dihitung dari temuan error lapis
 konklusif; lapis flashlight tak konklusif (skipped/pull-fail/timeout/no-console)
 TAK PERNAH memblok. Jalankan: uv run scripts/tests/test-ps-aggregate.py
 """
+import contextlib
 import importlib.util
+import io
 import json
 import subprocess
 import sys
@@ -46,6 +48,138 @@ def static_result(versions, rules_evaluated=12, main_file_found=True):
         }
     out["pass"] = all(v["pass"] for v in out["versions"].values())
     return out
+
+
+# --- Bukti E2E: histori per sel (cell-contract.md > Evidence record / Aggregate) -------
+pl = mod.pl
+SESSION = "abcdefghij012345"
+BR = ["chromium", "firefox"]
+FP = "f" * 64  # fingerprint tiruan untuk test in-memory (CLI memakai fingerprint module asli)
+
+
+def _tag(ver):
+    """Tag ter-resolve dgn peta default — cara yang sama dgn plan, runner, agregat."""
+    return pl.fl.resolve_tag(pl.fl.parse_tag_map(None), ver)
+
+
+def _rec(ver, browser, fp=FP, **kw):
+    """Record histori lengkap = pass gate-grade PASSING (Fields kontrak + boot_wall_clock/boot_log)."""
+    r = {"version": ver, "browser": browser,
+         "started_at": "2026-11-26T10:00:00.000000+00:00",
+         "finished_at": "2026-11-26T10:05:00.000000+00:00",
+         "boot": "cold", "boot_id": f"boot-{ver}", "session": SESSION,
+         "browser_mode": "sequential", "scenario_set": "full",
+         "scenarios_run": ["psm-universal-smoke", "s1"], "source_fingerprint": fp,
+         "image_tag": _tag(ver), "run_id": "r0", "job_id": "j0", "tier": None,
+         "state": "pass", "conclusive": True, "reason": None, "errors": [],
+         "install": {"ok": True}, "launch_error": None, "bo_authed": True, "findings": [],
+         "inconclusive": [], "authored_assertions": 2, "scenario_notes": [],
+         "browser_notes": [], "parallel_only": None, "console_errors": 0, "screenshots": [],
+         "scenario_spans": None,
+         "phase_durations": {f"browser:{browser}": {"seconds": 12.5, "outcome": "ok"}},
+         "boot_phases": {"pull": {"seconds": 1.0, "outcome": "ok"},
+                         "wait-healthy": {"seconds": 30.0, "outcome": "ok"}},
+         "keeper_boot": None, "wall_clock": 300.0, "boot_wall_clock": 420.0, "boot_log": None}
+    r.update(kw)
+    return r
+
+
+def _finding(ver, browser, scenario="s1", action="expect_text"):
+    return {"id": f"e2e-{scenario}-{action}", "severity": "error",
+            "message": f"[{browser}/{scenario}] {action}: teks tak ada", "location": "fo",
+            "fix": "periksa", "browser": browser, "scenario": scenario, "source": "s1.json",
+            "action": action, "step": 3, "versions": [ver]}
+
+
+def _fail(ver, browser, **kw):
+    return _rec(ver, browser, state="fail", findings=[_finding(ver, browser)], **kw)
+
+
+def _row(ver, cells, notes=(), corrupt=()):
+    """{browser: [record...]} -> row info evaluate_cell (in-memory, fingerprint FP)."""
+    return {b: mod.evaluate_cell(list(recs), b in corrupt, FP, _tag(ver), list(notes))
+            for b, recs in cells.items()}
+
+
+def _both(ver, **kw):
+    return {b: [_rec(ver, b, **kw)] for b in BR}
+
+
+def _merge(ver, static_payload, cells=None, browsers=BR, notes=()):
+    row = _row(ver, cells, notes) if cells is not None else None
+    return mod.merge_version(ver, static_payload, None, None, row, None, browsers=browsers)
+
+
+def _write_cfg(path, versions="1.7.8,8.1,9.1", browsers="chromium,firefox", **extra):
+    cfg = {"psm_target_versions": versions, "psm_e2e_browsers": browsers, **extra}
+    Path(path).write_text(json.dumps(cfg), encoding="utf-8")
+    return str(path)
+
+
+def _run_main(args):
+    """ps-aggregate main() in-process (cepat). Return (rc, stderr)."""
+    err = io.StringIO()
+    saved = sys.argv
+    sys.argv = ["ps-aggregate.py", *args]
+    try:
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = mod.main()
+    except SystemExit as e:
+        rc = e.code
+    finally:
+        sys.argv = saved
+    return rc, err.getvalue()
+
+
+class Env:
+    """Module asli + folder laporan + config + static bersih; histori ditulis lewat
+    ps-plan-layers.append_record dgn fingerprint module yang SEBENARNYA."""
+
+    def __init__(self, td, versions="1.7.8,8.1,9.1", browsers="chromium,firefox",
+                 static_versions=None, **cfg_extra):
+        root = Path(td)
+        self.root = root
+        self.m = root / "mymod"
+        self.m.mkdir()
+        (self.m / "mymod.php").write_text("<?php // mymod", encoding="utf-8")
+        self.rep = root / "reports"
+        self.rep.mkdir()
+        self.cfg = _write_cfg(root / "psm-config.json", versions, browsers, **cfg_extra)
+        self.fp = pl.source_fingerprint(self.m, self.rep)
+        sv = static_versions or [v.strip() for v in versions.split(",")]
+        st = static_result({v: [] for v in sv})
+        st["module"] = "mymod"
+        self.static = root / "static.json"
+        self.static.write_text(json.dumps(st), encoding="utf-8")
+        self.out = root / "out.json"
+
+    def path(self, ver, browser):
+        return pl.history_path(self.rep, "mymod", ver, browser)
+
+    def add(self, ver, browser, rec=None, **kw):
+        rec = rec if rec is not None else _rec(ver, browser, self.fp, **kw)
+        pl.append_record(self.path(ver, browser), rec)
+
+    def fail(self, ver, browser, **kw):
+        self.add(ver, browser, _fail(ver, browser, fp=self.fp, **kw))
+
+    def seed_all(self, versions=None, browsers=BR, **kw):
+        for v in versions or json.loads(self.static.read_text())["versions"]:
+            for b in browsers:
+                self.add(v, b, **kw)
+
+    def run(self, *extra, require="static,e2e", config=True):
+        if self.out.exists():
+            self.out.unlink()
+        args = ["--static", str(self.static), "--reports-dir", str(self.rep),
+                "--module", str(self.m), "-o", str(self.out), *extra]
+        if config:
+            args += ["--config", self.cfg]
+        if require:
+            args += ["--require", require]
+        rc, err = _run_main(args)
+        out = json.loads(self.out.read_text(encoding="utf-8")) if self.out.exists() else None
+        return rc, err, out
 
 
 def main():
@@ -248,96 +382,136 @@ def main():
     ok &= check("'versions' string (bukan list) -> pelanggaran (iterasi per-karakter dicegah)",
                 len(n_str) == 1 and "harus list" in n_str[0])
 
-    # --- Lapis 4 (E2E) — semantik konklusif-memblok, flaky-tak-memblok ---
+    # --- Lapis 4 (E2E) — histori per sel; record terpilih = gate-grade terbaru, else terbaru ---
 
-    # 9. E2E skipped (Playwright/Docker absen) -> tak memblok, tak konklusif
-    e2e_skip = {"module": "m", "e2e_available": False, "status": "skipped",
-                "reason": "Playwright tak terpasang", "versions": {}}
-    r = mod.merge_version("8.1", static, None, None, e2e_skip)
-    ok &= check("e2e skipped tak memblok versi bersih", r["pass"])
-    ok &= check("e2e skipped -> state skipped, e2e_conclusive False",
-                r["layers"]["e2e"]["state"] == "skipped" and not r["e2e_conclusive"])
+    # 9. Tanpa histori sama sekali -> tiap sel `missing`: tak memblok, tak konklusif
+    r = _merge("8.1", static)
+    ok &= check("e2e tanpa histori -> inconclusive 'missing', tak memblok, tak konklusif",
+                r["pass"] and r["e2e_state"] == "inconclusive" and r["reason"] == "missing"
+                and not r["e2e_conclusive"])
+    ok &= check("e2e tanpa histori -> inconclusive_note menyebut kedua sel + alasannya",
+                "8.1:chromium (missing)" in r["layers"]["e2e"].get("inconclusive_note", "")
+                and "8.1:firefox (missing)" in r["layers"]["e2e"]["inconclusive_note"])
 
-    # 9b. E2E skipped_browser (binary belum di-install) -> tak konklusif, tak memblok
-    e2e_nobrowser = {"module": "m", "e2e_available": True, "status": "ran",
-                     "versions": {"8.1": {"version": "8.1", "install": {"ok": True}, "browsers": [],
-                                          "findings": [], "errors": [], "skipped_browser": True,
-                                          "pass": False}}}
-    r = mod.merge_version("8.1", static, None, None, e2e_nobrowser)
-    ok &= check("e2e skipped_browser tak memblok", r["pass"])
-    ok &= check("e2e skipped_browser -> not_conclusive",
-                r["layers"]["e2e"]["state"] == "not_conclusive" and not r["e2e_conclusive"])
+    # 9b. Infra (container tak healthy, install null) -> record inconclusive: tak memblok
+    infra = {b: [_rec("8.1", b, state="inconclusive", conclusive=False, reason="errors",
+                      errors=["flashlight tak jadi 'healthy' (timeout)"], install=None,
+                      phase_durations={}, findings=None, authored_assertions=None)]
+             for b in BR}
+    r = _merge("8.1", static, infra)
+    ok &= check("e2e infra-fail tak memblok (degrade jujur), tak konklusif",
+                r["pass"] and not r["e2e_conclusive"] and r["e2e_state"] == "inconclusive"
+                and r["reason"] == "inconclusive")
 
-    # 9c. E2E infra (container tak healthy) -> tak konklusif, tak memblok
-    e2e_infra = {"module": "m", "e2e_available": True, "status": "ran",
-                 "versions": {"8.1": {"version": "8.1", "install": None, "browsers": [],
-                                      "findings": [], "errors": ["flashlight tak jadi 'healthy' (timeout)"],
-                                      "pass": False}}}
-    r = mod.merge_version("8.1", static, None, None, e2e_infra)
-    ok &= check("e2e infra-fail tak memblok (degrade jujur)", r["pass"] and not r["e2e_conclusive"])
+    # 10b. Gate-grade fail TANPA temuan ERROR terbaca -> tetap memblok (state rekaman memvonis)
+    r = _merge("8.1", static, {"chromium": [_rec("8.1", "chromium", state="fail",
+                                                  findings=[{"severity": "warning"}, "rusak"])],
+                               "firefox": [_rec("8.1", "firefox")]})
+    ok &= check("e2e gate-grade fail tanpa temuan ERROR -> tetap memblok (bukan pass)",
+                not r["pass"] and r["e2e_state"] == "fail"
+                and any(f["id"] == "e2e-fail" for f in r["blocking"]))
 
-    # 9d. E2E install gagal -> tak konklusif di E2E (Lapis 2 yang memvonis install)
-    e2e_noinstall = {"module": "m", "e2e_available": True, "status": "ran",
-                     "versions": {"8.1": {"version": "8.1", "install": {"ok": False}, "browsers": [],
-                                          "findings": [], "errors": ["module gagal install"], "pass": False}}}
-    r = mod.merge_version("8.1", static, None, None, e2e_noinstall)
-    ok &= check("e2e install-fail -> not_conclusive di E2E (tak memblok ganda)",
-                r["pass"] and r["layers"]["e2e"]["state"] == "not_conclusive")
+    # 10. Gate-grade fail -> MEMBLOK versi itu, reason literal `fail`
+    r = _merge("8.1", static, {"chromium": [_fail("8.1", "chromium")],
+                               "firefox": [_rec("8.1", "firefox")]})
+    ok &= check("e2e gate-grade fail -> memblok & konklusif",
+                not r["pass"] and r["e2e_conclusive"] and r["e2e_state"] == "fail"
+                and r["reason"] == "fail")
+    ok &= check("e2e temuan masuk blocking sebagai source e2e (ber-browser)",
+                any(f.get("source") == "e2e" and f.get("browser") == "chromium"
+                    for f in r["blocking"]))
+    ok &= check("e2e temuan versi 8.1 TAK bocor ke 9.1 (sel 9.1 tanpa histori)",
+                _merge("9.1", static)["pass"])
 
-    # 10. E2E KONKLUSIF + assertion gagal -> MEMBLOK versi itu
-    e2e_fail = {"module": "m", "e2e_available": True, "status": "ran",
-                "versions": {"8.1": {"version": "8.1", "install": {"ok": True},
-                                     "browsers": ["chromium", "firefox"],
-                                     "findings": [{"id": "e2e-smoke-expect_no_fatal", "severity": "error",
-                                                   "message": "[chromium/psm-universal-smoke] fatal FO",
-                                                   "location": "fo", "versions": ["8.1"]}],
-                                     "inconclusive": [], "errors": [], "pass": False}}}
-    r = mod.merge_version("8.1", static, None, None, e2e_fail)
-    ok &= check("e2e konklusif + fatal -> memblok", not r["pass"] and r["e2e_conclusive"])
-    ok &= check("e2e temuan masuk blocking sebagai source e2e",
-                any(f.get("source") == "e2e" for f in r["blocking"]))
-    r91 = mod.merge_version("9.1", static, None, None, e2e_fail)
-    ok &= check("e2e temuan versi 8.1 TAK bocor ke 9.1 (versi tak ada -> skipped)", r91["pass"])
+    # 10a. Temuan record NON-gate-grade (partial / warm / basi) TAK memblok — hanya tampil
+    # di e2e_cells. Kalau tidak, run parsial yang dipersempit memvonis seluruh versi.
+    part = {"chromium": [_fail("8.1", "chromium", scenario_set="partial")],
+            "firefox": [_rec("8.1", "firefox")]}
+    r = _merge("8.1", static, part)
+    ent = mod.e2e_cell_entry(_row("8.1", part)["chromium"])
+    ok &= check("temuan record partial tak memblok (pass True, e2e_state bukan fail)",
+                r["pass"] and r["layers"]["e2e"]["findings"] == [] and r["e2e_state"] == "inconclusive")
+    ok &= check("temuan record partial tetap tampil di e2e_cells (gate_grade False)",
+                ent["gate_grade"] is False and len(ent["findings"]) == 1 and ent["state"] == "fail")
+    stale = {"chromium": [_fail("8.1", "chromium", fp="lama" * 16)],
+             "firefox": [_rec("8.1", "firefox")]}
+    r = _merge("8.1", static, stale)
+    ok &= check("fail BASI tak memblok, alasan sel = stale-fail (bukan stale-source)",
+                r["pass"] and r["e2e_state"] == "inconclusive" and r["reason"] == "stale-fail")
 
-    # 10b. E2E konklusif bersih -> lolos & konklusif; inconclusive_note bila login BO gagal
-    e2e_clean = {"module": "m", "e2e_available": True, "status": "ran",
-                 "versions": {"8.1": {"version": "8.1", "install": {"ok": True},
-                                      "browsers": ["chromium"], "findings": [],
-                                      "inconclusive": [{"browser": "chromium", "scenario": "psm-universal-smoke",
-                                                        "action": "expect_no_fatal", "message": "BO"}],
-                                      "errors": [], "pass": True}}}
-    r = mod.merge_version("8.1", static, None, None, e2e_clean)
-    ok &= check("e2e bersih konklusif -> lolos & e2e_conclusive True", r["pass"] and r["e2e_conclusive"])
-    ok &= check("e2e inconclusive (login BO gagal) -> catatan, tak memblok",
-                "inconclusive_note" in r["layers"]["e2e"])
+    # 10b. Pass gate-grade dgn assertion tak konklusif (login BO gagal) -> note, tak memblok
+    inc = _both("8.1")
+    inc["chromium"] = [_rec("8.1", "chromium", inconclusive=[
+        {"browser": "chromium", "scenario": "psm-universal-smoke", "action": "expect_text",
+         "step": 2, "message": "BO", "location": "bo"}])]
+    r = _merge("8.1", static, inc)
+    ok &= check("e2e inconclusive-steps -> konklusif & lolos, tapi note + reason inconclusive-steps",
+                r["pass"] and r["e2e_conclusive"]
+                and "inconclusive-steps" in r["layers"]["e2e"].get("inconclusive_note", "")
+                and r["reason"] == "inconclusive-steps")
 
-    # 10c. REGRESI false-pass (determinism-1/enhancement-1): satu browser MEMBLOK sementara
-    # co-tenant gagal luncur -> temuan konklusif TETAP memblok (browser_notes tak membatalkan).
-    e2e_mixed = {"module": "m", "e2e_available": True, "status": "ran",
-                 "scenario_notes": [],
-                 "versions": {"8.1": {"version": "8.1", "install": {"ok": True},
-                                      "browsers": ["chromium"],  # firefox gagal luncur
-                                      "findings": [{"id": "e2e-smoke-expect_no_fatal", "severity": "error",
-                                                    "message": "[chromium/smoke] fatal FO", "location": "fo",
-                                                    "versions": ["8.1"]}],
-                                      "inconclusive": [],
-                                      "browser_notes": ["browser firefox gagal diluncurkan: boom"],
-                                      "errors": [], "skipped_browser": False, "pass": False}}}
-    r = mod.merge_version("8.1", static, None, None, e2e_mixed)
+    # 10c. REGRESI false-pass: satu browser MEMBLOK sementara co-tenant gagal luncur -> temuan
+    # konklusif TETAP memblok (browser lain yang inconclusive tak membatalkannya).
+    mixed = {"chromium": [_fail("8.1", "chromium")],
+             "firefox": [_rec("8.1", "firefox", state="inconclusive", conclusive=False,
+                              reason="launch-error", launch_error="firefox: boom",
+                              phase_durations={})]}
+    r = _merge("8.1", static, mixed)
     ok &= check("browser co-tenant gagal luncur TAK membatalkan temuan konklusif (fix false-pass)",
-                not r["pass"] and r["e2e_conclusive"] and r["layers"]["e2e"]["state"] == "fail")
-    ok &= check("coverage browser gagal disurface sbg inconclusive_note (tak memblok)",
-                "firefox" in r["layers"]["e2e"].get("inconclusive_note", ""))
+                not r["pass"] and r["e2e_state"] == "fail"
+                and r["layers"]["e2e"]["state"] == "fail")
+    ok &= check("sel co-tenant yang gagal luncur disurface di inconclusive_note",
+                "8.1:firefox (inconclusive)" in r["layers"]["e2e"].get("inconclusive_note", ""))
 
-    # 10d. spec authored rusak (scenario_notes) disurface di note walau versi lolos bersih
-    e2e_specnote = {"module": "m", "e2e_available": True, "status": "ran",
-                    "scenario_notes": ["checkout.json: tak ada 'steps' list — dilewati"],
-                    "versions": {"8.1": {"version": "8.1", "install": {"ok": True}, "browsers": ["chromium"],
-                                         "findings": [], "inconclusive": [], "browser_notes": [],
-                                         "errors": [], "pass": True}}}
-    r = mod.merge_version("8.1", static, None, None, e2e_specnote)
-    ok &= check("scenario_notes (spec authored dilewati) disurface di note walau lolos",
-                r["pass"] and "checkout.json" in r["layers"]["e2e"].get("inconclusive_note", ""))
+    # 10d. Spec authored rusak (scenario_notes) di record -> note, ready jatuh, tak memblok
+    sn = _both("8.1")
+    sn["chromium"] = [_rec("8.1", "chromium", scenario_notes=["checkout.json: tak ada 'steps'"])]
+    r = _merge("8.1", static, sn)
+    ok &= check("scenario_notes di record -> reason scenario-notes di note walau lolos",
+                r["pass"] and "8.1:chromium (scenario-notes)"
+                in r["layers"]["e2e"].get("inconclusive_note", ""))
+    r_ng = _merge("8.1", static, sn, notes=["checkout.json: tak ada 'steps'"])
+    ok &= check("scenario_notes SAMA dgn notes module sekarang -> not-gradeable (tak pernah ready)",
+                "8.1:chromium (not-gradeable)" in r_ng["layers"]["e2e"].get("inconclusive_note", "")
+                and mod.compute_ready({"8.1": r_ng}, ["static", "e2e"]) is False)
+
+    # 10e. Record pass/fail yang field wajibnya null -> incomplete-record (state inconclusive)
+    inc_rec = _both("8.1")
+    inc_rec["firefox"] = [_rec("8.1", "firefox", session=None)]
+    ent = mod.e2e_cell_entry(_row("8.1", inc_rec)["firefox"])
+    ok &= check("pass tanpa `session` -> e2e_cells state inconclusive, tak gate-grade",
+                ent["state"] == "inconclusive" and ent["gate_grade"] is False
+                and ent["reason"] == "inconclusive")
+
+    # 10f. Newer fail (I/O matrix): pass lalu fail di fingerprint sama -> fail menang
+    nf = {"chromium": [_rec("8.1", "chromium"), _fail("8.1", "chromium")],
+          "firefox": [_rec("8.1", "firefox")]}
+    r = _merge("8.1", static, nf)
+    ok &= check("Newer fail: pass lalu fail -> reason fail, tak siap",
+                r["reason"] == "fail" and mod.e2e_cell_entry(_row("8.1", nf)["chromium"])["reason"]
+                == "fail" and mod.compute_ready({"8.1": r}, ["static", "e2e"]) is False)
+    fp_ = {"chromium": [_fail("8.1", "chromium"), _rec("8.1", "chromium")],
+           "firefox": [_rec("8.1", "firefox")]}
+    ok &= check("kontrol: fail lalu pass -> sel punya bukti lulus, siap",
+                mod.compute_ready({"8.1": _merge("8.1", static, fp_)}, ["static", "e2e"]) is True)
+
+    # 10g. warm/partial/not-run: tak pernah gate-grade, tak menyembunyikan record lebih tua
+    wpn = {"chromium": [_rec("8.1", "chromium"), _rec("8.1", "chromium", boot="warm")],
+           "firefox": [_rec("8.1", "firefox"),
+                       _rec("8.1", "firefox", state="not-run", conclusive=False,
+                            reason="fail-fast after 8.1:chromium", install=None,
+                            phase_durations={}, findings=None, authored_assertions=None)]}
+    r = _merge("8.1", static, wpn)
+    ok &= check("warm & not-run yang lebih baru tak menyembunyikan pass gate-grade lama -> siap",
+                r["e2e_state"] == "pass" and r["reason"] is None
+                and mod.compute_ready({"8.1": r}, ["static", "e2e"]) is True)
+    only = {"chromium": [_rec("8.1", "chromium", boot="warm")],
+            "firefox": [_rec("8.1", "firefox", scenario_set="partial")]}
+    row_only = _row("8.1", only)
+    ok &= check("hanya warm -> warm-only; hanya partial -> partial (tak pernah gate-grade)",
+                row_only["chromium"]["reason"] == "warm-only"
+                and row_only["firefox"]["reason"] == "partial"
+                and not row_only["chromium"]["gate_grade"] and not row_only["firefox"]["gate_grade"])
 
     def _flash_cs(cs):
         # `coverage_ok` ditambahkan seperti produsen sehat (canary terdeteksi) kecuali test
@@ -387,8 +561,9 @@ def main():
         with tempfile.TemporaryDirectory() as td:
             sp, op = Path(td) / "s.json", Path(td) / "o.json"
             sp.write_text(json.dumps(static), encoding="utf-8")
+            cfg = _write_cfg(Path(td) / "c.json", ",".join(TV))
             r = subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp),
-                                "--versions", "8.1", "-o", str(op), *args_extra],
+                                "--config", cfg, "-o", str(op), *args_extra],
                                capture_output=True, text=True)
             out = json.loads(op.read_text(encoding="utf-8")) if op.exists() else None
             return r.returncode, r.stderr, out
@@ -412,51 +587,78 @@ def main():
         ok &= check(f"CLI --require {degen!r} (kosong sesudah filter) -> exit 2, bukan ready atas nol lapis",
                     rc == 2 and out is None and "tak menyebut satu lapis pun" in err)
 
-    # 11. e2e_layer langsung: skipped -> findings kosong
-    ok &= check("e2e_layer skipped -> findings kosong", mod.e2e_layer(e2e_skip, "8.1")["findings"] == [])
+    # 11. e2e_layer langsung: tanpa bukti -> findings kosong, tak konklusif
+    lay_none = mod.e2e_layer(None, "8.1", BR)
+    ok &= check("e2e_layer tanpa histori -> findings kosong & tak konklusif",
+                lay_none["findings"] == [] and lay_none["conclusive"] is False
+                and lay_none["state"] == "inconclusive")
+    ok &= check("e2e_layer tanpa browser terkonfigurasi -> tak pernah lolos vakum",
+                mod.e2e_layer({}, "8.1", [])["conclusive"] is False
+                and mod.e2e_verdict({}, []) == ("inconclusive", "missing"))
 
-    # 12. Cakupan E2E disurface di vonis (enhancement-1) — lewat CLI, logikanya di main().
-    # Tanpa penanda ini, module TANPA spec authored (cuma smoke) bervonis identik dgn
-    # yang punya skenario use-case lengkap: "E2E konklusif lolos" terbaca lebih dari faktanya.
-    def _aggregate(e2e_payload, static_payload=static):
-        with tempfile.TemporaryDirectory() as td:
-            sp, ep, op = Path(td) / "s.json", Path(td) / "e.json", Path(td) / "o.json"
-            sp.write_text(json.dumps(static_payload), encoding="utf-8")
-            ep.write_text(json.dumps(e2e_payload), encoding="utf-8")
-            subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp), "--e2e", str(ep),
-                            "--versions", "8.1", "-o", str(op)], capture_output=True, text=True)
-            return json.loads(op.read_text(encoding="utf-8"))
+    # 12. Field top-level E2E dari record TERPILIH (e2e_summary) — cakupan jujur.
+    def _summary(cells_by_ver, browsers=BR, notes=()):
+        cells = {v: _row(v, c, notes) for v, c in cells_by_ver.items()}
+        return mod.e2e_summary(cells, list(cells_by_ver), browsers)
 
-    def _e2e_ran(sources, assertions=None):
-        """`assertions` default meniru produsen sehat: spec authored yang benar-benar
-        menegakkan sesuatu. Test yang menguji cabang spec-kosong menyetelnya eksplisit ke 0.
-        """
-        if assertions is None:
-            assertions = 3 if any(not s.startswith("builtin:") for s in sources) else 0
-        return {"module": "m", "e2e_available": True, "status": "ran",
-                "scenario_sources": sources, "browsers": ["chromium"], "browsers_available": ["chromium"],
-                "versions": {"8.1": {"version": "8.1", "install": {"ok": True},
-                                     "browsers": ["chromium"], "findings": [], "inconclusive": [],
-                                     "browser_notes": [], "errors": [], "pass": True,
-                                     "authored_assertions": assertions}}}
+    smoke = _summary({"8.1": _both("8.1", authored_assertions=0)})
+    ok &= check("E2E hanya smoke (authored 0 di semua record pass/fail) -> e2e_smoke_only True",
+                smoke["e2e_smoke_only"] is True)
+    authored = _summary({"8.1": _both("8.1")})
+    ok &= check("E2E dgn assertion authored -> e2e_smoke_only False",
+                authored["e2e_smoke_only"] is False)
+    ok &= check("tanpa record pass/fail -> e2e_smoke_only False (tak ada klaim cakupan)",
+                _summary({"8.1": {b: [] for b in BR}})["e2e_smoke_only"] is False)
+    ok &= check("e2e_browsers = terkonfigurasi; e2e_browsers_run = engine yang men-drive",
+                authored["e2e_browsers"] == BR and authored["e2e_browsers_run"] == BR)
+    chrom_only = _summary({"8.1": {"chromium": [_rec("8.1", "chromium")], "firefox": []}})
+    ok &= check("Chromium-only: e2e_browsers tetap kedua, e2e_browsers_run hanya chromium",
+                chrom_only["e2e_browsers"] == BR and chrom_only["e2e_browsers_run"] == ["chromium"])
+    notes_sum = _summary({"8.1": {"chromium": [_rec("8.1", "chromium", scenario_notes=["x.json: rusak"])],
+                                  "firefox": [_rec("8.1", "firefox", scenario_notes=["x.json: rusak"])]}})
+    ok &= check("e2e_scenario_notes dari record terpilih, tanpa duplikat",
+                notes_sum["e2e_scenario_notes"] == ["x.json: rusak"])
+    shots = _summary({"8.1": {
+        "chromium": [_rec("8.1", "chromium", screenshots=[
+            "/rep/e2e-shots/run-20261126-100000/8.1/chromium-s1-goto.png",
+            "/rep/e2e-shots/run-20261126-100000/8.1/chromium-s1-fail.png"])],
+        "firefox": [_rec("8.1", "firefox", screenshots=[
+            "/rep/e2e-shots/run-20261126-110000/8.1/firefox-s1-goto.png"])]}})
+    ok &= check("e2e_screenshot_dir = folder run berbeda dari record terpilih (list)",
+                shots["e2e_screenshot_dir"] == ["/rep/e2e-shots/run-20261126-100000",
+                                                "/rep/e2e-shots/run-20261126-110000"])
+    nr = _summary({"8.1": {"chromium": [_rec("8.1", "chromium"),
+                                        _rec("8.1", "chromium", state="not-run", conclusive=False,
+                                             reason="fail-fast after 9.1:chromium")],
+                           "firefox": [_rec("8.1", "firefox", state="not-run", conclusive=False,
+                                            reason="fail-fast after 9.1:chromium"),
+                                       _rec("8.1", "firefox")]}})
+    ok &= check("not_run_cells = sel yang record TERBARU-nya not-run (bukan yang lebih tua)",
+                nr["not_run_cells"] == [{"cell": "8.1:chromium",
+                                         "reason": "fail-fast after 9.1:chromium"}])
 
-    smoke = _aggregate(_e2e_ran(["builtin:psm-universal-smoke"]))
-    ok &= check("E2E hanya smoke -> e2e_smoke_only True (cakupan jujur, walau lolos)",
-                smoke["pass"] is True and smoke.get("e2e_smoke_only") is True)
-    authored = _aggregate(_e2e_ran(["builtin:psm-universal-smoke", "configure.json"]))
-    ok &= check("E2E dgn spec authored -> e2e_smoke_only False", authored.get("e2e_smoke_only") is False)
-    # enh-4 (ronde-6): e2e_scenario_sources DIHAPUS (echo nama file nol pembaca, tawarkan ulang
-    # premis struktural yang didiskreditkan). Cakupan authored dipikul e2e_smoke_only.
-    ok &= check("e2e_scenario_sources TAK lagi diemit (echo yatim dihapus)",
-                "e2e_scenario_sources" not in authored)
-    # det-4 (ronde-6): cakupan browser dipersempit DIREKAM di laporan (dulu model lapor dari
-    # ingatan percakapan; pemanggil headless buta). browsers diminta vs browsers_available jalan.
-    ok &= check("e2e_browsers/e2e_browsers_run di-echo top-level (penyempitan terekam, bukan diingat)",
-                authored.get("e2e_browsers") == ["chromium"]
-                and authored.get("e2e_browsers_run") == ["chromium"])
-    noe2e = _aggregate(e2e_skip)
-    ok &= check("E2E tak jalan -> tak ada klaim cakupan sama sekali",
-                "e2e_smoke_only" not in noe2e)
+    # e2e_phase_durations: tiap boot_id (keeper_boot termasuk) sekali; boot_id null tak menambah.
+    pd = _summary({
+        "8.1": {"chromium": [_rec("8.1", "chromium", boot_id="B1", boot_wall_clock=400.0)],
+                "firefox": [_rec("8.1", "firefox", boot_id="B1", boot_wall_clock=400.0,
+                                 wall_clock=111.0,
+                                 keeper_boot={"boot_id": "K1", "boot_phases": {
+                                     "baseline": {"seconds": 5.0, "outcome": "ok"}},
+                                     "wall_clock": 900.0})]},
+        "9.1": {"chromium": [_rec("9.1", "chromium", boot_id=None)],
+                "firefox": [_rec("9.1", "firefox", boot_id="B2", boot_wall_clock=50.0)]}},
+        )["e2e_phase_durations"]
+    ok &= check("phase durations: boot_id sama dihitung sekali + keeper_boot ikut",
+                sorted(pd["8.1"]["boots"]) == ["B1", "K1"]
+                and pd["8.1"]["boots"]["B1"]["wall_clock"] == 400.0
+                and pd["8.1"]["boots"]["K1"]["wall_clock"] == 900.0
+                and "baseline" in pd["8.1"]["boots"]["K1"]["phases"])
+    ok &= check("phase durations: browsers[...] = phase_durations + wall_clock sel",
+                pd["8.1"]["browsers"]["firefox"]["wall_clock"] == 111.0
+                and "browser:firefox" in pd["8.1"]["browsers"]["firefox"]["phases"]
+                and "pull" in pd["8.1"]["boots"]["B1"]["phases"])
+    ok &= check("phase durations: record ber-boot_id null tak menambah boots",
+                list(pd["9.1"]["boots"]) == ["B2"] and len(pd["9.1"]["browsers"]) == 2)
 
     # 13. GERBANG CAKUPAN (analyze 2026-07-17-1024). Tiga sinyal "apakah ini benar-benar
     # diuji?" dihitung dengan benar lalu DIBUANG sebelum `ready` diputuskan. Satu kelas,
@@ -513,104 +715,62 @@ def main():
     ok &= check("skema: token ngawur tetap ditangkap walau cakupan luas",
                 len(n_typo) == 1 and "PS8" in n_typo[0])
 
-    # 13c. determinism-4: e2e_smoke_only dihitung lalu tak dibaca gerbang mana pun ->
-    # module yang perilakunya tak pernah diuji dapat hijau empat-lapis penuh.
-    e2e_smoke = _e2e_ran(["builtin:psm-universal-smoke"])
-    e2e_auth = _e2e_ran(["builtin:psm-universal-smoke", "configure.json"])
-    l_smoke = mod.e2e_layer(e2e_smoke, "8.1")
-    ok &= check("e2e smoke-only -> inconclusive_note (perilaku module tak teruji)",
-                "tak teruji" in l_smoke.get("inconclusive_note", ""))
-    ok &= check("e2e dgn spec authored -> tanpa catatan smoke-only",
-                "tak teruji" not in mod.e2e_layer(e2e_auth, "8.1").get("inconclusive_note", ""))
-    ready_smoke = mod.compute_ready(
-        {"8.1": mod.merge_version("8.1", static, None, None, e2e_smoke)}, ["static", "e2e"])
+    # 13c. determinism-4: smoke-only (nol assertion authored) MENJATUHKAN ready — per sel
+    # sekarang: not-gradeable tak pernah dihitung sbg bukti lulus.
+    c_smoke = _both("8.1", authored_assertions=0)
+    c_auth = _both("8.1")
+    l_smoke = mod.e2e_layer(_row("8.1", c_smoke), "8.1", BR)
+    ok &= check("e2e smoke-only -> inconclusive_note menyebut not-gradeable",
+                "not-gradeable" in l_smoke.get("inconclusive_note", ""))
+    ok &= check("e2e dgn assertion authored -> tanpa inconclusive_note",
+                "inconclusive_note" not in mod.e2e_layer(_row("8.1", c_auth), "8.1", BR))
     ok &= check("ready: E2E smoke-only -> False walau lapis konklusif & lolos",
-                l_smoke["conclusive"] is True and ready_smoke is False)
-    ok &= check("ready: E2E dgn skenario authored -> True",
-                mod.compute_ready({"8.1": mod.merge_version("8.1", static, None, None, e2e_auth)},
-                                  ["static", "e2e"]) is True)
+                l_smoke["conclusive"] is True
+                and mod.compute_ready({"8.1": _merge("8.1", static, c_smoke)},
+                                      ["static", "e2e"]) is False)
+    ok &= check("ready: E2E dgn assertion authored di semua sel -> True",
+                mod.compute_ready({"8.1": _merge("8.1", static, c_auth)}, ["static", "e2e"]) is True)
     ok &= check("e2e smoke-only tetap TAK memblok (`pass` buta konklusivitas)",
-                mod.merge_version("8.1", static, None, None, e2e_smoke)["pass"] is True)
-    # Insentif terbalik yang direproduksi lensa: MENGHAPUS spec yang rusak dulu membalik
-    # ready False -> True, jadi gerbangnya menghadiahi module yang tak punya uji sama sekali.
-    e2e_broken = _e2e_ran(["builtin:psm-universal-smoke"])
-    e2e_broken["scenario_notes"] = ["configure.json: JSON rusak — dilewati"]
-    ok &= check("hapus spec rusak TAK memperbaiki ready (insentif terbalik tutup)",
-                mod.compute_ready({"8.1": mod.merge_version("8.1", static, None, None, e2e_broken)},
-                                  ["static", "e2e"]) is False and ready_smoke is False)
-    ok &= check("is_smoke_only: satu definisi dipakai gerbang & field top-level",
-                mod.is_smoke_only(e2e_smoke, "8.1") is True
-                and mod.is_smoke_only(e2e_auth, "8.1") is False)
-
-    # 13c-bis. Keputusan user 2026-07-17: cakupan uji perilaku = ASSERTION YANG DINILAI,
-    # bukan FILE YANG ADA. Premis lama ("ada source bukan builtin:") dipuaskan spec berisi
-    # dua screenshot — nol assertion — jadi ready naik false->true karena sebuah FILE ada.
-    # Insentifnya terbalik: cara termurah dapat siap-rilis = menulis spec kosong.
-    e2e_empty_spec = _e2e_ran(["builtin:psm-universal-smoke", "trivial.json"], assertions=0)
-    ok &= check("spec authored TANPA assertion -> tetap smoke-only (dulu: ready true)",
-                mod.is_smoke_only(e2e_empty_spec, "8.1") is True
-                and "tak menegakkan apa pun" in
-                    mod.e2e_layer(e2e_empty_spec, "8.1").get("inconclusive_note", ""))
-    ok &= check("spec authored TANPA assertion -> ready False (insentif terbalik tutup)",
-                mod.compute_ready(
-                    {"8.1": mod.merge_version("8.1", static, None, None, e2e_empty_spec)},
-                    ["static", "e2e"]) is False)
+                _merge("8.1", static, c_smoke)["pass"] is True)
     ok &= check("satu assertion konklusif sudah cukup -> ready True (kontrol positif)",
-                mod.compute_ready(
-                    {"8.1": mod.merge_version("8.1", static, None, None,
-                                              _e2e_ran(["builtin:x", "s.json"], assertions=1))},
-                    ["static", "e2e"]) is True)
+                mod.compute_ready({"8.1": _merge("8.1", static, _both("8.1", authored_assertions=1))},
+                                  ["static", "e2e"]) is True)
     # Hitungan yang salah bentuk = cakupan tak diketahui, BUKAN nol dan BUKAN teruji.
     for bad in (None, "3", [], True, -1):
-        e2e_bad = _e2e_ran(["builtin:x", "s.json"], assertions=1)
-        if bad is None:
-            del e2e_bad["versions"]["8.1"]["authored_assertions"]
-        else:
-            e2e_bad["versions"]["8.1"]["authored_assertions"] = bad
-        ok &= check(f"authored_assertions={bad!r} -> tak bisa dipastikan, bukan teruji",
-                    "tak bisa dipastikan" in mod.e2e_layer(e2e_bad, "8.1").get("inconclusive_note", "")
-                    and mod.compute_ready(
-                        {"8.1": mod.merge_version("8.1", static, None, None, e2e_bad)},
-                        ["static", "e2e"]) is False)
+        cb = _both("8.1")
+        cb["chromium"] = [_rec("8.1", "chromium", authored_assertions=bad)]
+        ok &= check(f"authored_assertions={bad!r} -> sel tanpa bukti lulus, ready False",
+                    mod.compute_ready({"8.1": _merge("8.1", static, cb)}, ["static", "e2e"]) is False)
 
-    # 13e. Error console = OBSERVASI, bukan celah cakupan (ditemukan saat run container NYATA:
-    # module & spec identik menghasilkan ready=true saat console_errors=0 lalu ready=false saat
-    # =3, karena rollup-nya dulu masuk browser_notes -> inconclusive_note -> compute_ready).
-    # `ready` yang bergantung pada berisik-tidaknya skrip pihak-ketiga bukan ketegasan.
-    e2e_noisy = _e2e_ran(["builtin:smoke", "configure.json"])
-    e2e_noisy["versions"]["8.1"]["console_errors"] = 3
-    l_noisy = mod.e2e_layer(e2e_noisy, "8.1")
+    # 13e. Error console = OBSERVASI (advisory), bukan celah cakupan: `ready` tak boleh
+    # bergantung pada berisik-tidaknya skrip pihak-ketiga.
+    c_noisy = _both("8.1", console_errors=3)
+    l_noisy = mod.e2e_layer(_row("8.1", c_noisy), "8.1", BR)
     ok &= check("error console -> advisory_note, BUKAN inconclusive_note",
                 "advisory_note" in l_noisy and "inconclusive_note" not in l_noisy)
-    ok &= check("error console TIDAK menjatuhkan ready (deterministik atas kode yang sama)",
-                mod.compute_ready({"8.1": mod.merge_version("8.1", static, None, None, e2e_noisy)},
-                                  ["static", "e2e"]) is True)
-    e2e_quiet = _e2e_ran(["builtin:smoke", "configure.json"])
     ok &= check("toko diam vs toko berisik -> ready SAMA (0 dan 3 error console)",
-                mod.compute_ready({"8.1": mod.merge_version("8.1", static, None, None, e2e_quiet)},
-                                  ["static", "e2e"])
-                is mod.compute_ready({"8.1": mod.merge_version("8.1", static, None, None, e2e_noisy)},
-                                     ["static", "e2e"]))
-    ok &= check("advisory tetap dilaporkan (bukan sinyal yatim) & menyebut cara menegakkannya",
-                "3" in l_noisy["advisory_note"] and "expect_no_console_error" in l_noisy["advisory_note"])
-    # Celah cakupan SUNGGUHAN di browser_notes tetap menjatuhkan ready — kanal itu tak dilemahkan.
-    e2e_gap = _e2e_ran(["builtin:smoke", "configure.json"])
-    e2e_gap["versions"]["8.1"]["browser_notes"] = ["engine tak dijalankan: firefox"]
-    ok &= check("celah cakupan browser TETAP menjatuhkan ready (kanal cakupan utuh)",
-                "inconclusive_note" in mod.e2e_layer(e2e_gap, "8.1")
-                and mod.compute_ready({"8.1": mod.merge_version("8.1", static, None, None, e2e_gap)},
-                                      ["static", "e2e"]) is False)
+                mod.compute_ready({"8.1": _merge("8.1", static, c_noisy)}, ["static", "e2e"])
+                is mod.compute_ready({"8.1": _merge("8.1", static, c_auth)}, ["static", "e2e"])
+                is True)
+    ok &= check("advisory menjumlah sel & menyebut cara menegakkannya",
+                "6" in l_noisy["advisory_note"] and "expect_no_console_error" in l_noisy["advisory_note"])
+    # Celah cakupan SUNGGUHAN di browser_notes tetap menjatuhkan ready.
+    c_gap = _both("8.1")
+    c_gap["firefox"] = [_rec("8.1", "firefox", browser_notes=["engine tak dijalankan: firefox"])]
+    ok &= check("browser_notes -> reason browser-notes & ready jatuh (kanal cakupan utuh)",
+                "browser-notes" in mod.e2e_layer(_row("8.1", c_gap), "8.1", BR).get("inconclusive_note", "")
+                and mod.compute_ready({"8.1": _merge("8.1", static, c_gap)}, ["static", "e2e"]) is False)
 
-    # 13d. determinism-6: versi target yang static-scan tak pernah pindai dulu pass=true &
-    # exit 0 — ketiadaan bukti terbaca sebagai lolos. Lewat CLI: gerbangnya ada di main().
-    def _cli_versions(static_payload, versions):
+    # 13d. determinism-6 (dikonversi, cell-contract > Aggregate): versi TERKONFIGURASI yang tak
+    # ada di hasil static = belum terbukti (tak konklusif, ready false), BUKAN input error.
+    def _cli_versions(static_payload, versions, *extra):
         with tempfile.TemporaryDirectory() as td:
             sp, op = Path(td) / "s.json", Path(td) / "o.json"
             sp.write_text(json.dumps(static_payload), encoding="utf-8")
-            r = subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp),
-                                "--versions", versions, "-o", str(op)],
-                               capture_output=True, text=True)
-            return r.returncode, r.stderr
+            cfg = _write_cfg(Path(td) / "c.json", versions)
+            rc, err = _run_main(["--static", str(sp), "--config", cfg, "-o", str(op),
+                                 "--require", "static", *extra])
+            return rc, err, (json.loads(op.read_text(encoding="utf-8")) if op.exists() else None)
 
     # Sibling absen (verifier adversarial): exec_module dulu meledak jadi traceback exit 1 —
     # kode yang SAMA dengan "module gagal validasi", jadi CI tak bisa membedakan folder
@@ -624,11 +784,26 @@ def main():
                 rc_sib == 2)
 
     static81 = static_result({"8.1": []})
-    rc, err = _cli_versions(static81, "1.7.8,8.1,9.1")
-    ok &= check("versi target tak dipindai static -> exit 2 (dulu pass=true exit 0)",
-                rc == 2 and "1.7.8" in err and "9.1" in err and "Traceback" not in err)
-    rc, _ = _cli_versions(static81, "8.1")
-    ok &= check("versi target sepenuhnya terpindai -> jalan normal", rc == 0)
+    rc, err, out = _cli_versions(static81, "1.7.8,8.1,9.1")
+    ok &= check("versi terkonfigurasi tak dipindai static -> exit != 2, tak konklusif, ready False",
+                rc != 2 and out is not None and out["ready"] is False
+                and out["versions"]["9.1"]["layers"]["static"]["conclusive"] is False
+                and out["versions"]["9.1"]["ready"] is False
+                and out["versions"]["8.1"]["ready"] is True and "Traceback" not in err)
+    rc, _, out = _cli_versions(static81, "8.1")
+    ok &= check("versi target sepenuhnya terpindai -> jalan normal & ready",
+                rc == 0 and out["ready"] is True and out["target_versions"] == ["8.1"])
+    rc, err, _ = _cli_versions(static81, "8.1", "--versions", "8.1,9.1")
+    ok &= check("--versions beda dari psm_target_versions -> exit 2 menyebut keduanya",
+                rc == 2 and "8.1,9.1" in err and "terkonfigurasi" in err)
+    rc, _, out = _cli_versions(static_result({v: [] for v in TV}), "9.1,1.7.8,8.1",
+                               "--versions", "8.1, 9.1,1.7.8")
+    ok &= check("--versions sama sbg himpunan (urutan/spasi beda) -> diterima, urut numerik",
+                rc == 0 and out["target_versions"] == ["1.7.8", "8.1", "9.1"])
+    for bad_cfg in ("", "9.1,9.1.0", "nine"):
+        rc, err, _ = _cli_versions(static81, bad_cfg)
+        ok &= check(f"psm_target_versions {bad_cfg!r} tak sah (kosong/setara/bukan digit) -> exit 2",
+                    rc == 2 and "Traceback" not in err)
 
     # 13d. CANARY phpstan (keputusan user 2026-07-17, opsi 1): laporan JSON phpstan tak bisa
     # membedakan "bersih" dari "tak menganalisis apa-apa" (map `files` cuma memuat file
@@ -742,14 +917,16 @@ def main():
     # satu tingkat di bawah; seam ini dulu tak punya coverage sama sekali.
     ok &= check("compute_ready atas nol versi -> False (dibaca skill sibling, bukan cuma CLI)",
                 mod.compute_ready({}, list(mod.LAYERS)) is False)
-    with tempfile.TemporaryDirectory() as td:
-        sp = Path(td) / "s.json"
-        sp.write_text(json.dumps({"module": "m", "main_file_found": True,
-                                  "versions": {}, "pass": True}), encoding="utf-8")
-        r = subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp)],
-                           capture_output=True, text=True)
-    ok &= check("static tanpa satu versi pun -> exit 2 (dulu ready=true exit 0)",
-                r.returncode == 2 and "nol versi" in r.stderr and "Traceback" not in r.stderr)
+    # Dikonversi (cell-contract > Aggregate): static tanpa satu versi pun = versi terkonfigurasi
+    # belum terbukti — tak konklusif & ready false, bukan exit 2. Daftar terkonfigurasi KOSONG
+    # tetap exit 2 (normalizer), lihat 13d.
+    rc, err, out = _cli_versions({"module": "m", "main_file_found": True, "versions": {},
+                                  "pass": True}, "1.7.8,8.1,9.1")
+    ok &= check("static tanpa satu versi pun -> exit != 2, tiap versi tak konklusif, ready False",
+                rc != 2 and out is not None and out["ready"] is False
+                and all(m["layers"]["static"]["conclusive"] is False
+                        for m in out["versions"].values())
+                and sorted(out["versions"]) == sorted(TV) and "Traceback" not in err)
 
     # 16. Refutasi verifier atas fix ronde-5 sendiri. (a) static_layer dulu tetap pin
     # `conclusive: True` sementara docstring-nya bilang cakupan sudah DIHITUNG — objek yang
@@ -782,8 +959,9 @@ def main():
         with tempfile.TemporaryDirectory() as td:
             sp = Path(td) / "s.json"
             sp.write_text(json.dumps(payload), encoding="utf-8")
+            cfg = _write_cfg(Path(td) / "c.json", "8.1")
             p = subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp),
-                                "--versions", "8.1", "--require", "static"],
+                                "--config", cfg, "--require", "static"],
                                capture_output=True, text=True)
             return p.returncode, p.stderr
     malformed = {
@@ -809,8 +987,9 @@ def main():
     with tempfile.TemporaryDirectory() as td:
         sp, op = Path(td) / "s.json", Path(td) / "o.json"
         sp.write_text(json.dumps(st3), encoding="utf-8")
-        subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp), "--versions",
-                        "1.7.8,8.1,9.1", "--require", "static", "-o", str(op)],
+        cfg = _write_cfg(Path(td) / "c.json", "1.7.8,8.1,9.1")
+        subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp), "--config", cfg,
+                        "--versions", "1.7.8,8.1,9.1", "--require", "static", "-o", str(op)],
                        capture_output=True, text=True)
         v3 = json.loads(op.read_text(encoding="utf-8"))
     ok &= check("`ready` per-versi diemit (kontrak 3 sibling akhirnya bisa dinyatakan)",
@@ -836,14 +1015,13 @@ def main():
     # atas versi yang nol aturan pernah menyentuhnya, dan satu-satunya yang mencatatnya
     # (`conclusive` per-versi) tak dibaca gerbang mana pun.
     st_nobase = static_result({"8.1": []}, rules_evaluated=0)
-    m_nb = mod.merge_version("8.1", st_nobase, None, None, _e2e_ran(["builtin:x", "s.json"]))
+    m_nb = _merge("8.1", st_nobase, _both("8.1"))
     ok &= check("versi tanpa vonis DASAR -> tak siap walau lapis yang diwajibkan konklusif",
                 m_nb["conclusive"] is False
                 and mod.version_ready(m_nb, ["e2e"]) is False
                 and mod.compute_ready({"8.1": m_nb}, ["e2e"]) is False)
     ok &= check("versi ber-vonis dasar & lapis wajib konklusif -> siap (gerbang tak kelebihan sapu)",
-                mod.version_ready(mod.merge_version("8.1", static, None, None,
-                                                    _e2e_ran(["builtin:x", "s.json"])), ["e2e"]) is True)
+                mod.version_ready(_merge("8.1", static, _both("8.1")), ["e2e"]) is True)
 
     # 18. Sinyal yatim sisa dari inventaris: bukti ditangkap lalu menganggur di file lapis
     # sementara vonisnya menyuruh operator mencarinya sendiri.
@@ -855,13 +1033,15 @@ def main():
     l_boot = mod.flashlight_layer(fl_boot, "8.1")
     ok &= check("boot_log ikut ke alasan tak-konklusif (kegagalan boot paling sulit didiagnosis)",
                 l_boot["conclusive"] is False and "bind() to 0.0.0.0:80" in l_boot["reason"])
-    e2e_boot = {"module": "m", "e2e_available": True, "status": "ran",
-                "versions": {"8.1": {"version": "8.1", "errors": ["container tak healthy"],
-                                     "boot_log": "php-fpm: gagal start", "install": {"ok": False},
-                                     "browsers": [], "findings": [], "inconclusive": [],
-                                     "browser_notes": []}}}
-    ok &= check("boot_log Lapis 4 juga terikat (kelas ditutup di KEDUA situs, bukan satu)",
-                "php-fpm: gagal start" in mod.e2e_layer(e2e_boot, "8.1")["reason"])
+    e2e_boot = {b: [_rec("8.1", b, state="inconclusive", conclusive=False, reason="errors",
+                         errors=["container tak healthy"], boot_log="php-fpm: gagal start",
+                         install=None, phase_durations={}, findings=None,
+                         authored_assertions=None)] for b in BR}
+    m_boot = _merge("8.1", static, e2e_boot)
+    ok &= check("boot_log Lapis 4 juga terikat (ekor log ikut ke reason layers.e2e)",
+                "php-fpm: gagal start" in m_boot["layers"]["e2e"]["reason"])
+    ok &= check("reason per-versi tetap nilai kontrak murni (tanpa ekor log)",
+                m_boot["reason"] == "inconclusive" and m_boot["e2e_state"] == "inconclusive")
     fl_ifail = _flash_cs({"available": False})
     fl_ifail["versions"]["8.1"]["install"] = {"ok": False, "no_console": False, "no_psroot": False,
                                               "no_verdict": False,
@@ -897,11 +1077,12 @@ def main():
         l_ok = mod.flashlight_layer(fl_ok, "8.1")
         ok &= check(f"install.ok salah-tipe {bad!r} -> infra tak-konklusif, BUKAN pass/memblok",
                     l_ok["conclusive"] is False and l_ok["findings"] == [])
-        e2_ok = {"module": "m", "e2e_available": True, "status": "ran",
-                 "versions": {"8.1": {"version": "8.1", "install": {"ok": bad}, "browsers": ["chromium"],
-                                      "findings": [], "inconclusive": [], "browser_notes": []}}}
-        ok &= check(f"e2e install.ok salah-tipe {bad!r} -> not_conclusive (seam kembar flashlight)",
-                    mod.e2e_layer(e2_ok, "8.1")["conclusive"] is False)
+        # Seam kembar E2E: state record dihitung ps-run-layer (derive_state); install.ok yang
+        # bukan True TAK PERNAH jadi pass/fail di sana.
+        ok &= check(f"derive_state E2E: install.ok salah-tipe {bad!r} -> inconclusive (seam kembar)",
+                    pl.derive_state({"install": {"ok": bad}, "errors": [], "findings": [],
+                                     "phase_durations": {"browser:chromium": {}}},
+                                    "chromium")["conclusive"] is False)
     # REFUTASI verifier (backward-compat): file lapis LAMA (ps-plan-layers reuse) mencatat
     # exec-mati sbg install {ok:False} TANPA no_verdict. Truthiness telanjang dulu -> None
     # falsy -> vonis MEMBLOK "modul gagal install" tanpa note = persis bug enh-3 yang tak
@@ -938,6 +1119,7 @@ def main():
     # memuat beberapa module diam-diam mengkreditkan bukti module lain ke `ready`.
     with tempfile.TemporaryDirectory() as td:
         rep = Path(td)
+        cfg91 = _write_cfg(rep / "cfg-91.json", "9.1")
         sres = static_result({"9.1": []})
         sres["module"] = "mymod"
         (rep / "mymod-static.json").write_text(json.dumps(sres), encoding="utf-8")
@@ -947,7 +1129,8 @@ def main():
         modir = rep / "mymod"; modir.mkdir()
 
         r = subprocess.run(["uv", "run", str(MOD_PATH), "--reports-dir", str(rep),
-                            "--module", str(modir)], capture_output=True, text=True)
+                            "--module", str(modir), "--config", cfg91],
+                           capture_output=True, text=True)
         ok &= check("--reports-dir + --module: path lapis diturunkan (tak diketik)",
                     r.returncode in (0, 1) and "Traceback" not in r.stderr)
         written = sorted(x.name for x in rep.glob("mymod-2*.json"))
@@ -961,38 +1144,51 @@ def main():
                         got["layers_run"]["static"] is True
                         and got["layers_run"]["e2e"] is False
                         and got["layers_run"]["adversarial"] is False)
+            (rep / written[0]).unlink()
 
         # Gerbang identitas: bukti module lain ditolak, bukan dikreditkan.
-        (rep / "mymod-e2e.json").write_text(json.dumps(
+        (rep / "mymod-flashlight.json").write_text(json.dumps(
             {"module": "modul-lain", "status": "ran", "pass": True,
-             "versions": {"9.1": {"pass": True, "conclusive": True}}}), encoding="utf-8")
-        r2 = subprocess.run(["uv", "run", str(MOD_PATH), "--reports-dir", str(rep),
-                             "--module", str(modir)], capture_output=True, text=True)
+             "versions": {"9.1": {"pass": True, "install": {"ok": True}}}}), encoding="utf-8")
+        rc2, err2 = _run_main(["--reports-dir", str(rep), "--module", str(modir),
+                               "--config", cfg91, "-o", str(rep / "o2.json")])
         ok &= check("file lapis milik module lain -> exit 2, bukan vonis",
-                    r2.returncode == 2 and "modul-lain" in r2.stderr)
-
-        # Kontrol positif: identitas cocok -> lolos (gerbang tak kelebihan sapu).
-        (rep / "mymod-e2e.json").write_text(json.dumps(
+                    rc2 == 2 and "modul-lain" in err2)
+        (rep / "mymod-flashlight.json").write_text(json.dumps(
             {"module": "mymod", "status": "ran", "pass": True,
-             "versions": {"9.1": {"pass": True, "conclusive": True}}}), encoding="utf-8")
-        r3 = subprocess.run(["uv", "run", str(MOD_PATH), "--reports-dir", str(rep),
-                             "--module", str(modir)], capture_output=True, text=True)
-        ok &= check("identitas cocok -> jalan normal (gerbang tak over-fire)",
-                    r3.returncode in (0, 1) and "modul-lain" not in r3.stderr)
+             "versions": {"9.1": {"pass": True, "install": {"ok": True}}}}), encoding="utf-8")
 
-        # Flag eksplisit tetap menang atas derivasi.
-        # Isinya harus BEDA dari file turunan, kalau tidak mutasi "derivasi menimpa flag"
-        # tak terasa sama sekali dan test ini hampa: versi 8.1 hanya ada di alt.
+        # File E2E LAMA (<module>-e2e.json / -e2e-<ver>.json) DIABAIKAN — bukan bukti, dan
+        # tak bisa memicu gerbang apa pun: setelah upgrade tiap sel `missing` sampai dibuktikan ulang.
+        claim = {"module": "modul-lain", "status": "ran", "e2e_available": True, "pass": True,
+                 "versions": {"9.1": {"pass": True, "conclusive": True, "install": {"ok": True},
+                                      "browsers": BR, "findings": [], "authored_assertions": 5}}}
+        (rep / "mymod-e2e.json").write_text(json.dumps(claim), encoding="utf-8")
+        (rep / "mymod-e2e-9.1.json").write_text(json.dumps(claim), encoding="utf-8")
+        rc3, err3 = _run_main(["--reports-dir", str(rep), "--module", str(modir),
+                               "--config", cfg91, "--require", "static,e2e",
+                               "-o", str(rep / "o3.json")])
+        got3 = json.loads((rep / "o3.json").read_text()) if (rep / "o3.json").exists() else {}
+        ok &= check("file e2e lama diabaikan: tak exit 2, layers_run.e2e False, sel missing, ready False",
+                    rc3 in (0, 1) and "modul-lain" not in err3
+                    and got3.get("layers_run", {}).get("e2e") is False
+                    and got3.get("ready") is False
+                    and all(c["reason"] == "missing" for c in got3["e2e_cells"]["9.1"].values()))
+
+        # Flag eksplisit tetap menang atas derivasi. Isinya harus BEDA dari file turunan:
+        # turunan hanya punya 9.1, alt hanya 8.1 — versi target dari config (8.1).
         alt = rep / "alt-static.json"
         alt_res = static_result({"8.1": []})
         alt_res["module"] = "mymod"
         alt.write_text(json.dumps(alt_res), encoding="utf-8")
+        cfg81 = _write_cfg(rep / "cfg-81.json", "8.1")
         r4 = subprocess.run(["uv", "run", str(MOD_PATH), "--reports-dir", str(rep),
-                             "--module", str(modir), "--static", str(alt),
+                             "--module", str(modir), "--static", str(alt), "--config", cfg81,
                              "-o", str(rep / "out.json")], capture_output=True, text=True)
         got4 = json.loads((rep / "out.json").read_text()) if (rep / "out.json").exists() else {}
-        ok &= check("--static eksplisit menang atas nama turunan (versi dari alt, bukan turunan)",
-                    r4.returncode in (0, 1) and list(got4.get("versions", {})) == ["8.1"])
+        ok &= check("--static eksplisit menang atas nama turunan (8.1 konklusif dari alt)",
+                    r4.returncode in (0, 1) and list(got4.get("versions", {})) == ["8.1"]
+                    and got4["versions"]["8.1"]["layers"]["static"]["conclusive"] is True)
 
         r5 = subprocess.run(["uv", "run", str(MOD_PATH), "--reports-dir", str(rep)],
                             capture_output=True, text=True)
@@ -1011,11 +1207,11 @@ def main():
         sres["module"] = "m"
         sp = rep / "m-static.json"
         sp.write_text(json.dumps(sres), encoding="utf-8")
+        cfg_sc = _write_cfg(rep / "c.json", "9.1")
 
         def _agg(*extra):
             outp = rep / "out.json"
-            subprocess.run(["uv", "run", str(MOD_PATH), "--static", str(sp), "-o", str(outp),
-                            *extra], capture_output=True, text=True)
+            _run_main(["--static", str(sp), "--config", cfg_sc, "-o", str(outp), *extra])
             return json.loads(outp.read_text())
 
         def _scen(sources, scen_ok, conclusive=True):
@@ -1057,6 +1253,231 @@ def main():
         d = _agg("--scenario", _scen(["dup.json"], True, conclusive=False))
         ok &= check("skenario tak konklusif -> menggerbang tapi ready jatuh (bukan pass senyap)",
                     "scenario" in d["required_layers"] and d["ready"] is False)
+
+    # === Lapis 4 lewat CLI atas histori NYATA (append_record + fingerprint module asli) ===
+
+    # AC1: config 3x2, static konklusif, enam sel pass gate-grade passing -> ready.
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td)
+        for v in TV:
+            env.add(v, "chromium", boot_id=f"B-{v}")
+            env.add(v, "firefox", boot_id=f"B-{v}" if v != "8.1" else "B-8.1-ff")
+        rc, err, out = env.run()
+        ok &= check("AC1: enam sel lulus gate-grade + --require static,e2e -> ready True",
+                    rc == 0 and out is not None and out["ready"] is True)
+        ok &= check("AC1: tiap entri e2e_cells gate_grade True, reason null",
+                    out is not None and all(c["gate_grade"] is True and c["reason"] is None
+                                            and c["state"] == "pass"
+                                            for row in out["e2e_cells"].values()
+                                            for c in row.values()))
+        ok &= check("AC1: e2e_phase_durations[ver].boots = satu key per boot_id berbeda",
+                    out is not None
+                    and sorted(out["e2e_phase_durations"]["9.1"]["boots"]) == ["B-9.1"]
+                    and sorted(out["e2e_phase_durations"]["8.1"]["boots"]) == ["B-8.1", "B-8.1-ff"]
+                    and sorted(out["e2e_phase_durations"]["1.7.8"]["browsers"]) == BR)
+        ok &= check("AC1: per versi e2e_state pass, reason null, e2e_conclusive True",
+                    out is not None and out["e2e_conclusive"] is True
+                    and all(m["e2e_state"] == "pass" and m["reason"] is None
+                            for m in out["versions"].values()))
+        ok &= check("AC1: layers_run.e2e True, not_run_cells kosong, e2e_browsers terkonfigurasi",
+                    out is not None and out["layers_run"]["e2e"] is True
+                    and out["not_run_cells"] == [] and out["e2e_browsers"] == BR
+                    and out["e2e_browsers_run"] == BR and out["e2e_smoke_only"] is False)
+
+        # AC2 (fail): sel keenam punya gate-grade fail TERBARU.
+        env.fail("9.1", "firefox")
+        rc, err, out = env.run()
+        ok &= check("AC2 fail: ready False, e2e_cells 9.1:firefox reason fail",
+                    out is not None and out["ready"] is False
+                    and out["e2e_cells"]["9.1"]["firefox"]["reason"] == "fail"
+                    and out["e2e_cells"]["9.1"]["firefox"]["state"] == "fail")
+        ok &= check("AC2 fail: versi 9.1 e2e_state fail & reason literal fail, memblok (exit 1)",
+                    rc == 1 and out["versions"]["9.1"]["e2e_state"] == "fail"
+                    and out["versions"]["9.1"]["reason"] == "fail"
+                    and out["versions"]["9.1"]["pass"] is False
+                    and out["versions"]["8.1"]["ready"] is True)
+
+    # AC2 (missing): lima sel lulus, sel keenam tanpa record sama sekali.
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td)
+        for v in TV:
+            for b in BR:
+                if (v, b) != ("1.7.8", "firefox"):
+                    env.add(v, b)
+        rc, err, out = env.run()
+        ok &= check("AC2 missing: ready False, e2e_cells 1.7.8:firefox reason missing, state null",
+                    out is not None and out["ready"] is False
+                    and out["e2e_cells"]["1.7.8"]["firefox"] == {
+                        "state": None, "gate_grade": False, "reason": "missing", "findings": [],
+                        "parallel_only": None})
+        ok &= check("AC2 missing: versi 1.7.8 inconclusive/missing, tak memblok (exit 0)",
+                    rc == 0 and out["versions"]["1.7.8"]["e2e_state"] == "inconclusive"
+                    and out["versions"]["1.7.8"]["reason"] == "missing"
+                    and "1.7.8:firefox (missing)"
+                    in out["versions"]["1.7.8"]["layers"]["e2e"]["inconclusive_note"])
+        rc, _, out_s = env.run(require="static")
+        ok &= check("gating tanpa e2e (--require static) tetap mungkin -> ready True",
+                    out_s is not None and out_s["ready"] is True)
+
+    # Chromium-only (I/O matrix): config 3x2, hanya chromium lulus -> firefox missing di tiga versi.
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td)
+        env.seed_all(browsers=["chromium"])
+        rc, err, out = env.run()
+        ok &= check("Chromium-only: ready False, firefox missing di ketiga versi",
+                    out is not None and out["ready"] is False
+                    and all(out["e2e_cells"][v]["firefox"]["reason"] == "missing" for v in TV)
+                    and all(out["versions"][v]["reason"] == "missing" for v in TV))
+        ok &= check("Chromium-only: e2e_browsers_run hanya chromium (penyempitan terekam)",
+                    out["e2e_browsers"] == BR and out["e2e_browsers_run"] == ["chromium"])
+
+    # Headless narrowed (I/O matrix): config hanya 9.1 -> ready & versions hanya sel 9.1.
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td, versions="9.1", static_versions=TV)
+        env.add("9.1", "chromium")
+        env.add("9.1", "firefox")
+        env.fail("8.1", "chromium")  # histori versi di luar config tak pernah dibaca
+        rc, err, out = env.run()
+        ok &= check("Headless narrowed: config 9.1 -> versions & e2e_cells hanya 9.1, ready True",
+                    rc == 0 and out is not None and list(out["versions"]) == ["9.1"]
+                    and list(out["e2e_cells"]) == ["9.1"] and out["ready"] is True
+                    and out["target_versions"] == ["9.1"])
+        rc, err, _ = env.run("--versions", "9.1,8.1")
+        ok &= check("Headless narrowed: --versions lebih luas dari config -> exit 2", rc == 2)
+
+    # Warm / partial / not-run lewat histori: tak pernah gate-grade, tak menyembunyikan apa pun.
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td, versions="8.1,9.1")
+        env.add("9.1", "chromium")
+        env.add("9.1", "chromium", boot="warm", boot_id="W1#r1")
+        env.add("9.1", "firefox")
+        env.add("9.1", "firefox", state="not-run", conclusive=False,
+                reason="fail-fast after 8.1:chromium", install=None, phase_durations={},
+                findings=None, authored_assertions=None, boot_id=None)
+        env.add("8.1", "chromium", _fail("8.1", "chromium", fp=env.fp, scenario_set="partial"))
+        env.add("8.1", "firefox", boot="warm")
+        rc, err, out = env.run()
+        c = out["e2e_cells"] if out else {}
+        ok &= check("warm/not-run lebih baru: 9.1 tetap punya bukti lulus (record lama terpilih)",
+                    out is not None and c["9.1"]["chromium"]["reason"] is None
+                    and c["9.1"]["chromium"]["gate_grade"] is True
+                    and c["9.1"]["firefox"]["reason"] is None
+                    and out["versions"]["9.1"]["e2e_state"] == "pass")
+        ok &= check("not_run_cells memuat sel yang record terbarunya not-run",
+                    out is not None and out["not_run_cells"] == [
+                        {"cell": "9.1:firefox", "reason": "fail-fast after 8.1:chromium"}])
+        ok &= check("partial fail: temuan di e2e_cells tapi TAK memblok 8.1; warm-only alasannya",
+                    out is not None and len(c["8.1"]["chromium"]["findings"]) == 1
+                    and c["8.1"]["chromium"]["gate_grade"] is False
+                    and out["versions"]["8.1"]["pass"] is True
+                    and out["versions"]["8.1"]["e2e_state"] == "inconclusive"
+                    and c["8.1"]["firefox"]["reason"] == "warm-only" and out["ready"] is False)
+        ok &= check("phase durations memakai record TERPILIH (bukan warm/not-run terbaru)",
+                    out is not None and list(out["e2e_phase_durations"]["9.1"]["boots"]) == ["boot-9.1"])
+
+    # Corrupt history: baris rusak terakhir -> corrupt-history, tanpa bukti lulus.
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td, versions="9.1")
+        env.add("9.1", "chromium")
+        env.add("9.1", "firefox")
+        with open(env.path("9.1", "chromium"), "ab") as f:
+            f.write(b'{"version": "9.1", "browser": "chrom')  # penulis terbunuh di tengah baris
+        rc, err, out = env.run()
+        ok &= check("corrupt-history: baris terakhir rusak -> reason corrupt-history, ready False",
+                    out is not None and out["e2e_cells"]["9.1"]["chromium"]["reason"] == "corrupt-history"
+                    and out["e2e_cells"]["9.1"]["chromium"]["state"] == "pass"
+                    and out["ready"] is False and out["versions"]["9.1"]["reason"] == "corrupt-history")
+        env.add("9.1", "chromium")  # append sesudah baris rusak -> valid lagi
+        rc, err, out = env.run()
+        ok &= check("corrupt di tengah (valid, rusak, valid) -> terbaca, bukti lulus pulih",
+                    out is not None and out["e2e_cells"]["9.1"]["chromium"]["reason"] is None
+                    and out["ready"] is True)
+        env.path("9.1", "firefox").write_bytes(b"bukan json\n")
+        rc, err, out = env.run()
+        ok &= check("histori HANYA baris rusak -> state null, reason corrupt-history",
+                    out is not None and out["e2e_cells"]["9.1"]["firefox"]["state"] is None
+                    and out["e2e_cells"]["9.1"]["firefox"]["reason"] == "corrupt-history")
+        env.path("9.1", "firefox").unlink()
+        env.path("9.1", "firefox").mkdir()  # error OS saat membaca histori
+        rc, err, out = env.run()
+        ok &= check("error OS membaca histori -> exit 2 menyebut path-nya",
+                    rc == 2 and "mymod-e2e-9.1-firefox.jsonl" in err and "Traceback" not in err)
+
+    # Stale: fail di fingerprint lama -> stale-fail; pass lama -> stale-source; tag beda -> stale-tag.
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td, versions="8.1,9.1")
+        env.add("9.1", "chromium", _fail("9.1", "chromium", fp="0" * 64))
+        env.add("9.1", "firefox", _rec("9.1", "firefox", "0" * 64))
+        env.add("8.1", "chromium", image_tag="8.1.0-lama")
+        env.add("8.1", "firefox")
+        rc, err, out = env.run()
+        c = out["e2e_cells"] if out else {}
+        ok &= check("stale-fail: fail di fingerprint lama -> reason stale-fail (bukan stale-source)",
+                    out is not None and c["9.1"]["chromium"]["reason"] == "stale-fail"
+                    and out["versions"]["9.1"]["reason"] == "stale-fail")
+        ok &= check("stale: pass lama -> stale-source; tag beda -> stale-tag; basi tak memblok",
+                    out is not None and c["9.1"]["firefox"]["reason"] == "stale-source"
+                    and c["8.1"]["chromium"]["reason"] == "stale-tag"
+                    and out["pass"] is True and out["ready"] is False)
+        # Tag dari config (psm_flashlight_tag_map) & --tag-map: dinilai seperti plan/runner.
+        cfg_tag = _write_cfg(env.root / "cfg-tag.json", "8.1,9.1",
+                             psm_flashlight_tag_map="1.7.8=1.7.8.11,8.1=8.1.0-lama,9.1=9.1.4-nginx")
+        rc, err, out = env.run("--config", cfg_tag, config=False)
+        ok &= check("psm_flashlight_tag_map dari --config -> record bertag itu segar, tag default basi",
+                    out is not None and out["e2e_cells"]["8.1"]["chromium"]["reason"] is None
+                    and out["e2e_cells"]["8.1"]["firefox"]["reason"] == "stale-tag")
+        rc, err, out = env.run("--config", cfg_tag, "--tag-map",
+                               "1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx", config=False)
+        ok &= check("--tag-map menang atas psm_flashlight_tag_map",
+                    out is not None and out["e2e_cells"]["8.1"]["firefox"]["reason"] is None)
+        rc, err, out = env.run("--extra-tag-map", "8.1=8.1.0-lama")
+        ok &= check("--extra-tag-map menambah di atas peta",
+                    out is not None and out["e2e_cells"]["8.1"]["chromium"]["reason"] is None)
+
+    # boot_log: ekor log container ikut ke reason Lapis 4.
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td, versions="9.1")
+        for b in BR:
+            env.add("9.1", b, state="inconclusive", conclusive=False, reason="errors",
+                    errors=["flashlight tak jadi 'healthy' (timeout)"], install=None,
+                    phase_durations={}, findings=None, authored_assertions=None,
+                    boot_log="nginx: [emerg] bind() to 0.0.0.0:80 failed")
+        rc, err, out = env.run()
+        ok &= check("boot_log record -> ekor log di versions[ver].layers.e2e.reason",
+                    out is not None and "bind() to 0.0.0.0:80"
+                    in out["versions"]["9.1"]["layers"]["e2e"]["reason"]
+                    and out["versions"]["9.1"]["reason"] == "inconclusive")
+
+    # Input: --e2e = exit 2 menyebut --reports-dir; --session divalidasi; tanpa folder laporan
+    # tiap sel `missing`; daftar browser terkonfigurasi tak sah = exit 2.
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td, versions="9.1")
+        env.seed_all()
+        legacy = env.root / "e.json"
+        legacy.write_text("{}", encoding="utf-8")
+        rc, err, out = env.run("--e2e", str(legacy))
+        ok &= check("--e2e -> exit 2 menyebut --reports-dir", rc == 2 and "--reports-dir" in err
+                    and out is None)
+        rc, err, out = env.run("--session", "BUKAN-TOKEN")
+        ok &= check("--session salah bentuk -> exit 2", rc == 2 and out is None)
+        rc, err, out = env.run("--session", SESSION)
+        ok &= check("--session sah -> diterima (belum dipakai), ready True",
+                    rc == 0 and out is not None and out["ready"] is True)
+        rc, err = _run_main(["--static", str(env.static), "--config", env.cfg,
+                             "-o", str(env.out), "--require", "static,e2e"])
+        out = json.loads(env.out.read_text()) if env.out.exists() else None
+        ok &= check("tanpa --reports-dir/--module -> tiap sel missing, ready False",
+                    rc == 0 and out is not None and out["ready"] is False
+                    and out["layers_run"]["e2e"] is False
+                    and all(c["reason"] == "missing" for c in out["e2e_cells"]["9.1"].values()))
+        bad_br = _write_cfg(env.root / "bad-br.json", "9.1", "chromium,webkitx")
+        rc, err, out = env.run("--config", bad_br, config=False)
+        ok &= check("psm_e2e_browsers tak sah (webkitx) -> exit 2", rc == 2 and "webkitx" in err)
+        # Default skrip (tanpa --config): 1.7.8,8.1,9.1 x chromium,firefox — sel 1.7.8/8.1 missing.
+        rc, err, out = env.run(config=False)
+        ok &= check("tanpa --config -> himpunan default skrip (tiga versi), ready False",
+                    out is not None and out["target_versions"] == TV and out["ready"] is False
+                    and out["e2e_cells"]["8.1"]["chromium"]["reason"] == "missing")
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

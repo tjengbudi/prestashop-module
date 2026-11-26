@@ -332,11 +332,68 @@ def progress(token, phase_name="", detail=""):
         pass
 
 
+# --- Sink durasi fase (CAP-6) ---------------------------------------------------
+# Log kemajuan dikosongkan tiap run, jadi durasi fase yang mau dibawa ke rekaman bukti
+# diukur timer dalam-proses. Sink NONAKTIF secara default: Lapis 2/5 (dan tiap skrip yang
+# tak mengaktifkannya) berperilaku persis seperti dulu. ps-e2e-run mengaktifkan satu sink
+# per panggilan run_one_version (timing_activate) lalu mengambilnya (timing_deactivate).
+# Fase `browser:<engine>` masuk ke phase_durations engine itu, selainnya ke boot_phases;
+# fase yang berulang dalam satu sink diberi akhiran `#2`, `#3`, ... (mis. `pull#2` utk
+# image DB, `bring-up#2` sesudah retry port).
+CELL_PHASE_PREFIX = "browser:"
+_TIMING = {"sink": None}
+_TIMING_LOCK = threading.Lock()
+
+
+class TimingSink:
+    """Penampung durasi fase satu boot: `boot_phases` + `phase_durations[<engine>]`.
+
+    Tiap entri = {"seconds": float (monotonic, 3 desimal), "outcome": status END}.
+    Fase yang tak terjadi tak pernah muncul (bukan 0).
+    """
+
+    def __init__(self):
+        self.boot_phases = {}
+        self.phase_durations = {}
+        self._counts = {}
+
+    def record(self, name, seconds, outcome):
+        with _TIMING_LOCK:
+            n = self._counts.get(name, 0) + 1
+            self._counts[name] = n
+            key = name if n == 1 else f"{name}#{n}"
+            entry = {"seconds": round(float(seconds), 3), "outcome": outcome}
+            if name.startswith(CELL_PHASE_PREFIX):
+                engine = name[len(CELL_PHASE_PREFIX):]
+                self.phase_durations.setdefault(engine, {})[key] = entry
+            else:
+                self.boot_phases[key] = entry
+
+    def as_dict(self):
+        return {"boot_phases": dict(self.boot_phases),
+                "phase_durations": {e: dict(p) for e, p in self.phase_durations.items()}}
+
+
+def timing_activate():
+    """Aktifkan sink baru (menggantikan yang aktif, bila ada) dan kembalikan sink itu."""
+    sink = TimingSink()
+    _TIMING["sink"] = sink
+    return sink
+
+
+def timing_deactivate():
+    """Nonaktifkan sink aktif dan kembalikan sink itu (None bila tak ada yang aktif)."""
+    sink, _TIMING["sink"] = _TIMING["sink"], None
+    return sink
+
+
 class phase:
     """Context manager satu fase: START, denyut ALIVE/SLOW di thread latar, lalu END.
 
     `ph.detail` boleh diperbarui selama fase (mis. status health terakhir) — denyut
-    menyertakannya; `ph.status` (opsional) menggantikan 'ok' di baris END.
+    menyertakannya; `ph.status` (opsional) menggantikan 'ok' di baris END. Bila sink durasi
+    aktif (timing_activate), tiap fase — gagal sekalipun — dicatat {seconds, outcome}
+    dengan outcome = status END; baris log kemajuan tak berubah.
     """
 
     def __init__(self, name, timeout=None, detail=""):
@@ -375,6 +432,9 @@ class phase:
         else:
             st = f"error({exc_type.__name__})"
         progress("END", self.name, f"{st} {self._elapsed()}s")
+        sink = _TIMING["sink"]
+        if sink is not None:
+            sink.record(self.name, time.monotonic() - self._t0, st)
         return False
 
 
@@ -1239,6 +1299,117 @@ CONFIG_KEY_TO_DEST = {
     "psm_flashlight_startup_timeout": "startup_timeout",
     "psm_e2e_browsers": "browsers",
 }
+
+# --- Sel terkonfigurasi (cell-contract.md > Configured cells) ---------------------
+# Himpunan sel WAJIB untuk `ready` = psm_target_versions x psm_e2e_browsers, dibaca LANGSUNG
+# dari JSON --config (bukan lewat apply_config_file: flag --versions/--browsers cuma
+# membentuk apa yang dijalankan, tak pernah menyusutkan himpunan wajib). Satu normalizer,
+# dipakai plan, runner dan agregat. Default skrip dikunci ke PSM_DEFAULTS resolver lewat
+# test drift; literal argparse lama & DEFAULT_BROWSERS ps-e2e-run tetap ada.
+SUPPORTED_ENGINES = ("chromium", "firefox", "webkit")
+DEFAULT_TARGET_VERSIONS = "1.7.8,8.1,9.1"
+DEFAULT_E2E_BROWSERS = "chromium,firefox"
+_VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+)*$")  # ASCII saja: \d menerima digit Unicode
+
+
+class CellConfigError(ValueError):
+    """Input himpunan sel tak sah — pemanggil CLI mencetak pesannya dan exit 2."""
+
+
+def version_key(ver):
+    """Kunci urut NUMERIK versi bertitik: '10.0' > '9.1' (bukan leksikal).
+
+    Nol di ekor dibuang, jadi dua versi yang setara numerik ('9.1', '9.1.0') berkunci sama —
+    normalizer menolak pasangan seperti itu.
+    """
+    parts = [int(p) for p in str(ver).split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+def _config_items(raw, default, key):
+    """String koma (bentuk tulisan resolver) atau list string -> item ter-strip, tanpa kosong.
+
+    None -> default skrip. Tipe lain / item non-string -> CellConfigError.
+    """
+    if raw is None:
+        raw = default
+    if isinstance(raw, str):
+        items = raw.split(",")
+    elif isinstance(raw, list):
+        if not all(isinstance(x, str) for x in raw):
+            raise CellConfigError(f"{key}: tiap item harus string, dapat {raw!r}")
+        items = raw
+    else:
+        raise CellConfigError(f"{key}: harus string dipisah koma atau list string, dapat {raw!r}")
+    return [x.strip() for x in items if x.strip()]
+
+
+def normalize_versions(raw, key="psm_target_versions"):
+    """Versi terkonfigurasi -> list string unik, URUT NUMERIK. Error -> CellConfigError.
+
+    Duplikat persis dibuang; list kosong, versi bukan digit-bertitik (`\\d+(\\.\\d+)*`), atau
+    dua versi setara numerik ('9.1' & '9.1.0') adalah input error. String versi dipakai apa
+    adanya (nama file histori memakai string terkonfigurasi).
+    """
+    out = []
+    for v in _config_items(raw, DEFAULT_TARGET_VERSIONS, key):
+        if not _VERSION_RE.match(v):
+            raise CellConfigError(f"{key}: versi {v!r} bukan digit bertitik (mis. 9.1, 1.7.8)")
+        if v not in out:
+            out.append(v)
+    if not out:
+        raise CellConfigError(f"{key}: daftar versi kosong")
+    seen = {}
+    for v in out:
+        k = version_key(v)
+        if k in seen:
+            raise CellConfigError(f"{key}: {seen[k]!r} dan {v!r} setara numerik — sebut satu saja")
+        seen[k] = v
+    return sorted(out, key=version_key)
+
+
+def normalize_engines(raw, key="psm_e2e_browsers"):
+    """Engine terkonfigurasi -> list unik, urutan tertulis, huruf kecil. Error -> CellConfigError.
+
+    Engine di luar SUPPORTED_ENGINES atau list kosong adalah input error — menggantikan
+    fallback diam-diam parse_browsers ke default.
+    """
+    out = []
+    for b in _config_items(raw, DEFAULT_E2E_BROWSERS, key):
+        b = b.lower()
+        if b not in SUPPORTED_ENGINES:
+            raise CellConfigError(f"{key}: engine {b!r} tak didukung "
+                                  f"(didukung: {','.join(SUPPORTED_ENGINES)})")
+        if b not in out:
+            out.append(b)
+    if not out:
+        raise CellConfigError(f"{key}: daftar browser kosong")
+    return out
+
+
+def read_config_json(path):
+    """Baca JSON --config sebagai dict. Tak terbaca / bukan objek JSON -> CellConfigError."""
+    try:
+        cfg = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise CellConfigError(f"gagal baca --config {path}: {e}") from None
+    if not isinstance(cfg, dict):
+        raise CellConfigError(f"--config {path} bukan objek JSON")
+    return cfg
+
+
+def configured_cells(config_path=None):
+    """Himpunan sel terkonfigurasi -> (versions, browsers). Error -> CellConfigError (exit 2).
+
+    Dibaca LANGSUNG dari JSON --config: key absen atau null -> default skrip
+    (DEFAULT_TARGET_VERSIONS / DEFAULT_E2E_BROWSERS); tanpa config -> keduanya default.
+    `versions` urut numerik, `browsers` urut tertulis. `psm_e2e_canary` diabaikan slice ini.
+    """
+    cfg = read_config_json(config_path) if config_path else {}
+    return (normalize_versions(cfg.get("psm_target_versions")),
+            normalize_engines(cfg.get("psm_e2e_browsers")))
 
 
 def job_start(args, module, layer):

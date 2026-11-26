@@ -40,6 +40,13 @@ VERIFIKASI VISUAL ("cek web asli" — lihat render seperti user, bukan cuma asse
   - `--headed` → browser TAMPIL live (headless=False) untuk inspeksi manual; butuh display,
     opt-in eksplisit, JANGAN di headless/CI (tanpa display → skipped_browser).
 
+OUTPUT PER SEL & EXIT CODE (cell-contract.md > Evidence record, Runner):
+  - tiap versi memancarkan `cells.<engine>` untuk tiap engine yang lolos probe (juga saat
+    boot/install gagal) plus field level-versi (`run_id`, `boot`, `boot_id`, `image_tag`,
+    `boot_phases`, `boot_wall_clock`, ...); ps-run-layer menggabungkannya jadi rekaman histori.
+  - exit 0 = E2E skipped, atau tiap sel yang dipancarkan `pass`; 3 = ada sel `fail`;
+    1 = selain itu (infra / sel inconclusive / versi tanpa sel); 2 = input error.
+
 Format spec skenario authored (`<module>/tests/e2e/*.json`):
   {"name": "configure-save",
    "steps": [
@@ -72,7 +79,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Pakai-ulang orkestrasi Docker dari sibling ps-flashlight-run.py (impor by-path
@@ -84,7 +91,7 @@ fl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fl)
 
 DEFAULT_BROWSERS = "chromium,firefox"
-SUPPORTED_ENGINES = ("chromium", "firefox", "webkit")
+SUPPORTED_ENGINES = fl.SUPPORTED_ENGINES  # pemilik tunggal: ps-flashlight-run (normalizer sel)
 SUPPORTED_ACTIONS = ("goto", "expect_no_fatal", "expect_visible", "expect_text",
                      "expect_no_console_error", "click", "click_optional", "fill", "select",
                      "wait_for_text", "screenshot")
@@ -193,19 +200,14 @@ INSTALL_SH = fl.INSTALL_BLOCK_SH
 # ---------------------------------------------------------------------------
 # Fungsi murni (teruji tanpa Playwright/Docker)
 # ---------------------------------------------------------------------------
-def parse_browsers(raw):
-    """'chromium,firefox' -> ['chromium','firefox']. Filter ke engine didukung, dedup.
+def parse_browsers(raw, key="--browsers"):
+    """'chromium,firefox' -> ['chromium','firefox'] lewat normalizer sel bersama.
 
-    Kosong / semua tak valid -> default keluarga (chromium,firefox).
+    Huruf kecil, dedup, urutan tertulis. Engine tak didukung atau daftar kosong ->
+    fl.CellConfigError (main: exit 2). Dulu jatuh diam-diam ke default, jadi typo
+    `--browsers firefx` menjalankan chromium+firefox dan terbaca sebagai cakupan yang diminta.
     """
-    out = []
-    for b in (raw or "").split(","):
-        b = b.strip().lower()
-        if b in SUPPORTED_ENGINES and b not in out:
-            out.append(b)
-    if out:
-        return out
-    return [e.strip() for e in DEFAULT_BROWSERS.split(",")]
+    return fl.normalize_engines(raw, key=key)
 
 
 def host_port_from_domain(ps_domain, default=DEFAULT_HOST_PORT):
@@ -508,6 +510,7 @@ def run_steps(page, steps, ctx):
     area = "fo"
     last_status = None
     for idx, step in enumerate(steps):
+        first = len(results)
         action = step.get("action")
         if action == "goto":
             area = step.get("area", area)
@@ -617,6 +620,10 @@ def run_steps(page, steps, ctx):
                 results.append(_res(action or "?", False, False, "aksi tak dikenal — tak dieksekusi", ""))
         except Exception as e:  # noqa: BLE001 — selector timeout / nav gagal = assertion gagal
             results.append(_res(action or "?", False, conclusive, f"exception: {str(e)[:120]}", ""))
+        # Indeks 0-based langkah di list `steps` spec — temuan membawanya (Evidence record >
+        # Producers: tiap temuan dapat `action` + `step`), jadi (skenario, step, aksi) unik.
+        for r in results[first:]:
+            r["step"] = idx
         if results and not results[-1]["ok"]:
             _snap(page, ctx, f"{idx:02d}-FAIL-{action or 'x'}")
     return results
@@ -666,11 +673,13 @@ def assemble_findings(full_ver, driven):
                         "location": r["location"],
                         "fix": "periksa perilaku module di versi ini / perbaiki skenario E2E",
                         "browser": engine, "scenario": sc["name"], "source": sc["source"],
+                        "action": r["action"], "step": r.get("step"),
                         "versions": [full_ver],
                     })
                 else:
                     inconclusive.append({
                         "browser": engine, "scenario": sc["name"], "action": r["action"],
+                        "step": r.get("step"),
                         "message": r["message"], "location": r["location"],
                     })
     return findings, inconclusive
@@ -863,10 +872,72 @@ def drive_engine(engine, scenarios, ctx, headed=False):
     return result
 
 
+def utc_now():
+    """Timestamp sel: UTC ISO-8601 bermikrodetik (`+00:00`), bentuk yang ditulis ke histori."""
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _new_cell():
+    """Sel satu engine sebelum engine-nya jalan. Field yang belum diproduksi engine = None.
+
+    Dipancarkan untuk tiap engine yang lolos probe di SETIAP jalur return (boot/install gagal
+    termasuk, dengan started_at/finished_at None — ps-run-layer mengisinya). Hook yang ditunda
+    (scenario_spans, parallel_only: CAP-7) tetap None.
+    """
+    return {"started_at": None, "finished_at": None, "scenario_set": "full",
+            "scenarios_run": None, "findings": None, "inconclusive": None,
+            "authored_assertions": None, "bo_authed": None, "launch_error": None,
+            "browser_notes": [], "console_errors": None, "screenshots": None,
+            "phase_durations": {}, "scenario_spans": None, "parallel_only": None}
+
+
+def _fill_cell(cell, eng, full_ver, scenarios):
+    """Isi sel dari hasil drive SATU engine — helper yang sama dgn rollup versi, satu engine."""
+    findings, inconclusive = assemble_findings(full_ver, [eng])
+    scs = eng.get("scenarios", [])
+    cell.update({
+        # Engine yang gagal luncur tak men-drive apa pun — jangan klaim cakupan skenario.
+        "scenarios_run": [] if eng.get("launch_error") else [sc["name"] for sc in scenarios],
+        "findings": findings, "inconclusive": inconclusive,
+        "authored_assertions": count_authored_assertions([eng]),
+        "bo_authed": bool(eng.get("bo_authed")),
+        "launch_error": eng.get("launch_error"),
+        "console_errors": sum(len(sc.get("console_errors", [])) for sc in scs),
+        "screenshots": [s for sc in scs for s in sc.get("screenshots", [])],
+    })
+
+
 def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
-                    requested_browsers=None, orchestrator, db_image, ps_domain, admin_path,
-                    admin_email, admin_password, startup_timeout, op_timeout, nav_timeout, allow_pull,
-                    headed=False, screenshot_dir=None):
+                    scenario_notes=(), **kwargs):
+    """Satu boot versi + durasi fasenya (cell-contract.md > Phase timings).
+
+    Satu sink durasi per panggilan: diaktifkan di sini, lalu `boot_wall_clock` diukur dari
+    masuk sampai fungsi dalam kembali — SESUDAH `_teardown` di `finally`-nya selesai, jadi
+    masa hidup container (browser termasuk) terhitung penuh. Fase `browser:<engine>[#n]`
+    masuk ke `phase_durations` sel engine itu, sisanya ke `boot_phases` (`{}` bila tak ada
+    fase yang jalan). `scenario_notes` (catatan spec level-run) disalin ke tiap versi.
+    """
+    t0 = time.monotonic()
+    sink = fl.timing_activate()
+    try:
+        res = _run_one_version_inner(module_dir, mod_name, full_ver, tag, browsers, scenarios,
+                                     **kwargs)
+    finally:
+        wall = time.monotonic() - t0
+        fl.timing_deactivate()
+    timing = sink.as_dict()
+    res["boot_phases"] = timing["boot_phases"]
+    res["boot_wall_clock"] = round(wall, 3)
+    res["scenario_notes"] = list(scenario_notes)
+    for engine, cell in res["cells"].items():
+        cell["phase_durations"] = timing["phase_durations"].get(engine, {})
+    return res
+
+
+def _run_one_version_inner(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
+                           requested_browsers=None, orchestrator, db_image, ps_domain, admin_path,
+                           admin_email, admin_password, startup_timeout, op_timeout, nav_timeout,
+                           allow_pull, headed=False, screenshot_dir=None):
     """Bangun flashlight (port publish) utk satu versi, install module, drive tiap browser.
 
     `browsers` = engine yang benar-benar akan di-drive (binary terpasang); `requested_browsers`
@@ -875,6 +946,11 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
     (binary absent / gagal luncur satu engine) → `browser_notes` (coverage, TAK memblok & TAK
     membatalkan temuan konklusif engine lain — itu bug false-pass yang harus dihindari).
     Assertion konklusif gagal saat ≥1 browser jalan & module ter-install → temuan yang memblok.
+
+    Selain field lama (run langsung, bukan bukti), tiap versi memancarkan field level-versi
+    untuk rekaman histori (`run_id`, `boot`, `boot_id`, `image_tag`, `browser_mode`, `errors`,
+    `install`, `boot_log`) dan `cells.<engine>` untuk tiap engine yang lolos probe, di setiap
+    jalur return (cell-contract.md > Evidence record > Producers).
     """
     requested_browsers = requested_browsers if requested_browsers is not None else list(browsers)
     image_ref = f"{fl.IMAGE}:{tag}"
@@ -882,13 +958,24 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
     res = {"version": full_ver, "tag": tag, "image": image_ref, "orchestrator": None,
            "browsers": [], "install": None, "findings": [], "inconclusive": [],
            "errors": [], "browser_notes": [], "console_errors": 0, "screenshots": [],
-           "skipped_browser": False, "pass": False}
+           "skipped_browser": False, "pass": False,
+           "run_id": fl.RUN_ID, "boot": "cold", "boot_id": fl.RUN_ID, "image_tag": tag,
+           "browser_mode": "sequential", "boot_phases": {}, "boot_wall_clock": None,
+           "boot_log": None, "cells": {e: _new_cell() for e in browsers}}
+
+    def note(engines, text):
+        # Catatan per-browser: daftar lama (run langsung) + sel engine bersangkutan saja.
+        # Engine yang di-drop probe tak punya sel, jadi catatannya tak mendarat di sel mana pun.
+        res["browser_notes"].append(text)
+        for e in engines:
+            if e in res["cells"]:
+                res["cells"][e]["browser_notes"].append(text)
 
     # Engine diminta tapi binary-nya tak lolos probe (di-drop di main) — catat coverage, tak memblok.
     probe_missed = [e for e in requested_browsers if e not in browsers]
     if probe_missed:
-        res["browser_notes"].append(
-            f"engine tak dijalankan (binary belum di-'playwright install'): {','.join(probe_missed)}")
+        note(probe_missed,
+             f"engine tak dijalankan (binary belum di-'playwright install'): {','.join(probe_missed)}")
 
     # Gerbang browser DULU (termurah): tanpa binary browser sama sekali, boot container sia-sia.
     if not browsers:
@@ -1004,14 +1091,18 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
                "screenshot_dir": ver_shot_dir}
         driven = []
         for engine in browsers:
+            cell = res["cells"][engine]
+            cell["started_at"] = utc_now()
             with fl.phase(f"browser:{engine}", None, f"{len(scenarios)} skenario"):
                 eng = drive_engine(engine, scenarios, ctx, headed=headed)
+            cell["finished_at"] = utc_now()
+            _fill_cell(cell, eng, full_ver, scenarios)
             if eng.get("launch_error"):
                 # Gagal luncur SATU engine = masalah per-browser -> browser_notes (BUKAN errors).
                 # Jangan cemari kanal infra version-level: temuan konklusif engine lain harus tetap.
-                res["browser_notes"].append(
-                    f"browser {engine} gagal diluncurkan: {eng['launch_error']} "
-                    f"(jalankan 'playwright install {engine}'{'' if not headed else ' / --headed butuh display'})")
+                note([engine],
+                     f"browser {engine} gagal diluncurkan: {eng['launch_error']} "
+                     f"(jalankan 'playwright install {engine}'{'' if not headed else ' / --headed butuh display'})")
                 continue
             res["browsers"].append(engine)
             driven.append(eng)
@@ -1047,6 +1138,51 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
         fl._teardown(session)
 
 
+# Aturan State per sel dimiliki ps-plan-layers (derive_state, dipakai ps-run-layer saat merge).
+# Dimuat MALAS di sini: ps-plan-layers memuat ps-e2e-run hanya di dalam _e2e_scenario_notes,
+# jadi tak ada siklus impor, dan run langsung yang skipped tak perlu memuatnya sama sekali.
+_PLAN_LAYERS = {}
+
+
+def _plan_layers():
+    if "mod" not in _PLAN_LAYERS:
+        path = Path(__file__).resolve().parent / "ps-plan-layers.py"
+        spec = importlib.util.spec_from_file_location("ps_plan_layers", path)
+        if not (spec and spec.loader):
+            raise ImportError(f"tak bisa memuat sibling {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _PLAN_LAYERS["mod"] = module
+    return _PLAN_LAYERS["mod"]
+
+
+def cell_state(vres, engine):
+    """State-rule satu sel yang dipancarkan, dgn field level-versi (`errors`, `install`)
+    digabung seperti ps-run-layer menggabungkannya ke rekaman. Return {state, conclusive, reason}."""
+    merged = {"errors": vres.get("errors"), "install": vres.get("install")}
+    merged.update(vres.get("cells", {}).get(engine) or {})
+    return _plan_layers().derive_state(merged, engine)
+
+
+def exit_code(result):
+    """Exit code run yang tak skipped (cell-contract.md > Runner).
+
+    3 bila ada sel `fail` (apa pun state engine lain); 0 bila tiap versi memancarkan ≥1 sel
+    dan setiap sel `pass`; selain itu 1 (infra / sel inconclusive / versi tanpa sel).
+    """
+    states, every_version_has_cells = [], True
+    for vres in result.get("versions", {}).values():
+        cells = vres.get("cells") or {}
+        if not cells:
+            every_version_has_cells = False
+        states.extend(cell_state(vres, e)["state"] for e in cells)
+    if "fail" in states:
+        return 3
+    if states and every_version_has_cells and all(s == "pass" for s in states):
+        return 0
+    return 1
+
+
 def _emit(result, output):
     out = json.dumps(result, indent=2, ensure_ascii=False)
     if output:
@@ -1065,6 +1201,9 @@ def main():
     ap.add_argument("--config", help="JSON hasil resolve-psm-config.py — setelan keluarga (tag map, image DB, ps-domain, orchestrator, timeout, versi, browser) diisi dari sini untuk argumen yang tak diberikan eksplisit. Flag eksplisit selalu menang.")
     ap.add_argument("--browsers", default=DEFAULT_BROWSERS,
                     help=f"Engine Playwright dipisah koma (default: {DEFAULT_BROWSERS}; didukung: {','.join(SUPPORTED_ENGINES)})")
+    ap.add_argument("--engines",
+                    help="Engine versi ini, diset ps-run-layer (mode histori). Menang atas --browsers "
+                         "dan --config; engine tak didukung / daftar kosong = exit 2.")
     ap.add_argument("--tag-map", default="", help="Peta LENGKAP versi=tag dipisah koma (MENGGANTI default)")
     ap.add_argument("--extra-tag-map", default="", help="Tag TAMBAHAN versi=tag (MENAMBAH di atas peta)")
     ap.add_argument("--orchestrator", choices=["auto", "compose", "manual"], default=fl.DEFAULT_ORCHESTRATOR,
@@ -1095,6 +1234,14 @@ def main():
     args = ap.parse_args()
     if args.config:
         fl.apply_config_file(args, ap, args.config)
+    # --engines di luar CONFIG_KEY_TO_DEST: --config tak pernah menyentuhnya, jadi bila diset
+    # ia menang atas --browsers maupun psm_e2e_browsers.
+    try:
+        requested = (fl.normalize_engines(args.engines, key="--engines") if args.engines is not None
+                     else parse_browsers(args.browsers))
+    except fl.CellConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
     module_dir = Path(args.module_path).resolve()
     if not module_dir.is_dir():
@@ -1118,7 +1265,6 @@ def main():
                "versions": {}}, args.output)
         return 0
 
-    requested = parse_browsers(args.browsers)
     # Probe binary browser SEKALI di muka — versi mewarisi daftar yang benar-benar terpasang.
     usable = [e for e in requested if browser_available(e)]
     authored, notes = discover_scenarios(module_dir)
@@ -1144,13 +1290,13 @@ def main():
                             admin_email=args.admin_email, admin_password=args.admin_password,
                             startup_timeout=args.startup_timeout, op_timeout=args.timeout,
                             nav_timeout=args.nav_timeout * 1000, allow_pull=args.allow_image_pull,
-                            headed=args.headed, screenshot_dir=shot_dir)
+                            headed=args.headed, screenshot_dir=shot_dir, scenario_notes=notes)
         result["versions"][full_ver] = r
         overall_pass = overall_pass and r["pass"]
-    result["pass"] = overall_pass
+    result["pass"] = overall_pass  # field lama run langsung; exit code memakai State per sel
 
     _emit(result, args.output)
-    return 0 if overall_pass else 1
+    return exit_code(result)
 
 
 if __name__ == "__main__":

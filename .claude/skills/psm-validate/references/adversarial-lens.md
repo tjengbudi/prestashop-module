@@ -50,10 +50,14 @@ dilewati.
 
 ## Delegasi (default)
 
-**Kapan.** Sekali per run, lintas versi, di awal **Fase 2** — setelah source berhenti dipatch
-(patch Fase 1 membasikan review). Plan menandai adversarial `reuse`? Jangan spawn. Spawn
-keempatnya **dalam satu giliran** supaya jalan paralel; selagi mereka bekerja, lanjutkan lapis
-skrip Fase 2. Agregat **tak boleh** jalan sebelum keempat kembalian digabung.
+**Kapan.** Lintas versi, di awal **Fase 2** — setelah source berhenti dipatch (patch Fase 1
+membasikan review). Fase 2 mulai ulang (sesudah `fail` E2E kembali ke Fase 1)? Spawn lagi,
+kecuali plan kanonik me-reuse adversarial atau lensa dari `source_fingerprint` plan yang sama
+masih belum digabung (syarat & perintah persisnya: `references/run-phases.md` > Fase 2).
+Kembalian lensa yang belum digabung dan di-spawn di bawah `source_fingerprint` lain **dibuang**,
+tak pernah digabung. Spawn keempatnya **dalam satu giliran** supaya jalan paralel; selagi
+mereka bekerja, lanjutkan lapis skrip Fase 2. Agregat **tak boleh** jalan sebelum keempat
+kembalian digabung.
 
 **Isi prompt tiap subagent** — hanya ini, tak lebih:
 
@@ -71,9 +75,10 @@ skrip Fase 2. Agregat **tak boleh** jalan sebelum keempat kembalian digabung.
 **Jangan** beri path `<psm_reports_dir>`, output skrip, ringkasan lapis lain, atau temuan
 lensa lain. Satu kalimat "Lapis 1 hijau" saja sudah mencemari konteks yang dibayar mahal.
 
-**Gabung (orkestrator, sekali).** Setelah keempatnya kembali: validasi tiap kembalian
-terhadap "Bentuk kembalian"; baca `<psm_reports_dir>/<module>-adversarial.json` bila ada (bisa
-sudah memuat cacat visual Lapis 4); tambahkan `findings` keempat lensa; `versions` top-level =
+**Gabung (orkestrator, sekali, di wrap-up).** Setelah keempatnya kembali: validasi tiap kembalian
+terhadap "Bentuk kembalian"; baca `<psm_reports_dir>/<module>-adversarial.json` bila ada;
+tambahkan `findings` keempat lensa (cacat visual Lapis 4 yang ditahan di-read-merge **sesudah**
+gabungan ini, SKILL.md > Lapis 4); `versions` top-level =
 **union** cakupan yang ada + cakupan keempat peninjau; tulis balik sebagai JSON utuh. Jangan
 menilai ulang, menurunkan `severity`, atau membuang temuan peninjau — kamu penggabung, bukan
 peninjau kelima.
