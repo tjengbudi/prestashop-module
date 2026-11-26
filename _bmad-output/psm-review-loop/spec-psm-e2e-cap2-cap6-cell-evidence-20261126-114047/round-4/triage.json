@@ -1,0 +1,82 @@
+{
+ "round": 4,
+ "critical_high": 9,
+ "fixed": 8,
+ "escalated": 1,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261126-114047.r4-q1",
+   "finding": "Aturan interim: SEMUA exit 2 dari run E2E (termasuk salah ketik --cells sebelum spawn) mengakhiri E2E untuk seluruh sesi. Bentrok dengan SKILL.md (exit 2 = perbaiki & ulangi) dan headless.md (exit 2 = blocked). Mempersempitnya membalik sebagian fix round 3.",
+   "options": [
+    "Biarkan: semua exit 2 akhiri loop E2E; docs tambah pengecualian E2E",
+    "Hanya exit 2 dari child (output line ran + exit 2) akhiri loop; exit 2 pra-spawn = perbaiki & ulangi (headless: blocked)"
+   ],
+   "recommended": "Hanya exit 2 dari child yang mengakhiri loop",
+   "oscillation": true
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "Tasks > tests (adversarial-9)",
+   "issue": "No contract test feeding real ps-e2e-run output through ps-run-layer merge; scope expansion"
+  },
+  {
+   "location": "Design Notes > Aggregate (adversarial-10)",
+   "issue": "versions[ver].layers.e2e state vocabulary / advisory_note; resolvable from contract Aggregate"
+  },
+  {
+   "location": "Design Notes > Timing (adversarial-11)",
+   "issue": "browsers[].wall_clock for never-started engine spans admission..write; contract-defined"
+  },
+  {
+   "location": "Interim orchestration command templates / Code Map (adversarial-12)",
+   "issue": "templates omit module path and --reports-dir; adversarial-lens.md missing in Code Map; resolvable from today's run-phases commands"
+  },
+  {
+   "location": "Runner interim (edge-case-2, implementer-12)",
+   "issue": "child SIGTERMed while ps-run-layer not stopping: behaviour unspecified (rare edge)"
+  },
+  {
+   "location": "Child output (edge-case-4)",
+   "issue": "empty per-cell lists should be emitted as [] not omitted; implied by incomplete-record rule"
+  },
+  {
+   "location": "Configured cells (edge-case-6)",
+   "issue": "invalid browsers exit 2 even when E2E disabled; contract rule as written"
+  },
+  {
+   "location": "Runner interim key map (edge-case-8, implementer-11)",
+   "issue": "psm_flashlight_startup_timeout read but unused this slice"
+  },
+  {
+   "location": "Child output shape check (edge-case-9)",
+   "issue": "status/browsers_available malformed handling unspecified"
+  },
+  {
+   "location": "Timing (edge-case-10)",
+   "issue": "boot_wall_clock when no teardown runs; outer wrapper measures entry..return"
+  },
+  {
+   "location": "Reasons (implementer-1)",
+   "issue": "reason when warm/partial/not-run newer than gate-grade fail; contract says 'by the newest fresh record'"
+  },
+  {
+   "location": "Plan shape (implementer-6)",
+   "issue": "per_version_capable value for e2e rerun_matrix entries / PER_VERSION_LAYERS"
+  },
+  {
+   "location": "Interim orchestration Lapis 4 (implementer-7)",
+   "issue": "visual-pending timing deferred; 'as today' interim stated"
+  },
+  {
+   "location": "Never / CAP-7 (implementer-10)",
+   "issue": "sequential records of this slice stay gate-grade after CAP-7; future scope"
+  },
+  {
+   "location": "Tasks > docs adversarial-lens.md (implementer-13)",
+   "issue": "no plan command there; reworded together with Layer 3 fix"
+  }
+ ]
+}

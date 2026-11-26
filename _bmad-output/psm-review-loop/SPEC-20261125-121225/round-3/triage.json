@@ -1,0 +1,70 @@
+{
+ "round": 3,
+ "critical_high": 54,
+ "fixed": 49,
+ "escalated": 5,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261125-121225.r3-q1",
+   "finding": "CAP-7: skenario FO-only jalan tanpa lock di DB bersama saat engine lain menjalankan skenario BO yang mengubah state toko (bankwire checkout-empty-banks vs checkout-with-bank). Jadi 'temuan identik dengan run berurutan' tergantung timing.",
+   "options": [
+    "Gagal yang hanya muncul di mode paralel diulang berurutan dulu sebelum dihitung",
+    "Skenario FO yang transitive requires-nya memuat skenario BO ikut ambil lock",
+    "Biarkan, uji perbandingan dijalankan 3x"
+   ],
+   "recommended": "Gagal yang hanya muncul di mode paralel diulang berurutan dulu sebelum dihitung",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r3-q2",
+   "finding": "psm_e2e_slots 'host-wide' dihitung lewat <tmp>/psm-jobs, yang hanya melihat sesi dengan temp dir sama (distro WSL sama, TMPDIR sama). Distro lain di daemon Docker yang sama tak terhitung.",
+   "options": [
+    "Hitung lewat label Docker psm.slots di container hidup (terlihat semua klien daemon)",
+    "Tetap pakai registry, nyatakan 'host' = satu temp dir"
+   ],
+   "recommended": "Hitung lewat label Docker psm.slots di container hidup (terlihat semua klien daemon)",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r3-q3",
+   "finding": "Cell yang terus inconclusive karena sebab infra menetap (login BO gagal, image tak ada tanpa izin pull, no-slots, gagal luncur) diulang tanpa batas oleh gate/cold-canary.",
+   "options": [
+    "Fingerprint sama + reason sama 2x -> step blocked-infra, akhiri loop E2E seperti skipped",
+    "Interaktif tanya Budi tiap inconclusive, headless langsung berhenti",
+    "Tanpa batas"
+   ],
+   "recommended": "Fingerprint sama + reason sama 2x -> step blocked-infra, akhiri loop E2E seperti skipped",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r3-q4",
+   "finding": "Pemanggil headless memberi versi lewat argumen, tapi configured cells hanya dari --config. Pemanggil yang validasi 8.1,9.1 selalu dapat ready=false dan 1.7.8 inconclusive. Ini mengubah kontrak vonis per-versi yang SPEC janji pertahankan.",
+   "options": [
+    "Versi/browser argumen headless jadi configured set (headless tulis ke JSON --config yang diteruskan)",
+    "Argumen tetap run scope saja, skill pemanggil terima ready=false"
+   ],
+   "recommended": "Versi/browser argumen headless jadi configured set (headless tulis ke JSON --config yang diteruskan)",
+   "oscillation": false
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "cell-contract.md > Fresh (image_tag)",
+   "issue": "adversarial-3: freshness pakai tag, bukan image ID/digest, dan perubahan harness tak membasikan bukti; usulan stale-image/stale-harness menambah scope."
+  },
+  {
+   "location": "cell-contract.md > Scenario prerequisites",
+   "issue": "adversarial-12: requires berisi psm-universal-smoke membuat spec di-skip; perilaku terdefinisi, hanya jebakan kegunaan."
+  },
+  {
+   "location": "SPEC.md > Why / Open Questions",
+   "issue": "implementer-22: tak ada kriteria selesai berbasis waktu; anggaran wall-clock sudah jadi Open Question."
+  },
+  {
+   "location": "SPEC.md frontmatter sources",
+   "issue": "implementer-23: sources kosong; generalisasi 'versi 9' -> newest target dan Chrome -> Chromium tak dinyatakan eksplisit."
+  }
+ ]
+}

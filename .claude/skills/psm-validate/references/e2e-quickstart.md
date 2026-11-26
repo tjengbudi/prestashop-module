@@ -76,11 +76,21 @@ uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium,firefox
 #     findings:[] , pass:true , browsers:["chromium","firefox"] di tiap versi target
 ```
 
-Vonis penuh 4-lapis (via skill `psm-validate` interaktif, atau agregasi langsung):
+Vonis TDD (via skill `psm-validate` interaktif, atau langsung). Output `-o e2e.json` dari run
+langsung di atas **bukan** bukti — agregat hanya membaca histori sel yang ditulis
+`ps-run-layer.py` (`<cfg>` = `<psm_reports_dir>/psm-config.json`):
 
 ```bash
-uv run scripts/ps-aggregate.py --static static.json --e2e e2e.json --versions 9.1 -o verdict.json
+uv run scripts/ps-plan-layers.py --new-session            # -> <t>
+uv run scripts/ps-run-layer.py --layer e2e --module <module-path> --reports-dir <psm_reports_dir> \
+  --cells 9.1:chromium --session <t> --config <cfg>
+uv run scripts/ps-aggregate.py --reports-dir <psm_reports_dir> --module <module-path> \
+  --config <cfg> -o verdict.json
 ```
+
+Static dibaca dari `<module>-static.json` (atau `--static`); tanpa `--versions`/`--e2e`
+(`--e2e` = exit 2). Vonisnya `e2e_cells['9.1']['chromium']` (`state`, `gate_grade`, `reason`,
+`findings`); `ready=false` memang diharapkan selama sel lain belum terbukti.
 
 ### Format spec skenario (`<module>/tests/e2e/*.json`)
 

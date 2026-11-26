@@ -1,0 +1,86 @@
+[
+  {
+    "location": "SPEC.md CAP-7 success; cell-contract.md > Parallel browsers (CAP-7) > Identical findings",
+    "issue": "CAP-7 success says the comparison key and fixture are in cell-contract.md, but cell-contract.md defines only the key (version, browser, scenario, step, action) and says 'on bankwire'. No fixture with a known blocking bug is defined. If bankwire is clean, both finding sets are empty and the test passes without exercising the sequential-confirmation path at all.",
+    "implementation_impact": "The implementer has no failing fixture to build, so the identical-findings test can pass trivially. The rerun-seq / parallel_only logic ships unproven.",
+    "suggestion": "Define the fixture in cell-contract.md: e.g. a bankwire copy under scripts/tests/live/fixtures with one planted FO bug and one planted BO bug that fail on every engine, plus one scenario that fails only under concurrent DB writes. Assert non-empty, equal confirmed sets and a non-empty parallel_only for the interference case."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers (CAP-7) > Parallel-only failures; SPEC.md CAP-7 success ('findings are identical to a sequential run')",
+    "issue": "Sequential confirmation runs only for engines that have findings. Parallel interference can also hide a failure: engine A's BO scenario changes shared config (e.g. it disables the payment for a country, or empties the bank list) while engine B's FO scenario runs and passes only because of that change. Nothing reruns a passing engine, so the claim that findings are identical to a sequential run holds in one direction only.",
+    "implementation_impact": "A parallel tier-1 pass can be a false pass that a sequential run would have failed. That weakens the honesty law for gate-grade evidence, and the identical-findings test cannot catch it unless its fixture contains a masking case.",
+    "suggestion": "Either state the limitation and narrow the CAP-7 claim to 'no extra findings', or prevent masking: hold the cross-engine lock in shared mode for FO scenarios and exclusive mode for BO scenarios, so a BO scenario never overlaps any FO scenario of the other engine. Add a masking case to the fixture."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers (CAP-7), third bullet (BO login fallback)",
+    "issue": "When one engine's BO login fails while the other's succeeds, that engine 'reruns after the other finishes, sequentially'. Nothing says the DB is restored first or that `{browser}` is expanded differently. The first attempt already ran that engine's FO-only scenarios and wrote data keyed by `{browser}`, so the second attempt collides with its own leftovers (duplicate customer email, existing cart, address). The case where both engines fail BO login is also unspecified.",
+    "implementation_impact": "The fallback produces spurious findings, and these are not parallel-only, so they survive confirmation and become blocking. Behaviour when both logins fail is left to the implementer.",
+    "suggestion": "Make the login-fallback rerun restore the `snapshot-db` dump first (as rerun-seq does), or expand `{browser}` to `<engine>-retry`. Say which record and phase entry (`browser:<engine>#2`) replaces the first attempt. Specify that when both logins fail, BO steps stay inconclusive per today's rule with no rerun."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers (CAP-7) > Parallel-only failures (rerun-seq restore)",
+    "issue": "rerun-seq restores only the DB. Files the parallel pass wrote are kept: uploads, generated PDFs/invoices, module-written files under modules/<mod>, var/cache including class_index and Smarty compiles, and opcache. The warm reset deliberately clears these because DB-only resets leave residue. The two reset paths are inconsistent.",
+    "implementation_impact": "A failure caused by file or cache residue from the parallel pass can reproduce in rerun-seq and be confirmed as a blocking finding, or a cache built against the pre-restore DB can make the rerun flaky.",
+    "suggestion": "Reuse the warm `reset-files` (limited to var/cache plus files absent from a docroot list captured at `snapshot-db`) and `reset-opcache` steps before each `rerun-seq:<engine>`, or state explicitly why the DB restore alone is enough."
+  },
+  {
+    "location": "cell-contract.md > Warm container (CAP-5) > Teardown",
+    "issue": "ps-run-layer stops this owner's keepers 'before any run without --warm', which includes `cold-canary` for the same version as the keeper. The usual fix-loop sequence is warm pass, then cold-canary. When the cold-canary run fails (the case cold runs exist to catch, install-path bugs), the plan returns to `focus` with `e2e_warm` true, and a new keeper must pull, bring up and wait-healthy again. The slot cap (default 6) allows the keeper and the cold run to coexist.",
+    "implementation_impact": "Each failed promotion costs an extra full boot, which erodes the warm-loop savings exactly where iterations repeat.",
+    "suggestion": "Keep the keeper alive across `cold-canary` / `cold-version` runs of the same focus version. Stop it only when the focus cell's version changes, before `gate`, at loop end, or when slots are short."
+  },
+  {
+    "location": "cell-contract.md > Warm container (CAP-5) > Chain / Owner (owner token = session token)",
+    "issue": "The warm owner token is the validation session token, which is minted fresh on every psm-validate invocation. If Budi re-invokes psm-validate within the TTL (new conversation, or a restart after a crash), the previous keeper is foreign. It is never reused, and its stop needs Budi's OK. The 'at most one per (module, version, owner)' rule then allows a second keeper for the same module and version. Two keepers hold two slots, and the old one idles for up to 60 minutes.",
+    "implementation_impact": "There will be duplicate keepers, wasted slots and an extra cold boot per re-invocation. The On Activation listing turns into a recurring prompt that Budi must answer.",
+    "suggestion": "Add an adopt path: On Activation offers to re-own a keeper of the same module whose orchestrator session ended (rewrite owner in session.json under the lease) with one OK. Alternatively, stop keepers of the same module and dead orchestrator session without asking, and cap keepers per (module, version) at one regardless of owner."
+  },
+  {
+    "location": "cell-contract.md > Plan, definition of 'recorded failure' and step 7 `focus`",
+    "issue": "'Recorded failure' = the newest conclusive record of any freshness has `state: fail`, with no session or age bound. A canary failure from a validation weeks ago, never re-run since because the module was then reworked, makes the first run of a new session a warm, failed-only run on an obsolete failed set. A mandatory cold-canary follows. On a now-clean module the canary version then boots three times (keeper, cold-canary, tier 1) instead of the two the Success signal promises.",
+    "implementation_impact": "The Success signal ('canary version boots twice' on a clean module) fails whenever the history holds an old failure, and the first iteration tests the wrong scenario subset.",
+    "suggestion": "Bound 'recorded failure' to records carrying the current `--session`. Otherwise the first focus run of a session is cold and full. Add a test: an old-session fail plus a new session derives a cold full `focus`."
+  },
+  {
+    "location": "cell-contract.md > Plan (rerun_matrix reason `not-gradeable` vs definition of a not-gradeable cell)",
+    "issue": "The rerun_matrix reason `not-gradeable` is defined as 'a gate-grade pass that is not passing gate-grade', which includes a pass with non-empty `inconclusive` or `browser_notes`. The step derivation defines a not-gradeable cell more narrowly: `authored_assertions` 0 or `scenario_notes` non-empty. Those cells count as passing for promotion. The same term thus names two different sets. A pass with inconclusive steps shows reason `not-gradeable` in rerun_matrix but blocks promotion and feeds `blocked-infra`.",
+    "implementation_impact": "Implementers and the orchestrator reading rerun_matrix will treat infra-flaky passes as structurally ungradeable, or the reverse. Tests written against one definition break against the other.",
+    "suggestion": "Split the reason: `not-gradeable` only for the step-derivation set, and `inconclusive-steps` / `browser-notes` (the existing blocked-infra cause names) for the rest."
+  },
+  {
+    "location": "cell-contract.md > Plan step 3 `blocked-infra`; tier-matrix.md Rules (inconclusive = infra cause)",
+    "issue": "The infra bucket includes causes that a module can produce: `install` (the module's install() throws or returns false on one version), and `inconclusive-steps` when the module breaks BO login so `bo_authed` is false and every BO step is inconclusive. Twice in a session, these become `blocked-infra`, which ends the E2E loop 'like skipped' and is reported as an infrastructure problem.",
+    "implementation_impact": "A real module defect can be labelled infra in the report. The orchestrator then tells Budi to fix Docker instead of the module, and the fix loop stops instead of sending the defect to psm-develop.",
+    "suggestion": "Keep the state rule, but have the report distinguish module-attributable causes (`install` with a module-side error, BO login failing only after the module is installed) from pure infra (`no-slots`, `crash`, `keeper-start`, pull/boot timeouts). Name the former 'blocked-module-suspect' or at least add a hint in `e2e_blocked_causes`."
+  },
+  {
+    "location": "cell-contract.md > Evidence record > Storage (append-only history, corrupt-history rule)",
+    "issue": "Appends are 'one write() under flock', but a writer killed mid-write (`--stop-job` escalates to SIGKILL after 60 s; WSL drvfs gives no atomicity for writes) can leave a final line without a trailing newline. The next append is then glued onto that partial line. The new, valid record becomes part of an unparsable line and is silently lost, and the cell stays `corrupt-history`.",
+    "implementation_impact": "A valid gate-grade record can disappear after any interrupted append, which forces a rerun and possibly a `blocked-infra` loop that is hard to diagnose.",
+    "suggestion": "Before appending, under the lock, check the last byte of the file. If it is not '\\n', write '\\n' first in the same write(). Add a test: a partial line without a newline followed by an append reads as one valid record."
+  },
+  {
+    "location": "cell-contract.md > Headless; Plan step 3 `blocked-infra`",
+    "issue": "A headless run returns at the first step that is not clean, so one call never produces two records for one cell in the same session. Each headless call also mints its own session. `blocked-infra` is therefore unreachable in headless mode. A headless caller (psm-develop / psm-cross-version fix loops) that re-calls psm-validate on `ready: false` will cold-boot the same infra-failing cell forever.",
+    "implementation_impact": "Under persistent infra failure (missing image, no slots), unbounded boot loops are possible through headless callers, and the return JSON gives callers no machine-readable signal to stop.",
+    "suggestion": "Either let headless callers pass a stable `--session` across their loop, or add to the headless return a per-cell `infra_cause` flag (`e2e_blocked_causes`-like) and specify in references/headless.md that callers must not retry on it."
+  },
+  {
+    "location": "SPEC.md CAP-3; cell-contract.md > Runner > Fail-fast; Config keys `psm_e2e_slots` (default 6)",
+    "issue": "With the default 6 slots, tier 1 admits every version at once: 2 non-canary versions at cost 2, plus the canary version at cost 1, is 5 slots. Tier 0 steps are a single cell or a single version. Fail-fast therefore stops nothing in a default run unless other sessions occupy slots. The CAP-3 success test only shows it working with `--slots 1`. The test passes while the feature delivers no saving in the configuration Budi actually runs.",
+    "implementation_impact": "Not-run records, progress-log truncation and the sequential-fallback rule add complexity whose benefit cannot be seen in default runs, and the per-phase timing will not show any gain from it.",
+    "suggestion": "State the expected effect at default config, or make tier 1 admit versions in a defined order (oldest first, or the version with the most stale browsers first) with a staggered start (e.g. next version admitted only after the previous one reaches `browser:<engine>`), so fail-fast can save boots at default slots."
+  },
+  {
+    "location": "cell-contract.md > Warm container (CAP-5) > Reset per iteration; Evidence record > Fields (`reason` enumeration)",
+    "issue": "'A failed reset or reload makes the iteration inconclusive', but `reset-db` / `reset-files` / `reset-opcache` failure is not in the `reason` enumeration. The fallback rule would classify it as `not-driven` or `errors` by accident. The same gap covers the `foreign-keeper`, `keeper-dead` and lease-held cold-boot fallbacks: they are logged, but nothing says whether the resulting record carries a marker.",
+    "implementation_impact": "Repeated reset failures cannot be told apart from module errors in `blocked-infra` causes or the report. Implementers will pick inconsistent reason strings.",
+    "suggestion": "Add reason `warm-reset` (with the failing sub-phase in `errors`) to the enumeration, and add an optional `boot_note` field (`foreign-keeper` | `keeper-dead` | `lease-held`) on cold-boot-fallback records."
+  },
+  {
+    "location": "cell-contract.md > State, freshness, gate-grade > Fresh (`source_fingerprint` scope)",
+    "issue": "The fingerprint covers every file under the module directory except `.git/`, top-level `.psm-*` and `.memlog.md`. Editor and tool artefacts that PrestaShop never loads are included: vim `.*.swp`, `*~`, `.idea/`, `.vscode/`, `.DS_Store`, `.php-cs-fixer.cache`, `.phpunit.result.cache`. Opening a file in an editor during or after a run changes the fingerprint and stales every cell of every version. It also stays ambiguous whether `.memlog.md` is excluded only at top level.",
+    "implementation_impact": "Gate-grade evidence can be invalidated spuriously, forcing a full re-run of tier 0 and tier 1 (hours) for a change that cannot affect behaviour.",
+    "suggestion": "Add a fixed exclusion list of known non-runtime artefacts (editor swap/backup files, IDE folders, OS metadata, tool caches), applied at any depth. Keep `vendor/` and `tests/e2e` included. State that `.memlog.md` is top-level only, or that it applies at any depth. Add a test: creating `.foo.php.swp` leaves cells fresh."
+  }
+]

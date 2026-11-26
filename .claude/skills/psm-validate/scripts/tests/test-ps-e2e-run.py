@@ -8,13 +8,16 @@ perakitan temuan, & degrade orkestrasi — semua tanpa Playwright/Docker nyata.
 Playwright & Docker di-monkeypatch / tak dipanggil; logika langkah diuji dengan
 page-tiruan (duck-typed). Jalankan: uv run scripts/tests/test-ps-e2e-run.py
 """
+import contextlib
 import importlib.util
+import io
 import json
 import re
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -233,15 +236,358 @@ def _by_action(results, action):
     return [r for r in results if r["action"] == action]
 
 
+# ---------------------------------------------------------------------------
+# Bukti per sel (cell-contract.md > Evidence record > Producers) + durasi fase (CAP-6)
+# ---------------------------------------------------------------------------
+_TAG = "9.1.4-nginx"
+
+
+@contextlib.contextmanager
+def _infra(fl_over=None, mod_over=None):
+    """Tiru seam Docker/Playwright run_one_version. Stub default membuka fase seperti
+    implementasi asli, supaya sink durasi menerima nama fase yang sama dgn produksi."""
+    def _ph(name, ret):
+        def f(*a, **k):
+            with mod.fl.phase(name):
+                return ret
+        return f
+
+    fl_new = {"compose_available": lambda: True, "image_present": lambda ref: True,
+              "_bring_up_compose": _ph("bring-up", ({"ps_container": "x", "mode": "compose"}, None)),
+              "wait_healthy": _ph("wait-healthy", (True, "healthy")),
+              "_teardown": _ph("teardown", None), "_logs": lambda c: "LOG-TAIL",
+              "pull_image": _ph("pull", None)}
+    mod_new = {"install_module": _ph("install", ({"ok": True, "no_console": False}, None)),
+               "wait_http": lambda *a, **k: (True, 200, True),
+               "drive_engine": _page_drive({})}
+    fl_new.update(fl_over or {})
+    mod_new.update(mod_over or {})
+    saved_fl = {n: getattr(mod.fl, n) for n in fl_new}
+    saved_mod = {n: getattr(mod, n) for n in mod_new}
+    try:
+        for n, v in fl_new.items():
+            setattr(mod.fl, n, v)
+        for n, v in mod_new.items():
+            setattr(mod, n, v)
+        yield
+    finally:
+        for n, v in saved_fl.items():
+            setattr(mod.fl, n, v)
+        for n, v in saved_mod.items():
+            setattr(mod, n, v)
+
+
+def _page_drive(pages, launch_error=None):
+    """drive_engine tiruan yang menempuh _drive_page + run_steps ASLI di atas FakePage per
+    engine (indeks langkah lahir di run_steps, bukan disuapi). `launch_error` = {engine: msg}."""
+    launch_error = launch_error or {}
+
+    def drive(engine, scenarios, ctx, headed=False):
+        if engine in launch_error:
+            return {"browser": engine, "scenarios": [], "launch_error": launch_error[engine],
+                    "bo_authed": False}
+        page = pages.get(engine) or FakePage()
+        out, authed = mod._drive_page(_FakeBrowser(page), engine, scenarios, ctx)
+        return {"browser": engine, "scenarios": out, "launch_error": None, "bo_authed": authed}
+    return drive
+
+
+def _rov(browsers, scenarios=None, requested=None, **kw):
+    args = dict(orchestrator="auto", db_image="mariadb:lts", ps_domain="localhost:8000",
+                admin_path="admin-dev", admin_email="a", admin_password="b",
+                startup_timeout=1, op_timeout=1, nav_timeout=1000, allow_pull=False)
+    args.update(kw)
+    return mod.run_one_version(Path("/tmp"), "m", "9.1", _TAG, browsers,
+                               scenarios or [mod.universal_smoke()],
+                               requested_browsers=requested if requested is not None else list(browsers),
+                               **args)
+
+
+def _utc_us(ts):
+    try:
+        d = datetime.fromisoformat(ts)
+    except (TypeError, ValueError):
+        return None
+    return d if d.utcoffset() == timedelta(0) and re.search(r"\.\d{6}\+00:00$", ts) else None
+
+
+def test_cells_and_timing():
+    ok = True
+    print("\n[bukti per sel + durasi fase]")
+    authored = {"name": "cfg", "source": "cfg.json",
+                "steps": [{"action": "goto", "area": "fo", "path": "/"},
+                          {"action": "expect_visible", "selector": "#x"}]}
+    fatal = "<html><body>Fatal error: boom</body></html>"
+    pages = {"chromium": FakePage(raw_body=fatal, visible=False), "firefox": FakePage()}
+
+    # --- sukses: dua engine, temuan hanya di chromium ---
+    with _infra(mod_over={"drive_engine": _page_drive(pages)}):
+        r = _rov(["chromium", "firefox"], [mod.universal_smoke(), authored],
+                 scenario_notes=["cfg.json: catatan"])
+    cells = r.get("cells", {})
+    ok &= check("sukses: cells untuk tiap engine yang di-drive", list(cells) == ["chromium", "firefox"])
+    ok &= check("field level-versi: run_id/boot_id = fl.RUN_ID, boot cold, image_tag = tag, "
+                "browser_mode sequential",
+                r["run_id"] == mod.fl.RUN_ID and r["boot_id"] == mod.fl.RUN_ID and r["boot"] == "cold"
+                and r["image_tag"] == _TAG and r["tag"] == _TAG and r["browser_mode"] == "sequential")
+    ok &= check("field level-versi: boot_log null tanpa kegagalan boot, scenario_notes disalin ke versi, "
+                "errors/install ada",
+                r["boot_log"] is None and r["scenario_notes"] == ["cfg.json: catatan"]
+                and r["errors"] == [] and r["install"]["ok"] is True)
+    ch, ff = cells.get("chromium", {}), cells.get("firefox", {})
+    ts = [_utc_us(c.get(k)) for c in (ch, ff) for k in ("started_at", "finished_at")]
+    ok &= check("timestamp sel = UTC ISO-8601 bermikrodetik (+00:00)", all(ts))
+    ok &= check("timestamp sel = start/end engine-nya (chromium selesai sebelum firefox mulai)",
+                all(ts) and ts[0] <= ts[1] <= ts[2] <= ts[3])
+    ok &= check("scenario_set full + scenarios_run = nama spec (smoke termasuk)",
+                all(c["scenario_set"] == "full" and c["scenarios_run"] == ["psm-universal-smoke", "cfg"]
+                    for c in (ch, ff)))
+    got = {(f["scenario"], f["step"], f["action"]) for f in ch.get("findings") or []}
+    ok &= check("temuan chromium membawa action + step (indeks 0-based di steps spec-nya)",
+                got == {("psm-universal-smoke", 1, "expect_no_fatal"),
+                        ("psm-universal-smoke", 2, "expect_visible"),
+                        ("psm-universal-smoke", 4, "expect_no_fatal"),
+                        ("cfg", 1, "expect_visible")})
+    ok &= check("temuan per engine: firefox bersih, semua temuan chromium ber-browser chromium",
+                ff["findings"] == [] and all(f["browser"] == "chromium" for f in ch["findings"]))
+    ok &= check("daftar temuan lama versi = gabungan temuan sel (run langsung tak berubah)",
+                r["findings"] == ch["findings"] + ff["findings"] and r["pass"] is False)
+    ok &= check("authored_assertions per sel (1 expect_* authored konklusif tiap engine)",
+                ch["authored_assertions"] == 1 and ff["authored_assertions"] == 1)
+    ok &= check("bo_authed/launch_error/browser_notes per sel; hook tertunda null",
+                ch["bo_authed"] is False and ch["launch_error"] is None and ch["browser_notes"] == []
+                and all(c["scenario_spans"] is None and c["parallel_only"] is None for c in (ch, ff)))
+    ok &= check("console_errors int & screenshots list per sel",
+                isinstance(ch["console_errors"], int) and isinstance(ff["screenshots"], list))
+    ok &= check("partisi durasi: browser:<engine> hanya di phase_durations sel-nya",
+                set(ch["phase_durations"]) == {"browser:chromium"}
+                and set(ff["phase_durations"]) == {"browser:firefox"})
+    ok &= check("partisi durasi: boot_phases = fase container, tanpa browser:*",
+                set(r["boot_phases"]) == {"bring-up", "wait-healthy", "install", "wait-http",
+                                          "warmup-bo", "teardown"}
+                and all(set(v) == {"seconds", "outcome"} for v in r["boot_phases"].values()))
+    ok &= check("State per sel: chromium fail, firefox pass",
+                mod.cell_state(r, "chromium")["state"] == "fail"
+                and mod.cell_state(r, "firefox")["state"] == "pass")
+    ok &= check("exit code: satu sel fail -> 3", mod.exit_code({"versions": {"9.1": r}}) == 3)
+    ok &= check("sink durasi dinonaktifkan sesudah run_one_version", mod.fl._TIMING["sink"] is None)
+
+    # --- launch error satu engine ---
+    with _infra(mod_over={"drive_engine": _page_drive({}, {"firefox": "binary hilang"})}):
+        rl = _rov(["chromium", "firefox"])
+    lf, lc = rl["cells"]["firefox"], rl["cells"]["chromium"]
+    ok &= check("launch error: sel tetap ada, launch_error + timestamp engine terisi",
+                lf["launch_error"] == "binary hilang" and _utc_us(lf["started_at"])
+                and _utc_us(lf["finished_at"]) and lf["findings"] == [])
+    ok &= check("launch error: scenarios_run kosong (engine tak men-drive apa pun)",
+                lf["scenarios_run"] == [] and lc["scenarios_run"] != [])
+    ok &= check("launch error: catatan hanya di sel engine itu",
+                any("firefox" in n for n in lf["browser_notes"]) and lc["browser_notes"] == [])
+    ok &= check("launch error: State firefox inconclusive/launch-error, chromium pass -> exit 1",
+                mod.cell_state(rl, "firefox") == {"state": "inconclusive", "conclusive": False,
+                                                  "reason": "launch-error"}
+                and mod.cell_state(rl, "chromium")["state"] == "pass"
+                and mod.exit_code({"versions": {"9.1": rl}}) == 1)
+
+    # --- install gagal: sel tetap dipancarkan, timestamp null ---
+    def _bad_install(*a, **k):
+        with mod.fl.phase("install"):
+            return {"ok": False}, None
+    with _infra(mod_over={"install_module": _bad_install}):
+        ri = _rov(["chromium", "firefox"])
+    ok &= check("install gagal: cells untuk tiap engine, started_at/finished_at null",
+                list(ri["cells"]) == ["chromium", "firefox"]
+                and all(c["started_at"] is None and c["finished_at"] is None
+                        and c["phase_durations"] == {} and c["findings"] is None
+                        for c in ri["cells"].values()))
+    ok &= check("install gagal: boot_phases memuat install & teardown, State reason install, exit 1",
+                {"install", "teardown"} <= set(ri["boot_phases"])
+                and mod.cell_state(ri, "chromium")["reason"] == "install"
+                and mod.exit_code({"versions": {"9.1": ri}}) == 1)
+
+    # --- boot gagal (wait-healthy): install null, boot_log terisi ---
+    def _unhealthy(*a, **k):
+        with mod.fl.phase("wait-healthy"):
+            return False, "unhealthy"
+    with _infra(fl_over={"wait_healthy": _unhealthy}):
+        rb = _rov(["chromium"])
+    ok &= check("boot gagal: sel ada (timestamp null), install null, boot_log = tail log, reason errors",
+                rb["cells"]["chromium"]["started_at"] is None and rb["install"] is None
+                and rb["boot_log"] == "LOG-TAIL"
+                and mod.cell_state(rb, "chromium")["reason"] == "errors")
+
+    # --- probe drop: catatan firefox tak mendarat di sel mana pun ---
+    with _infra():
+        rp = _rov(["chromium"], requested=["chromium", "firefox"])
+    ok &= check("probe drop: hanya sel chromium; catatan drop di daftar lama, tidak di sel chromium",
+                list(rp["cells"]) == ["chromium"] and rp["cells"]["chromium"]["browser_notes"] == []
+                and any("firefox" in n for n in rp["browser_notes"]))
+
+    # --- tak ada engine: cells {}, boot_phases {}, boot_id tetap diset ---
+    r0 = _rov([])
+    ok &= check("tanpa engine: cells {}, boot_phases {}, boot_id diset, boot_wall_clock angka",
+                r0["cells"] == {} and r0["boot_phases"] == {} and r0["boot_id"] == mod.fl.RUN_ID
+                and isinstance(r0["boot_wall_clock"], float))
+    ok &= check("versi tanpa sel -> exit 1", mod.exit_code({"versions": {"9.1": r0}}) == 1)
+
+    # --- #n: pull image PS + DB, retry port (bring-up#2/teardown#2), browser kedua ---
+    bring = {"n": 0}
+
+    def _bring(*a, **k):
+        with mod.fl.phase("bring-up"):
+            bring["n"] += 1
+            if bring["n"] == 1:
+                return None, "Bind for 0.0.0.0:8000 failed: port is already allocated"
+            return {"ps_container": "x", "mode": "compose"}, None
+
+    def _slow_teardown(*a, **k):
+        with mod.fl.phase("teardown"):
+            time.sleep(0.2)
+
+    base_drive = _page_drive({})
+
+    def _two_pass(engine, scenarios, ctx, headed=False):
+        if engine == "chromium":  # pass browser kedua (mis. fallback login BO, CAP-7)
+            with mod.fl.phase("browser:chromium"):
+                pass
+        return base_drive(engine, scenarios, ctx, headed)
+
+    with _infra(fl_over={"image_present": lambda ref: False, "_bring_up_compose": _bring,
+                         "_teardown": _slow_teardown},
+                mod_over={"drive_engine": _two_pass}):
+        rt = _rov(["chromium", "firefox"], allow_pull=True)
+    bp = rt["boot_phases"]
+    ok &= check("#n di boot_phases: pull/pull#2, bring-up/bring-up#2, teardown/teardown#2",
+                {"pull", "pull#2", "bring-up", "bring-up#2", "teardown", "teardown#2"} <= set(bp)
+                and not any(k.startswith("browser:") for k in bp))
+    ok &= check("#n di phase_durations: browser:chromium + browser:chromium#2 hanya di sel chromium",
+                set(rt["cells"]["chromium"]["phase_durations"]) == {"browser:chromium", "browser:chromium#2"}
+                and set(rt["cells"]["firefox"]["phase_durations"]) == {"browser:firefox"})
+    ok &= check("outcome fase = status END ('ok')", bp["teardown#2"]["outcome"] == "ok")
+    phase_sum = (sum(v["seconds"] for v in bp.values())
+                 + sum(v["seconds"] for v in rt["cells"]["firefox"]["phase_durations"].values())
+                 + rt["cells"]["chromium"]["phase_durations"]["browser:chromium#2"]["seconds"])
+    ok &= check("boot_wall_clock diukur SESUDAH _teardown kembali (>= jumlah fase berurutan, "
+                "teardown 2x0.2s termasuk)",
+                rt["boot_wall_clock"] >= 0.4 and rt["boot_wall_clock"] + 0.002 >= phase_sum)
+    return ok
+
+
+def _write_cells(versions_states):
+    """Hasil run_one_version tiruan: {ver: {engine: 'pass'|'fail'|'launch'}}."""
+    out = {}
+    for ver, states in versions_states.items():
+        cells = {}
+        for e, st in states.items():
+            cells[e] = {"findings": [{"id": "x"}] if st == "fail" else [],
+                        "launch_error": "boom" if st == "launch" else None,
+                        "phase_durations": {f"browser:{e}": {"seconds": 0.1, "outcome": "ok"}}}
+        out[ver] = {"errors": [], "install": {"ok": True}, "cells": cells, "pass": False}
+    return out
+
+
+def _main(argv, plan=None, playwright=True, docker=True, usable=True):
+    """Jalankan mod.main() dgn argv; return (rc, output dict | None, requested engines seen)."""
+    seen = {}
+
+    def fake_rov(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
+                 requested_browsers=None, scenario_notes=(), **kw):
+        seen.setdefault("browsers", list(browsers))
+        seen["requested"] = list(requested_browsers)
+        seen["notes"] = list(scenario_notes)
+        return (plan or {}).get(full_ver) or {"errors": [], "install": None, "cells": {},
+                                               "pass": False}
+
+    saved = (mod.playwright_available, mod.fl.docker_available, mod.browser_available,
+             mod.run_one_version, mod.fl.job_start)
+    with tempfile.TemporaryDirectory() as td:
+        mdir = Path(td) / "m"
+        (mdir / "tests" / "e2e").mkdir(parents=True)
+        (mdir / "tests" / "e2e" / "broken.json").write_text("{bukan json")
+        out = Path(td) / "out.json"
+        cfg = Path(td) / "cfg.json"
+        cfg.write_text(json.dumps({"psm_e2e_browsers": "firefox"}))
+        full = [str(MOD_PATH), str(mdir), "-o", str(out)] + [a.replace("{cfg}", str(cfg)) for a in argv]
+        try:
+            mod.playwright_available = lambda: playwright
+            mod.fl.docker_available = lambda: docker
+            mod.browser_available = lambda e: usable
+            if plan is not None:
+                mod.run_one_version = fake_rov
+            mod.fl.job_start = lambda *a, **k: True
+            with mock.patch.object(sys, "argv", full), contextlib.redirect_stderr(io.StringIO()):
+                rc = mod.main()
+        finally:
+            (mod.playwright_available, mod.fl.docker_available, mod.browser_available,
+             mod.run_one_version, mod.fl.job_start) = saved
+        data = json.loads(out.read_text()) if out.exists() else None
+    return rc, data, seen
+
+
+def test_main_engines_and_exit():
+    ok = True
+    print("\n[--engines + exit code]")
+    two = ["--versions", "8.1,9.1"]
+    rc, _, _ = _main(two, plan=_write_cells({"8.1": {"chromium": "pass", "firefox": "pass"},
+                                              "9.1": {"chromium": "pass", "firefox": "pass"}}))
+    ok &= check("exit 0: tiap sel yang dipancarkan pass", rc == 0)
+    rc, _, _ = _main(two, plan=_write_cells({"8.1": {"chromium": "pass", "firefox": "launch"},
+                                              "9.1": {"chromium": "fail", "firefox": "pass"}}))
+    ok &= check("exit 3: ada sel fail (apa pun state sel lain)", rc == 3)
+    rc, _, _ = _main(two, plan=_write_cells({"8.1": {"chromium": "pass", "firefox": "launch"},
+                                              "9.1": {"chromium": "pass", "firefox": "pass"}}))
+    ok &= check("exit 1: sel inconclusive tanpa fail", rc == 1)
+    rc, _, _ = _main(two, plan=_write_cells({"8.1": {"chromium": "pass"}, "9.1": {}}))
+    ok &= check("exit 1: versi tanpa sel yang di-drive", rc == 1)
+    rc, data, _ = _main(["--versions", "9.1"], usable=False)
+    ok &= check("exit 1: run_one_version asli tanpa engine terpasang (cells {})",
+                rc == 1 and data["versions"]["9.1"]["cells"] == {})
+    rc, data, _ = _main(["--versions", "9.1"], playwright=False)
+    ok &= check("exit 0: Playwright absen -> skipped", rc == 0 and data["status"] == "skipped")
+    rc, data, _ = _main(["--versions", "9.1"], docker=False)
+    ok &= check("exit 0: Docker absen -> skipped", rc == 0 and data["status"] == "skipped")
+
+    ok_plan = _write_cells({"9.1": {"chromium": "pass"}})
+    rc, data, seen = _main(["--versions", "9.1", "--config", "{cfg}"], plan=ok_plan)
+    ok &= check("tanpa --engines: psm_e2e_browsers dari --config dipakai",
+                seen.get("requested") == ["firefox"] and data["browsers"] == ["firefox"])
+    rc, data, seen = _main(["--versions", "9.1", "--config", "{cfg}", "--browsers", "webkit",
+                            "--engines", "Chromium,chromium"], plan=ok_plan)
+    ok &= check("--engines menang atas --browsers & --config (dinormalisasi)",
+                rc == 0 and seen.get("requested") == ["chromium"] and seen.get("browsers") == ["chromium"])
+    ok &= check("scenario_notes run diteruskan ke tiap versi (dan tetap ada di level run)",
+                len(seen.get("notes") or []) == 1 and "broken.json" in seen["notes"][0]
+                and data["scenario_notes"] == seen["notes"])
+    for label, argv in (("--engines safari", ["--engines", "safari"]),
+                        ("--engines kosong", ["--engines", ""]),
+                        ("--browsers typo", ["--browsers", "chromium,firefx"]),
+                        ("--engines tak sah walau --browsers sah",
+                         ["--browsers", "chromium", "--engines", "ie"])):
+        rc, data, seen = _main(["--versions", "9.1"] + argv, plan=ok_plan)
+        ok &= check(f"exit 2: {label} (tak ada versi dijalankan)", rc == 2 and not seen and data is None)
+    return ok
+
+
 def main():
     ok = True
 
     # --- parse_browsers ---
     ok &= check("browsers 'chromium,firefox'", mod.parse_browsers("chromium,firefox") == ["chromium", "firefox"])
-    ok &= check("browsers kosong -> default", mod.parse_browsers("") == ["chromium", "firefox"])
-    ok &= check("browsers case-insensitif + dedup + filter",
-                mod.parse_browsers("Chromium, FIREFOX, safari, chromium") == ["chromium", "firefox"])
-    ok &= check("browsers semua invalid -> default", mod.parse_browsers("safari,ie") == ["chromium", "firefox"])
+    ok &= check("browsers None -> default skrip", mod.parse_browsers(None) == ["chromium", "firefox"])
+    ok &= check("browsers case-insensitif + dedup",
+                mod.parse_browsers("Chromium, FIREFOX, chromium") == ["chromium", "firefox"])
+
+    def _cfg_err(raw):
+        try:
+            mod.parse_browsers(raw)
+        except mod.fl.CellConfigError:
+            return True
+        return False
+    # Fallback diam-diam ke default DIGANTI normalizer bersama (cell-contract > Configured
+    # cells): typo engine / daftar kosong adalah input error (main: exit 2), bukan cakupan lain.
+    ok &= check("browsers kosong -> input error (bukan default diam-diam)", _cfg_err(""))
+    ok &= check("browsers dgn satu engine tak didukung -> input error", _cfg_err("chromium,safari"))
+    ok &= check("browsers semua invalid -> input error", _cfg_err("safari,ie"))
 
     # --- default timeout navigasi: flashlight dingin butuh >20s (kompilasi Smarty/Symfony) ---
     ok &= check("DEFAULT_NAV_TIMEOUT_S = 60 (anti false-positive 'halaman rusak' saat cold start)",
@@ -1008,6 +1354,9 @@ def main():
                 mod.run_shot_dir(already) == already)
     ok &= check("nama yang cuma mirip stempel tetap distempel (bukan pencocokan longgar)",
                 mod.run_shot_dir("/tmp/run-lama").startswith("/tmp/run-lama/run-"))
+
+    ok &= test_cells_and_timing()
+    ok &= test_main_engines_and_exit()
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

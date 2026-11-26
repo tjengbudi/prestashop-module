@@ -1,0 +1,152 @@
+[
+ {
+  "round": 1,
+  "location": "brownfield.md (bankwire evidence)",
+  "issue": "'~25 h' tak terverifikasi; stempel agregat 20260908-072821Z..20260909-010808Z ≈ 17.7 jam."
+ },
+ {
+  "round": 1,
+  "location": "SPEC.md frontmatter sources: []",
+  "issue": "Permintaan asli Budi dan jawabannya tak dikutip sebagai source (jejak ada di memlog)."
+ },
+ {
+  "round": 1,
+  "location": "SPEC.md (bahasa edit skill)",
+  "issue": "Tak menyebut bahasa edit SKILL.md/run-phases.md; sudah diatur document_output_language di SKILL.md."
+ },
+ {
+  "round": 2,
+  "location": "cell-contract.md > Parallel browsers (lock)",
+  "issue": "Lock tak menutup rantai requires: BO scenario engine lain bisa mengubah state di antara prasyarat dan dependen FO-only (edge-10)."
+ },
+ {
+  "round": 2,
+  "location": "cell-contract.md > Config keys",
+  "issue": "psm_e2e_slots non-integer dan psm_e2e_warm_ttl <1/non-integer belum punya penanganan input (edge-21)."
+ },
+ {
+  "round": 2,
+  "location": "tier-matrix.md / cell-contract.md Runner",
+  "issue": "Patch di tengah gerbang (temuan Lapis 3) tak menghentikan sel tier 1 yang masih antre; usulan berhenti saat fingerprint berubah = perluasan scope (edge-26)."
+ },
+ {
+  "round": 2,
+  "location": "SPEC.md CAP-3 / cell-contract.md Runner",
+  "issue": "Dengan default slots 6, fail-fast tak pernah memotong apa pun di tier 1; doc sudah menyatakannya, penghematan datang dari tiering (implementer-17)."
+ },
+ {
+  "round": 2,
+  "location": "cell-contract.md Freshness",
+  "issue": "image_tag tanpa digest dan vendor/ di luar fingerprint (adversarial-6 sebagian) — perluasan, perilaku lama."
+ },
+ {
+  "round": 2,
+  "location": "cell-contract.md Headless",
+  "issue": "Headless loop-back boot V dua kali berturut (focus cold lalu cold-version); gabung = ubah keputusan r1-q2 (adversarial-15 bagian 3)."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > Fresh (image_tag)",
+  "issue": "adversarial-3: freshness pakai tag, bukan image ID/digest, dan perubahan harness tak membasikan bukti; usulan stale-image/stale-harness menambah scope."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > Scenario prerequisites",
+  "issue": "adversarial-12: requires berisi psm-universal-smoke membuat spec di-skip; perilaku terdefinisi, hanya jebakan kegunaan."
+ },
+ {
+  "round": 3,
+  "location": "SPEC.md > Why / Open Questions",
+  "issue": "implementer-22: tak ada kriteria selesai berbasis waktu; anggaran wall-clock sudah jadi Open Question."
+ },
+ {
+  "round": 3,
+  "location": "SPEC.md frontmatter sources",
+  "issue": "implementer-23: sources kosong; generalisasi 'versi 9' -> newest target dan Chrome -> Chromium tak dinyatakan eksplisit."
+ },
+ {
+  "round": 4,
+  "location": "cell-contract.md > Evidence record > Fields",
+  "issue": "no module/module_path identity in records (same as today's name-only identity check)"
+ },
+ {
+  "round": 4,
+  "location": "brownfield.md > Evidence",
+  "issue": "~25 h should be ~18 h (corrected)"
+ },
+ {
+  "round": 4,
+  "location": "SPEC.md frontmatter sources / Assumptions",
+  "issue": "in-chat source not in sources; Chrome->Chromium and 9->newest target mapping could be stated more explicitly"
+ },
+ {
+  "round": 5,
+  "location": "cell-contract.md > Parallel-only failures (adversarial-4)",
+  "issue": "rerun-seq restores only the DB, not files; beyond Budi's r4-q2 decision, consequence is a false fail only"
+ },
+ {
+  "round": 5,
+  "location": "cell-contract.md > Warm Teardown (adversarial-5)",
+  "issue": "keeper stopped before cold-canary of same version; optimisation"
+ },
+ {
+  "round": 5,
+  "location": "cell-contract.md > Plan recorded failure (adversarial-7)",
+  "issue": "old-session failure makes first run warm; efficiency, suggestion to bound by session"
+ },
+ {
+  "round": 5,
+  "location": "cell-contract.md > Plan blocked-infra (adversarial-9)",
+  "issue": "module-attributable causes reported as infra; new report label is scope"
+ },
+ {
+  "round": 5,
+  "location": "cell-contract.md > Headless (adversarial-11)",
+  "issue": "blocked-infra unreachable in headless; callers have their own attempt caps"
+ },
+ {
+  "round": 5,
+  "location": "SPEC.md CAP-3 / psm_e2e_slots (adversarial-12)",
+  "issue": "fail-fast saves nothing at default 6 slots; staggered admission is a design change"
+ },
+ {
+  "round": 5,
+  "location": "cell-contract.md > Evidence record (adversarial-13)",
+  "issue": "optional boot_note marker for cold-boot fallbacks"
+ },
+ {
+  "round": 5,
+  "location": "cell-contract.md > Fresh (adversarial-14)",
+  "issue": "editor/IDE artefacts stale cells; conservative, exclusion list optional"
+ },
+ {
+  "round": 5,
+  "location": "cell-contract.md > Warm Chain (edge-case-2)",
+  "issue": "keeper-start retried warm; addressed incidentally by e2e_warm session rule"
+ },
+ {
+  "round": 5,
+  "location": "cell-contract.md > Storage (edge-case-15)",
+  "issue": "histories keyed by module name only; other copies of the module in the same reports dir"
+ },
+ {
+  "round": 5,
+  "location": "tier-matrix.md / run-phases.md read-merge (implementer-2)",
+  "issue": "adversarial.json findings lifecycle across Layer 3 reruns; pre-existing read-merge behaviour"
+ },
+ {
+  "round": 5,
+  "location": "cell-contract.md > Aggregate (implementer-6)",
+  "issue": "aggregate target_versions vs configured versions when narrowed; ready already false"
+ },
+ {
+  "round": 5,
+  "location": "SPEC.md Open Questions (implementer-28)",
+  "issue": "no measurable wall-clock acceptance; already an Open Question for Budi"
+ },
+ {
+  "round": 5,
+  "location": "SPEC.md Assumptions (implementer-29)",
+  "issue": "canary 'newest target' vs literal 9, Chromium vs branded Chrome; assumption documented"
+ }
+]

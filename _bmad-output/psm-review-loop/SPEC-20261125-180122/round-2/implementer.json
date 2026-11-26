@@ -1,0 +1,140 @@
+[
+  {
+    "location": "cell-contract.md > Plan > Phase 1 / Phase 2 entry",
+    "issue": "Version V is 'clean' only when phase1_reuse is true AND its Layers 1, 2 and 5 hold no blocking finding, and Phase 2 entry requires that 'one --per-version plan call ... must show every version clean'. But ps-plan-layers.py only judges freshness (reuse/rerun, phase1_reuse); no field anywhere (plan or aggregate) reports 'no blocking finding on L1/2/5 per version'. The plan call that is supposed to show cleanliness cannot show it.",
+    "implementation_impact": "The implementer must either invent a new plan field (and decide which layer files and which finding severities count as blocking) or leave the orchestrator to judge blocking findings by reading layer JSON by hand, which SKILL.md forbids ('jangan nilai ulang'). The Phase 2 entry check and the hosting-loop exit condition cannot be tested as written.",
+    "suggestion": "Define a plan output, e.g. per_version[V].clean (phase1_reuse plus no blocking finding in V's per-version static/flashlight/scenario files, judged by ps-aggregate's existing layer functions), plus a top-level phase2_ready, and state that the orchestrator gates on these fields. Add a unit test for both."
+  },
+  {
+    "location": "cell-contract.md > Config keys > Image tag; Aggregate",
+    "issue": "Plan, runner and aggregate must resolve image tags the same way: resolve_tag(parse_tag_map(--tag-map else psm_flashlight_tag_map; --extra-tag-map)). ps-aggregate.py has no --tag-map or --extra-tag-map flag today. The spec lists only --config and --session as new aggregate flags, and says only that ps-run-layer takes the two flags from its passthrough.",
+    "implementation_impact": "When the operator uses --extra-tag-map (which SKILL.md allows), the aggregate resolves a different tag from the one the runner recorded. Every cell then reads stale-tag and ready stays false with no error. The implementer has to guess whether to add the flags or to ignore the case.",
+    "suggestion": "State that ps-aggregate.py gains --tag-map and --extra-tag-map, with the same semantics as the plan's. Also state that the orchestrator passes the same values to plan, ps-run-layer passthrough and aggregate. Alternatively, forbid --extra-tag-map for runs that gate on E2E."
+  },
+  {
+    "location": "tier-matrix.md > Rules > Visual review",
+    "issue": "Pending visual entries must be tagged with 'the run's source_fingerprint', and at merge time entries with a stale fingerprint are dropped. No script exposes a fingerprint to the orchestrator. ps-run-layer's output line carries only e2e_status, reason and appended. The plan output does not list the current fingerprint.",
+    "implementation_impact": "The orchestrator (a model) would have to read raw .jsonl history lines to tag entries, and would have to compute a SHA-256 over the module tree itself to judge staleness. That is error-prone and is the kind of manual judgment the skill forbids.",
+    "suggestion": "Have ps-plan-layers.py emit source_fingerprint (current), and have ps-run-layer's final JSON line include the fingerprint it computed before admission. Then refer to both fields in the visual-review rule."
+  },
+  {
+    "location": "cell-contract.md > Headless; tier-matrix.md > Rules (headless stops at first step not clean)",
+    "issue": "Headless 'drives the plan's steps in order and returns at the first step that is not clean'. Tier 0 runs inside the hosting (canary) version's Phase 1 loop, which runs first. The spec does not say whether the Phase 1 loops of the other versions (Layer 2 flashlight and Layer 5 scenario per-version runs) still run before returning when the canary E2E step fails. Read literally, they do not. The later '--merge-only for Layers 2 and 5' then finds no per-version files for 1.7.8 and 8.1.",
+    "implementation_impact": "Under the literal reading, a headless caller such as psm-develop gets no Layer 2 or 5 verdict for the non-canary versions whenever the canary E2E is red. A Layer 2 install error on 1.7.8 stays hidden until E2E is fixed. The implementer must pick between two orchestration orders that give callers very different results.",
+    "suggestion": "State explicitly whether headless finishes every version's Phase 1 (Layers 1/2/5, which do not depend on E2E) before honouring the E2E stop, or whether it skips them. If they are skipped, state how unreached Layer 2/5 versions are reported in the return JSON."
+  },
+  {
+    "location": "cell-contract.md > Warm container > Chain / Pre-iteration check",
+    "issue": "The keeper is started as 'ps-e2e-run.py --keep-warm --warm-ttl ... --warm-owner <token>' and the iteration as a child with --use-warm. The spec does not say which passthrough flags each one receives: --allow-image-pull, --orchestrator, --db-image, --ps-domain, --startup-timeout, --timeout, --tag-map/--extra-tag-map, --admin-path/--admin-email/--admin-password, --nav-timeout, --screenshot-dir, --headed. The pre-iteration check compares only keeper liveness, health, image tag, module path and version. It does not compare db-image, orchestrator, ps-domain or admin settings.",
+    "implementation_impact": "The implementer must guess how the flags are split. Without --allow-image-pull or the right tag map the keeper may fail to boot, which wrongly disables warm mode for the whole session (keeper-start). If settings change between iterations, a mismatched container is silently reused.",
+    "suggestion": "List which flags go to the keeper (boot-time: orchestrator, db-image, ps-domain, startup-timeout, timeout, tag maps, allow-image-pull, admin-path) and which go to the iteration (admin credentials, nav-timeout, screenshot-dir, headed). Record the boot-time ones in session.json and add them to the pre-iteration mismatch check."
+  },
+  {
+    "location": "cell-contract.md > Warm container > Chain (keeper-start record)",
+    "issue": "'A keeper that exits first gives the cell an inconclusive record, reason keeper-start, with the keeper's errors and boot_phases.' The keeper writes session.json only after wait-healthy and baseline succeed. No channel is defined for the keeper to hand errors or boot_phases to ps-run-layer when it dies during pull, bring-up or wait-healthy.",
+    "implementation_impact": "The implementer cannot fill errors or boot_phases on the keeper-start record without inventing a result file or a stderr protocol. The CAP-6 timings for failed keeper boots would be lost.",
+    "suggestion": "Specify a keeper result file, e.g. <tmp>/psm-warm/<warm-id>/exit.json or an -o path passed by ps-run-layer, that the keeper writes on every exit path. Define its shape: errors, boot_id, boot_phases, wall_clock."
+  },
+  {
+    "location": "SPEC.md > Success signal (before/after timing report)",
+    "issue": "The mandatory before/after report is not operationally defined. 'Before' is to come from progress-log START/END timestamps of the current scripts, but no such logs exist for the 2026-09-08 bankwire run: _bmad-output/psm-validate has no bankwire *.progress.log, and logs are truncated every run. So a fresh baseline run with the current scripts must be made before any script is changed. The spec does not define the 'before' fix-loop iteration (which command: ps-run-layer --layer e2e --versions 9.1 with which browsers? with the injected fault?) or the 'before' release gate (--jobs 3, both browsers, all three versions?). It also does not say where the report is written or in what format.",
+    "implementation_impact": "A required done-criterion cannot be produced or checked reproducibly. If the implementer starts editing scripts first, the 'before' baseline can no longer be measured with the current code.",
+    "suggestion": "Add a short procedure covering: (1) the git commit or tag of the 'before' scripts; (2) the exact before and after commands for one fix-loop iteration and for the full gate on a temp copy of bankwire, with the same injected fault; (3) the report path and a JSON or Markdown shape (per phase, per boot, wall-clock). Also note that the baseline must be captured before the first script change."
+  },
+  {
+    "location": "SPEC.md > Success signal vs cell-contract.md > Plan > Phase 1 (hosting loop)",
+    "issue": "The hosting loop runs the E2E step 'only once V is clean'. A patch stales V's Layers 2 and 5 by mtime, so every fix-loop iteration first re-runs a cold flashlight boot and a cold scenario boot for V, each with bring-up and wait-healthy, before the warm E2E run. The success signal ('a fix-loop iteration ... completes as a warm canary run with no pull, bring-up or wait-healthy phase') only holds if 'iteration' means the E2E run's own progress log.",
+    "implementation_impact": "The structural success check and the 'one fix-loop iteration' wall-clock in the timing report can be read two ways: E2E only, or the whole loop iteration including the Layer 2 and 5 cold boots. The two readings give different pass/fail outcomes and different speed-up numbers.",
+    "suggestion": "State that the success signal and the timing report measure (a) the E2E run only, or (b) the full hosting-loop iteration including Layers 1/2/5. If (b), say whether the Layer 2/5 boots are expected to appear."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers > Cross-engine lock (Test)",
+    "issue": "'Test: on bankwire with two engines, the logged runs of every BO scenario overlap no scenario of the other engine.' No per-scenario log line or record field is defined: only browser:<engine> and lock-wait:<engine> phases exist. Progress-log timestamps use isoformat(timespec='seconds'), so sub-second boundaries cannot prove or disprove overlap.",
+    "implementation_impact": "The test cannot be written against the specified artefacts. The implementer must invent a per-scenario phase or field and choose a time resolution.",
+    "suggestion": "Define a per-scenario phase (e.g. scenario:<engine>:<name>) or per-scenario started_at/finished_at with monotonic or millisecond timestamps in the worker result, and assert non-overlap on those values."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers ('two concurrent BO sessions with the same admin work on every target version')",
+    "issue": "The pass criterion of this live test is undefined. It could mean both logins return authed, or both sessions are still authed after the other engine logs in, or each can load an authenticated BO page and run a BO action after the other's login. It is also unclear whether a failure on one version blocks the implementation or only triggers the runtime fallback.",
+    "implementation_impact": "The implementer cannot write a deterministic assertion. On PrestaShop versions that invalidate the older session, a weak criterion would pass while BO steps become inconclusive or masked at runtime.",
+    "suggestion": "Specify the sequence: login A, login B, then A and B each load a named authenticated BO page (e.g. AdminModules&configure=bankwire) and assert an authed marker. Also state what a failure on a given tag means: CAP-7 disabled for that version, or a test failure."
+  },
+  {
+    "location": "tier-matrix.md > Rules > Loop-back vs cell-contract.md > Plan steps 5-7",
+    "issue": "Tier-matrix describes each loop-back as focus, then cold-version V, then cold-canary, then gate, and says a failure in step 2 or 3 restarts at step 1. In the plan derivation, step 6 (cold-canary) requires 'no non-canary cell is failing'. With two failing cells from one gate run, the derived order is focus A, cold-version A, focus B, cold-version B, cold-canary. Tier-matrix step 3 is skipped for A, which the matrix text does not describe.",
+    "implementation_impact": "An implementer or test author following tier-matrix would expect a cold-canary between the two loop-backs, contradicting the plan test 'two failing cells from one tier-1 run walk through both loop-backs'.",
+    "suggestion": "Amend the tier-matrix Loop-back rule: 'with several failing cells, steps 1-2 repeat per failing cell; step 3 runs once after no non-canary cell is failing', or give the expected step sequence for the two-cell test explicitly."
+  },
+  {
+    "location": "cell-contract.md > Plan > step 3 blocked-infra (cause list)",
+    "issue": "The infra causes are 'reason of an inconclusive record other than stopped, or inconclusive-steps (non-empty inconclusive) or browser-notes for a pass that is not passing gate-grade'. In rerun_matrix, browser-notes is a catch-all ('any other gate-grade pass that is not passing gate-grade', which also covers scenario_notes that differ from the current notes). Here it may mean literally non-empty browser_notes. The rule also does not say whether non-gate-grade passes (warm or partial) produce a cause, or are ignored.",
+    "implementation_impact": "Under one reading, two consecutive same-session records (for example a warm partial pass followed by a cold pass with differing scenario_notes) trigger blocked-infra and end the E2E loop. Under the other they do not. That changes when ready can ever become true in a session.",
+    "suggestion": "Enumerate the cause key per record kind, e.g. inconclusive -> reason; gate-grade pass with non-empty inconclusive -> inconclusive-steps; gate-grade pass with non-empty browser_notes -> browser-notes; anything else -> no infra cause. Add a test where a warm pass followed by a cold pass does not give blocked-infra."
+  },
+  {
+    "location": "cell-contract.md > Headless vs .claude/skills/psm-validate/references/headless.md",
+    "issue": "The spec says every early return (step not clean, blocked-*, E2E skipped) is status: complete with ready: false, and that blocked is reserved for 'cannot assess at all'. headless.md says that when the log is silent for about 3 minutes without DONE, the run stops its job and returns blocked with a reason. Under the new contract a stopped job yields an inconclusive/stopped record, i.e. a step that is not clean, which should be complete. The 'Docs to update' entry for headless.md mentions only the automatic --cleanup-orphans. It omits the new return fields (versions{e2e_state,reason}, not_run_cells, e2e_tier_reached), per-call --new-session minting, the headless config copy, stop-at-first-not-clean, and no-warm.",
+    "implementation_impact": "Two documents give conflicting return statuses for a stalled job. The headless contract that callers read would not describe the new fields or stop rule.",
+    "suggestion": "Decide which status a stopped or stalled job returns under the new contract, and extend the headless.md entry in 'Docs to update' with every headless change listed in cell-contract.md > Headless."
+  },
+  {
+    "location": "SPEC.md > Constraints (headless callers keep their per-version verdict contract) vs .claude/skills/psm-optimize/SKILL.md (Verifikasi)",
+    "issue": "psm-optimize judges compatibility as a per-version delta against its baseline validate status ('tak ada kegagalan baru dibanding sebelum'). With headless stop-at-first-not-clean, a module whose canary is already red at baseline leaves 1.7.8 and 8.1 'not reached' in both the baseline and the after run. A new regression on those versions is then invisible. The claim that callers keep their per-version verdict contract changes meaning for this caller, and psm-optimize is not in 'Docs to update'.",
+    "implementation_impact": "After the change, psm-optimize can declare 'no new failures' while two of three versions were never tested. This is a silent honesty gap in a sibling skill.",
+    "suggestion": "Add psm-optimize (and, if relevant, psm-develop and psm-cross-version) to 'Docs to update': a version with reached: false is not comparable and must not count as 'no new failure'. Alternatively, let callers request continue-past-failure for baseline runs."
+  },
+  {
+    "location": "cell-contract.md > Aggregate (configured set vs existing --versions)",
+    "issue": "ps-aggregate.py today takes target_versions from --versions or, when absent, from the static payload's versions, and uses them for every layer and for compute_ready. The spec says the aggregate reads the configured set from --config for E2E. It does not say whether --config also sets target_versions for the non-E2E layers, or what happens when --versions or the static scan's versions differ from psm_target_versions. Headless claims 'ready and versions cover exactly the caller's cells'.",
+    "implementation_impact": "The implementer must choose whether versions[...] and the non-E2E part of ready follow --versions, the static payload, or the configured set. A mismatch could leave a configured version absent from versions[] while E2E still requires it, or the reverse.",
+    "suggestion": "State that the aggregate's target versions equal the configured psm_target_versions (from --config). State whether --versions narrower than that set is an input error or report-only, and how the static payload's versions are checked against it."
+  },
+  {
+    "location": "cell-contract.md > Entry points / Runner input errors (existing tests and quickstart)",
+    "issue": "The contract makes ps-aggregate.py --e2e an input error, has the aggregate ignore <module>-e2e*.json, and makes --per-version and --jobs input errors for --layer e2e. The current suites use these paths heavily: about 24 e2e references in test-ps-aggregate.py, 21 in test-ps-run-layer.py and 9 in test-ps-plan-layers.py. e2e-quickstart.md's TDD loop ends with 'ps-aggregate.py --static ... --e2e e2e.json'. The spec does not say whether these tests are rewritten against histories or deleted. It also does not say what replaces the quickstart's verdict step: a direct ps-e2e-run.py output is 'never evidence', and plan calls now need --session.",
+    "implementation_impact": "The implementer must decide test migration without guidance. 'Suite green' is not a usable done-signal while existing assertions encode the old contract, and the quickstart flow has no verdict path.",
+    "suggestion": "Add a line to brownfield.md or cell-contract.md: existing tests for e2e file I/O are migrated to the history format (list the behaviours to keep), and the quickstart's verdict step becomes '<what command>'. Add --session to the quickstart and adversarial-lens doc updates."
+  },
+  {
+    "location": "cell-contract.md > Evidence record > session (--new-session)",
+    "issue": "'ps-plan-layers.py --new-session (prints a random [a-z0-9]{16} and exits)'. module_path is a required positional argument of ps-plan-layers.py today. The spec does not say whether --new-session is allowed without it, or is mutually exclusive with the other flags.",
+    "implementation_impact": "This is a small guess, but it shapes the On Activation command in SKILL.md and headless.md.",
+    "suggestion": "State: --new-session takes no module_path, conflicts with every other flag (exit 2), prints only the token to stdout and exits 0."
+  },
+  {
+    "location": "cell-contract.md > State, freshness (shared fingerprint function)",
+    "issue": "'Plan, runner and aggregate share one function' for source_fingerprint, but no owning script is named. For the shared normalizer, by contrast, the spec says explicitly 'in ps-flashlight-run.py next to CONFIG_KEY_TO_DEST'. The aggregate already loads ps-plan-layers.py as a sibling, and ps-run-layer loads ps-aggregate.",
+    "implementation_impact": "This is a minor guess. A wrong placement creates an import cycle or a second implementation, which the project's 'one owner' rule forbids.",
+    "suggestion": "Name the owner, e.g. ps-plan-layers.py (source_fingerprint(module_dir, reports_dir)), consumed by ps-aggregate via the existing load_sibling and by ps-run-layer via aggregate()."
+  },
+  {
+    "location": "cell-contract.md > Config keys > psm_e2e_slots ('docker ps --filter label=psm.slots, with the op timeout')",
+    "issue": "It is unclear which 'op timeout' applies. ps-run-layer has no timeout flag. ps-flashlight-run.py's DOCKER_CMD_TIMEOUT (120 s) bounds short docker commands, while the children's --timeout (default 600 s) is the per-version operation timeout.",
+    "implementation_impact": "This is a minor guess. A 600 s timeout per admission count would stall admission for 10 minutes on a hung daemon before 'counts as cap full'.",
+    "suggestion": "Say 'DOCKER_CMD_TIMEOUT (120 s)', or name the passthrough flag to use."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers > BO-login fallback and Parallel-only failures",
+    "issue": "Both mechanisms run after all workers exit, each with a full reset to the snapshot. The spec does not define how they are ordered or combined when one version has an engine whose BO login failed (its #2 pass counts and 'needs no sequential confirmation') and another engine with findings (rerun-seq). It is unclear whether each sequential pass gets its own reset, whether the #2 pass's own findings also get a rerun-seq, and in what order the engines run, which matters for {browser} data and for the #2/#3 suffixes.",
+    "implementation_impact": "The implementer must invent the ordering. Different orderings change which findings are confirmed, the boot_phases suffixes, and the wall-clock.",
+    "suggestion": "Specify the post-parallel sequence: e.g. for each engine in psm_e2e_browsers order, first the BO-login fallback pass if needed, then rerun-seq for engines with findings, each preceded by a full reset. Also give the {browser} expansion for the fallback pass."
+  },
+  {
+    "location": "cell-contract.md (top) > identical-findings test and success-signal fixture",
+    "issue": "The fault is 'one authored spec's expect_text is changed so it fails on every engine'. In bankwire only checkout-with-bank.json has expect_text: two in BO (steps 4 and 17, conclusive only when bo_authed) and four in FO (steps 45 and 54-56). The file and step are not named.",
+    "implementation_impact": "If a BO expect_text is chosen, a flaky BO login turns the fault into an inconclusive step. The identical-findings test's 'non-empty confirmed set' then fails for reasons unrelated to CAP-7. Two implementers would build different fixtures.",
+    "suggestion": "Name the fixture exactly, e.g. checkout-with-bank.json step 55 (FO 'Please send us your payment by bank transfer') changed to a non-matching text, with the success signal's one-line patch restoring it."
+  },
+  {
+    "location": "cell-contract.md > Warm container > Teardown ('The orchestrator stops it when the loop ends')",
+    "issue": "It is unclear which loop is meant: the hosting Phase 1 loop, the E2E loop ending (blocked-*, skipped), or the end of the psm-validate session. A keeper is also stopped automatically before any non-warm e2e run, so the orchestrator's own stop duty is ambiguous.",
+    "implementation_impact": "This is a minor guess. A keeper may hold a host-wide slot for up to 60 minutes after interactive validation ends, which shows up as no-slots for other sessions.",
+    "suggestion": "State: the orchestrator runs --stop-job on its own keepers when the hosting loop ends and at session end, including when the E2E loop ended early."
+  },
+  {
+    "location": "SPEC.md > Assumptions (canary = newest target x Chromium) vs source request",
+    "issue": "Budi asked for 'version 9 + Chrome first'. The spec maps this to 'newest of psm_target_versions x chromium', i.e. Playwright's bundled Chromium, not branded Google Chrome. If targets later include 10.0, the canary silently moves away from 9. Both are reasonable readings, but they are recorded only as an assumption, and the verbatim source is not kept (frontmatter sources: []).",
+    "implementation_impact": "The impact is low. The implementer will use chromium/newest, but Budi may expect the Chrome channel or a pinned 9.x.",
+    "suggestion": "Confirm with Budi, or state explicitly: 'Chrome' = Playwright chromium engine (no Chrome channel), and canary = newest configured version, not pinned to 9.x. Optionally quote the source request in Why."
+  }
+]

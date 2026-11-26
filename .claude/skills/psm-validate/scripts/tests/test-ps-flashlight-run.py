@@ -640,6 +640,13 @@ def main():
             ok &= check(f"drift: {cname} == {k} ({cval!r} vs {D[k]!r})", match)
         ok &= check("drift: DEFAULT_BROWSERS ps-e2e-run == psm_e2e_browsers",
                     e2e_browsers == D["psm_e2e_browsers"])
+        # Default normalizer sel terkonfigurasi (cell-contract > Configured cells): dipakai
+        # saat --config absen / key null — wajib sama dgn default resolver, kalau tidak
+        # himpunan sel WAJIB untuk `ready` berbeda tergantung ada-tidaknya resolver.
+        ok &= check("drift: DEFAULT_TARGET_VERSIONS == psm_target_versions",
+                    mod.DEFAULT_TARGET_VERSIONS == D["psm_target_versions"])
+        ok &= check("drift: DEFAULT_E2E_BROWSERS == psm_e2e_browsers",
+                    mod.DEFAULT_E2E_BROWSERS == D["psm_e2e_browsers"])
         # customization-2: psm_reports_dir dulu required=True tanpa default kanonik skrip,
         # jadi janji SKILL "resolver absen -> default skrip" tak bisa ditepati. Default skrip
         # bentuk TANPA token; resolver ber-token {project-root}/... -> bandingkan sesudah strip.
@@ -714,9 +721,171 @@ def main():
 
     ok &= test_progress_log()
     ok &= test_job_id()
+    ok &= test_configured_cells()
+    ok &= test_timing_sink()
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
+
+
+def _raises_cfg(fn, *a):
+    try:
+        fn(*a)
+    except mod.CellConfigError:
+        return True
+    return False
+
+
+def test_configured_cells():
+    """Normalizer sel terkonfigurasi: satu pemilik (plan/runner/agregat), input error = exit 2."""
+    ok = True
+    ok &= check("SUPPORTED_ENGINES pindah ke ps-flashlight-run",
+                mod.SUPPORTED_ENGINES == ("chromium", "firefox", "webkit"))
+    e2e_src = (MOD_PATH.parent / "ps-e2e-run.py").read_text(encoding="utf-8")
+    ok &= check("ps-e2e-run memakai SUPPORTED_ENGINES pemiliknya (alias, bukan salinan)",
+                "SUPPORTED_ENGINES = fl.SUPPORTED_ENGINES" in e2e_src)
+
+    # urutan versi NUMERIK, bukan leksikal; duplikat persis dibuang
+    ok &= check("versi diurut numerik ('10.0' sesudah '9.1')",
+                mod.normalize_versions("10.0,9.1,1.7.8,8.1") == ["1.7.8", "8.1", "9.1", "10.0"])
+    ok &= check("version_key: 10.0 > 9.1 & 1.7.10 > 1.7.8",
+                mod.version_key("10.0") > mod.version_key("9.1")
+                and mod.version_key("1.7.10") > mod.version_key("1.7.8"))
+    ok &= check("duplikat persis dibuang", mod.normalize_versions("9.1,9.1, 8.1") == ["8.1", "9.1"])
+    try:
+        mod.normalize_versions("\u0669.\u0661")  # digit Arab-Indic: \d menerimanya, regex ASCII tidak
+        ok &= check("versi berdigit non-ASCII -> error input", False)
+    except mod.CellConfigError:
+        ok &= check("versi berdigit non-ASCII -> error input", True)
+    ok &= check("list string diterima & di-strip",
+                mod.normalize_versions([" 9.1", "8.1 "]) == ["8.1", "9.1"])
+    ok &= check("None -> default skrip",
+                mod.normalize_versions(None) == mod.DEFAULT_TARGET_VERSIONS.split(",")
+                and mod.normalize_engines(None) == mod.DEFAULT_E2E_BROWSERS.split(","))
+    ok &= check("browser di-lowercase & dedup, urutan tertulis dipertahankan",
+                mod.normalize_engines("Firefox, CHROMIUM,firefox") == ["firefox", "chromium"])
+    ok &= check("webkit engine sah", mod.normalize_engines(["webkit"]) == ["webkit"])
+
+    # Bad config (I/O matrix): webkitx, 9.1+9.1.0, list kosong, non-dotted -> exit 2
+    ok &= check("bad config: engine 'webkitx' -> input error",
+                _raises_cfg(mod.normalize_engines, "chromium,webkitx"))
+    ok &= check("bad config: 9.1 + 9.1.0 setara numerik -> input error",
+                _raises_cfg(mod.normalize_versions, "9.1,9.1.0"))
+    ok &= check("bad config: list versi kosong -> input error", _raises_cfg(mod.normalize_versions, []))
+    ok &= check("bad config: list browser kosong -> input error", _raises_cfg(mod.normalize_engines, []))
+    ok &= check("bad config: string kosong / koma saja -> input error",
+                _raises_cfg(mod.normalize_versions, " , "))
+    ok &= check("bad config: versi bukan digit bertitik -> input error",
+                _raises_cfg(mod.normalize_versions, "9.x")
+                and _raises_cfg(mod.normalize_versions, "v9.1")
+                and _raises_cfg(mod.normalize_versions, "9."))
+    ok &= check("bad config: item non-string / tipe lain -> input error",
+                _raises_cfg(mod.normalize_versions, [9.1])
+                and _raises_cfg(mod.normalize_engines, 3))
+
+    with tempfile.TemporaryDirectory() as td:
+        cfg = Path(td) / "psm-config.json"
+        ok &= check("tanpa config -> default 3x2",
+                    mod.configured_cells(None) == (["1.7.8", "8.1", "9.1"], ["chromium", "firefox"]))
+        cfg.write_text(json.dumps({"psm_target_versions": "9.1,8.1",
+                                   "psm_e2e_browsers": None}), encoding="utf-8")
+        ok &= check("config: key null -> default skrip; versi diurut",
+                    mod.configured_cells(str(cfg)) == (["8.1", "9.1"], ["chromium", "firefox"]))
+        cfg.write_text(json.dumps({"psm_e2e_browsers": ["firefox"]}), encoding="utf-8")
+        ok &= check("config: key absen -> default; list browser diterima",
+                    mod.configured_cells(str(cfg)) == (["1.7.8", "8.1", "9.1"], ["firefox"]))
+        for name, body in (("webkitx", {"psm_e2e_browsers": "chromium,webkitx"}),
+                           ("9.1+9.1.0", {"psm_target_versions": "9.1,9.1.0"}),
+                           ("list kosong", {"psm_target_versions": []}),
+                           ("non-dotted", {"psm_target_versions": "nine"})):
+            cfg.write_text(json.dumps(body), encoding="utf-8")
+            ok &= check(f"configured_cells: bad config {name} -> CellConfigError",
+                        _raises_cfg(mod.configured_cells, str(cfg)))
+        cfg.write_text("[1, 2]", encoding="utf-8")
+        ok &= check("configured_cells: config bukan objek JSON -> CellConfigError",
+                    _raises_cfg(mod.configured_cells, str(cfg)))
+        cfg.write_text("{rusak", encoding="utf-8")
+        ok &= check("configured_cells: config rusak -> CellConfigError",
+                    _raises_cfg(mod.configured_cells, str(cfg)))
+        ok &= check("configured_cells: config tak terbaca -> CellConfigError",
+                    _raises_cfg(mod.configured_cells, str(Path(td) / "tak-ada.json")))
+    return ok
+
+
+def test_timing_sink():
+    """CAP-6: sink durasi fase — nonaktif default, mencatat {seconds, outcome} tiap fase
+    (gagal juga), akhiran #n utk pengulangan, browser:<engine> ke phase_durations."""
+    import subprocess
+    ok = True
+    saved = dict(mod._PROGRESS)
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            ok &= check("timing: sink nonaktif secara default", mod._TIMING["sink"] is None)
+            with mod.phase("pull", 5):
+                pass
+            ok &= check("timing: fase tanpa sink aktif tak mencatat apa pun (Lapis 2/5 tak berubah)",
+                        mod._TIMING["sink"] is None and mod.timing_deactivate() is None)
+
+            log = Path(td) / "t.progress.log"
+            mod.progress_init(str(log))
+            mod.progress_version("9.1")
+            sink = mod.timing_activate()
+            with mod.phase("pull", 5):
+                pass
+            with mod.phase("pull", 5):  # image DB
+                pass
+            with mod.phase("wait-healthy", 5) as ph:
+                ph.status = "healthy"
+            try:
+                with mod.phase("wait-healthy", 5):
+                    raise subprocess.TimeoutExpired(["docker"], 5)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                with mod.phase("install", 5):
+                    raise RuntimeError("x")
+            except RuntimeError:
+                pass
+            with mod.phase("browser:chromium", None, "3 skenario"):
+                pass
+            with mod.phase("browser:chromium", None):
+                pass
+            with mod.phase("browser:firefox", None):
+                pass
+            got = mod.timing_deactivate()
+            ok &= check("timing: deactivate mengembalikan sink yang sama & menonaktifkan",
+                        got is sink and mod._TIMING["sink"] is None)
+            d = got.as_dict()
+            bp, pd = d["boot_phases"], d["phase_durations"]
+            ok &= check("timing: fase berulang dapat akhiran #n (pull, pull#2, wait-healthy#2)",
+                        set(bp) == {"pull", "pull#2", "wait-healthy", "wait-healthy#2", "install"})
+            ok &= check("timing: entri {seconds, outcome}, seconds float 3 desimal",
+                        all(set(e) == {"seconds", "outcome"} and isinstance(e["seconds"], float)
+                            and round(e["seconds"], 3) == e["seconds"] for e in bp.values()))
+            ok &= check("timing: outcome = status END (ok / status kustom / timeout / error)",
+                        bp["pull"]["outcome"] == "ok" and bp["wait-healthy"]["outcome"] == "healthy"
+                        and bp["wait-healthy#2"]["outcome"] == "timeout"
+                        and bp["install"]["outcome"] == "error(RuntimeError)")
+            ok &= check("timing: browser:<engine> ke phase_durations engine itu, bukan boot_phases",
+                        set(pd) == {"chromium", "firefox"}
+                        and set(pd["chromium"]) == {"browser:chromium", "browser:chromium#2"}
+                        and set(pd["firefox"]) == {"browser:firefox"}
+                        and not any(k.startswith("browser:") for k in bp))
+            lines = log.read_text(encoding="utf-8").splitlines()
+            ok &= check("timing: baris END log kemajuan tak berubah formatnya",
+                        any(re.search(r" END pull ok \d+s$", ln) for ln in lines)
+                        and any(re.search(r" END wait-healthy timeout \d+s$", ln) for ln in lines))
+
+            sink2 = mod.timing_activate()
+            with mod.phase("pull", 5):
+                pass
+            ok &= check("timing: sink baru per boot — hitungan #n mulai lagi",
+                        set(mod.timing_deactivate().boot_phases) == {"pull"} and sink2 is not sink)
+    finally:
+        mod._TIMING["sink"] = None
+        mod._PROGRESS.clear()
+        mod._PROGRESS.update(saved)
+    return ok
 
 
 def test_progress_log():

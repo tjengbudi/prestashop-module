@@ -1,0 +1,73 @@
+{
+ "round": 2,
+ "critical_high": 36,
+ "fixed": 33,
+ "escalated": 3,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261125-180122.r2-q1",
+   "finding": "Kegagalan yang hanya muncul di rerun-seq (dari snapshot bersih, set penuh) masuk `inconclusive`, jadi sel = pass bercatatan; dua kali → `blocked-infra`. Bug modul nyata dilaporkan sebagai masalah infra. Membalik fix round 4.",
+   "options": [
+    "Jadikan temuan pemblokir (fail)",
+    "Tetap inconclusive, tapi bukan sebab infra",
+    "Biarkan"
+   ],
+   "recommended": "Jadikan temuan pemblokir (fail)",
+   "oscillation": true
+  },
+  {
+   "id": "20261125-180122.r2-q2",
+   "finding": "Fase 1 tak punya jalan keluar bila temuan Lapis 1/2/5 atau gagal canary tak bisa/tak mau diperbaiki di sesi ini: tak ada vonis, tier 1, maupun Lapis 3.",
+   "options": [
+    "Aksi operator 'stop konvergen': Lapis 3, merge-only, agregat, ready=false, tanpa tier 1",
+    "Sama, tapi tier 1 tetap jalan",
+    "Biarkan"
+   ],
+   "recommended": "Aksi operator 'stop konvergen': Lapis 3, merge-only, agregat, ready=false, tanpa tier 1",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-180122.r2-q3",
+   "finding": "psm-optimize menilai delta per versi vs baseline. Headless berhenti di langkah pertama yang tak bersih, jadi versi 'not reached' di baseline dan sesudah terbaca 'tak ada kegagalan baru' padahal tak diuji.",
+   "options": [
+    "Tambah psm-optimize ke Docs to update: not reached = tak bisa dibandingkan",
+    "Pemanggil boleh minta lanjut melewati gagal untuk run baseline",
+    "Biarkan"
+   ],
+   "recommended": "Tambah psm-optimize ke Docs to update: not reached = tak bisa dibandingkan",
+   "oscillation": false
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "SPEC.md CAP-7 success; cell-contract Cross-engine lock",
+   "issue": "adversarial-1: overlap criterion met even when BO lock serializes most bankwire scenarios; perf benefit unmeasured (timing report covers it)"
+  },
+  {
+   "location": "cell-contract Parallel browsers BO-login fallback",
+   "issue": "adversarial-6: #2 pass after in-place reset stays gate-grade without a marker (same cold boot, install already ran)"
+  },
+  {
+   "location": "SPEC Constraints / tier-matrix Rules",
+   "issue": "adversarial-8: no canary infra fallback; scope expansion"
+  },
+  {
+   "location": "cell-contract Storage",
+   "issue": "adversarial-11: no history retention/compaction"
+  },
+  {
+   "location": "cell-contract Cross-engine lock",
+   "issue": "adversarial-12: order-dependent preconditions (checkout-empty-banks zero banks) nondeterministic in parallel; pre-existing in sequential mode; lock-wait hang beyond step timeouts (adversarial-7 remainder)"
+  },
+  {
+   "location": "cell-contract Newest",
+   "issue": "edge-case-8: started_at ordering vulnerable to clock jumps"
+  },
+  {
+   "location": "SPEC Assumptions",
+   "issue": "implementer-23: 'Chrome' = Playwright chromium, canary newest not pinned to 9.x; source not quoted"
+  }
+ ]
+}

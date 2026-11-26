@@ -1,0 +1,80 @@
+[
+  {
+    "location": "SPEC.md > Success signal (release-gate before/after measurement)",
+    "issue": "The before and after release-gate numbers measure different work. 'Before' (--versions 1.7.8,8.1,9.1 --per-version --jobs 3) drives all 6 cells. 'After' is 'the tier-1 run', which by tier-matrix.md excludes the canary cell (9.1 x chromium, already proven in tier 0), so it drives 5 cells and leaves out the cold canary boot. The report also says 'with the same injected fault', but while the canary fails, plan step 4 (gate) is never derived, so tier 1 cannot run on the faulted module. And under the fault every engine fails, so the after run also pays snapshot-db plus a rerun-seq pass per engine, which the before run does not.",
+    "implementation_impact": "The implementer cannot produce the mandatory timing report as written: the after-gate run cannot start with the fault in place. If they work around it, the result is not comparable. Leaving out the canary boot from 'after' overstates the saving, and the numeric target to be 'set later from that data' would rest on biased numbers.",
+    "suggestion": "Say which measurement carries the fault (fix-loop iteration only) and that the gate comparison runs on the clean (reverted) module. Define 'after gate' as the cold canary run plus the tier-1 run (or compare like-for-like cell sets). Have the report list rerun-seq/snapshot-db seconds separately."
+  },
+  {
+    "location": "SPEC.md > CAP-5 intent/success; cell-contract.md > Plan > Phase 1",
+    "issue": "CAP-5 says a warm iteration 'skips bring-up and wait-healthy'. But Phase 1 runs the E2E step only 'once V is clean'. Every patch (including an edit under tests/e2e, which ps-static-scan.is_skipped does not exclude) stales V's Layer 1, 2 and 5 files by mtime, so each fix-loop iteration first re-runs a cold flashlight boot (Layer 2) and a cold scenario boot (Layer 5) for the hosting version before the warm E2E run starts. The success signal and timing report measure only the E2E run, so they never show this cost.",
+    "implementation_impact": "The implementation will pass every CAP-5 assertion (no bring-up in the E2E progress log), yet Budi's real per-iteration wait still includes two cold PS+DB boots. That defeats the stated pain ('Budi waits roughly a full day') without any test or report showing it.",
+    "suggestion": "Either let the tier-0 E2E step run concurrently with, or before, the Layer 2/5 reruns of the hosting version within an iteration, or state the expected iteration composition explicitly. Also add a whole-iteration wall-clock line (Layers 1/2/5 plus E2E) to the bankwire timing report so the real wait is visible."
+  },
+  {
+    "location": "cell-contract.md > Warm container > Owner / At most one keeper per (module path, version, owner token)",
+    "issue": "Two keepers for the same module and version but different owner tokens may coexist (explicitly allowed: a foreign keeper 'does not stop it from starting this owner's keeper'). Both log to the same path, '<module>-e2e-<ver>-warm.progress.log', which is keyed only by module and version. The second keeper's progress_init truncates the first one's log, and their ALIVE idle lines interleave.",
+    "implementation_impact": "Stall detection and ps-run-layer's keeper-wait (which waits on 'the keeper's log') read the wrong or a truncated log. An operator watching the log can misjudge a live keeper as stalled and stop it, or the other way round.",
+    "suggestion": "Key the keeper log by warm Job ID (e.g. '<module>-e2e-<ver>-warm-<warm-id>.progress.log', or put it in <tmp>/psm-warm/<warm-id>/), and record that path in session.json and in the --list-jobs output."
+  },
+  {
+    "location": "cell-contract.md > Phase timings (progress log truncation), not-run (CAP-3), CAP-3/CAP-5 success criteria",
+    "issue": "The per-version progress log '<module>-e2e-<ver>.progress.log' is shared by every session working on the same module and version. The contract adds more truncation points: ps-run-layer truncates before wait-slots, and not-run truncates and writes 'DONE rc=not-run'. It also makes the progress log the evidence for CAP-3 ('shows no bring-up') and CAP-5 ('its own progress log'). An interactive session and a headless caller (psm-develop or psm-cross-version on the same module) can run the same version concurrently, and the slot cap allows that.",
+    "implementation_impact": "One session's truncation erases another live run's log. That breaks the silent-log stall rule, the before/after timing evidence (logs are copied 'right after each run'), and the log-based CAP-3/CAP-5 assertions, which can give false results.",
+    "suggestion": "Add the Job ID (or session) to the progress-log file name, or append-only with per-job sections, and make the test assertions and the stall rule select lines by job= instead of relying on truncation."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers > Parallel-only failures / Slots / Identical findings; SPEC.md > CAP-7",
+    "issue": "In parallel mode, an engine with findings is rerun alone after a full reset to the snapshot, and its failures count only if they reproduce. The sequential fallback (cost 1, used whenever fewer than n slots are free) runs engines one after another on the same DB with no reset in between and no confirmation pass. Bankwire's checkout-with-bank.json even relies on the second engine seeing the first engine's bank row. So a residue-induced failure in the second engine blocks in sequential mode but is filtered to parallel_only in parallel mode. The verdict for the same module and source depends on how many slots were free at admission.",
+    "implementation_impact": "The CAP-7 claim that 'findings are identical to a sequential run' is not a property of the design; the bankwire identical-findings test can pass only because of how that fixture is built. On other modules, gate verdicts become nondeterministic with host load, and the operator sees findings come and go between runs with no code change.",
+    "suggestion": "Give every engine the same isolation in both modes: take snapshot-db whenever a version drives more than one engine, and reset to it before each engine in sequential mode. Alternatively, define the sequential fallback's findings with the same confirmation rule. Then state the identical-findings property against that definition."
+  },
+  {
+    "location": "SPEC.md > CAP-7 success; cell-contract.md > Cross-engine lock",
+    "issue": "The CAP-7 success test ('both browser:<engine> phases overlap: both start before either ends') holds trivially even when the lock fully serializes the engines, because lock-wait is nested inside the browser phase. On bankwire, 5 of 6 scenarios (including the universal smoke) have a BO step and take the lock exclusively, so almost nothing actually runs concurrently. Parallel mode still adds snapshot-db, a BO login per engine and, on any failure, a full reset plus a sequential rerun.",
+    "implementation_impact": "CAP-7 can be 'done' and pass its test while making BO-heavy modules (the reference fixture included) slower than today's sequential browsers. There is no acceptance check or switch to catch or avoid that.",
+    "suggestion": "Make the success test measure real concurrency, for example sum(lock-wait) < sum(browser:<engine>) or at least one cross-engine pair of overlapping FO-only scenario_spans on a fixture built for it. Add a config switch (or an automatic rule based on the share of BO scenarios) that forces sequential mode when parallel mode cannot pay off, and report CAP-7 overhead separately in the timing report."
+  },
+  {
+    "location": "cell-contract.md > Plan step 7 (diverges) and Warm container > Reset per iteration",
+    "issue": "The divergence rule only catches the case where a warm or partial run passes while the cold run failed (residue masking a bug). The opposite case has no handling: residue that the warm reset deliberately leaves (files modified at baseline are not restored) can make a warm iteration fail in scenarios or steps the last cold full run did not fail. The cell keeps its recorded failure, e2e_warm stays true, and every following iteration runs warm again, so a cold run is never triggered.",
+    "implementation_impact": "Budi can be sent chasing a residue-only failure across several patches with no automatic cold check. That is the opposite of the speed-up goal, and it trains the operator to distrust warm results.",
+    "suggestion": "Add a rule: when a warm (or partial) fail's failing (scenario, step, action) set contains entries not in the newest cold full fail on any fingerprint, or the same warm failure set repeats across N patches, derive a cold full focus run (e2e_warm=false) before continuing warm."
+  },
+  {
+    "location": "cell-contract.md > preamble (live tests in scripts/tests/live/ skip unless Docker and both browsers are present)",
+    "issue": "The tests that prove the riskiest behaviours skip silently when Docker or a browser is missing: warm reset completeness, concurrent BO sessions on every tag, identical findings, the BO lock overlap test, and the bankwire success signal. No requirement says they must actually have run before the work counts as done, or that a skip must be reported as not-proven.",
+    "implementation_impact": "An implementer, or an automated dev loop, can report a green test suite in an environment without Docker or Playwright, and CAP-5 and CAP-7 would ship unproven, against the spec's own honesty law.",
+    "suggestion": "Require the live suite to print an explicit SKIPPED-NOT-PROVEN summary and exit with a distinct non-zero code when skipped under an 'acceptance' flag. Make 'live suite executed on Budi's host with all three default tags' an explicit done criterion."
+  },
+  {
+    "location": "cell-contract.md > State, freshness, gate-grade > Fresh (source_fingerprint)",
+    "issue": "The fingerprint covers every file under the module except .git/, top-level .psm-* and .memlog.md, and an inner reports dir. Editor and OS artifacts are counted: vim .swp/.swo, '*~' backups, .idea/ and .vscode/ state, .DS_Store, and on this WSL host '<file>:Zone.Identifier' streams created when files are copied from Windows. These appear and disappear on their own without any source change.",
+    "implementation_impact": "Opening a file in an editor during a run, or closing it after, changes the fingerprint and stales every cell's evidence. In the worst case a gate run never yields fresh evidence because a swap file existed at capture time and not at plan time, and Budi pays a full re-run for nothing.",
+    "suggestion": "Define an explicit ignore list for the fingerprint (editor swap/backup patterns, IDE dirs, OS metadata, *:Zone.Identifier), shared through the single source_fingerprint function, and add a test where creating and deleting a .swp file leaves every cell fresh. Alternatively, fingerprint only what the copy-into-container step actually ships."
+  },
+  {
+    "location": "cell-contract.md > Evidence record > Newest / latest (highest started_at)",
+    "issue": "Every plan decision (failing, recorded failure, diverges, focus cell, newest run, gate-grade override) orders records by the wall-clock started_at. WSL2's clock is known to jump (drift, then resync after host sleep or hibernate), so a record written later can carry an earlier started_at. The histories are append-only under LOCK_EX, so a reliable append order already exists and is not used.",
+    "implementation_impact": "After a clock jump, a newer cold fail can sort before an older pass (or a warm pass before a cold fail). The plan can then derive gate or done on outdated evidence, or flip the divergence rule, which is a silent breach of the honesty law.",
+    "suggestion": "Order records within a cell by append position (line order), using started_at only for display or across cells. Or add a per-history monotonic sequence number assigned under the lock, and test a record with an earlier started_at appended after a newer one."
+  },
+  {
+    "location": "cell-contract.md > Docs to update at implementation; SPEC.md > Constraints (headless callers)",
+    "issue": "Headless runs now stop at the first E2E step that is not clean. Their return gains versions[ver].reason 'not reached' and not_run_cells, and ready is false for versions never tested. Only psm-optimize is listed for a doc update. psm-develop and psm-cross-version both read 'status lolos per versi' from the verdict, write per-version findings back into their plans, and cap redesign loops at verify_attempts 2-3. psm-scaffold also reports a per-version verdict. None of them is listed.",
+    "implementation_impact": "These callers will read 'not reached' versions as failures, or as absence of failure, and redesign per version from incomplete data. A module whose canary fails can use up the 2-3 verify attempts revealing one version's E2E problems per attempt, then hand back 'butuh intervensi' sooner than before.",
+    "suggestion": "Add psm-develop, psm-cross-version and psm-scaffold SKILL.md to Docs to update. Specify that a 'not reached' version is neither pass nor a new failure, is not written into the plan as a per-version finding, and does not by itself count against verify_attempts."
+  },
+  {
+    "location": "cell-contract.md > Config keys > psm_e2e_slots (label psm.slots=<cost>) and Runner > RESERVED_PASSTHROUGH",
+    "issue": "The version process (or keeper) stamps psm.slots=<cost> on its PS container, but no child flag carries the admitted cost. The child must infer it, for example from --engines and --sequential-browsers. When the binary probe drops an engine (browser-unavailable), the inferred cost (fewer engines) differs from what ps-run-layer claimed. Once the container runs, the claim stops counting and the lower label takes over.",
+    "implementation_impact": "Other sessions under-count used capacity, which can over-admit on the shared WSL daemon the cap exists to protect. Implementers will also pick different inference rules, so the 'a compose boot and a manual boot each sum to exactly their cost' test has no single expected value.",
+    "suggestion": "Add a child flag (e.g. --slot-cost N, also listed in RESERVED_PASSTHROUGH) that ps-run-layer sets from its admission decision and the child copies verbatim into psm.slots. Add a test where one engine is dropped by the probe and the label still equals the admitted cost."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers > Identical findings; Runner > RESERVED_PASSTHROUGH",
+    "issue": "The identical-findings test compares a parallel run with 'a run of the same cells with --sequential-browsers'. But --sequential-browsers is in RESERVED_PASSTHROUGH, so passing it through ps-run-layer is an input error. Direct ps-e2e-run.py output 'is never evidence' and has no confirmation or record merging. The only route left, --slots 1, also serializes versions and changes timing and admission.",
+    "implementation_impact": "The test author has to improvise (direct child call, or --slots 1), and each choice compares different code paths: record merge, confirmation, fail-fast that marks the second engine not-run. That weakens or breaks the equality the test is meant to prove.",
+    "suggestion": "Name the exact sequential reference run (e.g. ps-run-layer --layer e2e --cells ... --slots 1 with one version per invocation), or add a sanctioned ps-run-layer flag such as --force-sequential-browsers. Say whether fail-fast's not-run on the second engine is disabled for this comparison."
+  }
+]

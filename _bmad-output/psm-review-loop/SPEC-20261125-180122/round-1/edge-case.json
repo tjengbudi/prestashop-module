@@ -1,0 +1,74 @@
+[
+  {
+    "location": "cell-contract.md > Parallel browsers (CAP-7) > Parallel-only failures; SPEC.md CAP-7",
+    "issue": "The sequential rerun (rerun-seq) drives only the failed set, its transitive `requires`, and the universal smoke. Modules whose specs declare no `requires` (every existing module) lose the scenarios that ran before the failing one in file-name order. A failure that depends on state those earlier scenarios left behind does not reproduce.",
+    "implementation_impact": "A genuine failure moves to `parallel_only`, the cell becomes a passing gate-grade record, and `ready` can turn true. That breaks the honesty law.",
+    "suggestion": "Specify that rerun-seq drives the full scenario set in file order (restored DB, `<engine>-seq` data), or that a parallel finding which does not reproduce in a reduced selection stays in `inconclusive` rather than `parallel_only`."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers (CAP-7) > Parallel-only failures and the BO-login fallback (`browser:<engine>#2`)",
+    "issue": "Before rerun-seq and the BO-login second pass, only the DB is restored from the `snapshot-db` dump. Files the parallel pass wrote are not reset: `var/cache` (including the Symfony container and `class_index`), uploads, module-written files, and OPcache. The warm reset defines `reset-files` and `reset-opcache` for exactly these, but the CAP-7 reruns do not use them.",
+    "implementation_impact": "Leftover cache or file state can create or hide a finding in the confirming pass, so the identical-findings guarantee can break silently.",
+    "suggestion": "State whether rerun-seq also runs `reset-files` (relative to a docroot list captured with `snapshot-db`) and `reset-opcache`. If it deliberately does not, state that and add a matching case to the identical-findings test."
+  },
+  {
+    "location": "cell-contract.md > Config keys > psm_e2e_slots (wait-slots); SPEC.md CAP-3 success",
+    "issue": "It is not specified whether the `wait-slots` startup timeout (default 180 s) applies to cells queued behind cells that this same ps-run-layer invocation has already admitted, nor when that clock starts. An E2E version run takes many minutes, so any queued cell exceeds 180 s.",
+    "implementation_impact": "When slots are short, tier-1 cells become `no-slots` instead of waiting their turn. Two such runs give `blocked-infra`, and the CAP-3 test (`--slots 1`, three queued cells) can produce `no-slots` instead of `not-run`.",
+    "suggestion": "Specify that the `wait-slots` timer runs only while the slots are held by other invocations or containers, not by this invocation's own in-flight cells. Alternatively, start the timer per cell when it reaches the head of the queue and nothing of this run is in flight."
+  },
+  {
+    "location": "cell-contract.md > Config keys > psm_e2e_slots ('a failed or timed-out call counts as cap full'); Evidence record > Storage (skipped)",
+    "issue": "When Docker is absent or the daemon is down, `docker ps --filter label=psm.slots` fails before any child starts. The spec says to treat that as cap full, so the run waits and then records `no-slots`. The child that would report `status: skipped` never runs.",
+    "implementation_impact": "A host without Docker gets `no-slots` records and then `blocked-infra` instead of `e2e_status: skipped`. The report shows the wrong cause, and the `--cleanup-orphans` pre-step fails as well.",
+    "suggestion": "Before counting slots, specify a Docker availability probe in ps-run-layer that prints `e2e_status: skipped` and exits 0 when the docker CLI or daemon is absent, leaving no record (the same as a child that is skipped)."
+  },
+  {
+    "location": "cell-contract.md > Evidence record > Newest / latest",
+    "issue": "Record order uses wall-clock `started_at`, with ties broken by `run_id`, a random token. WSL2 clocks can jump backwards (resync after host sleep), so a later run of the same cell can carry an earlier `started_at`.",
+    "implementation_impact": "A newer gate-grade `fail` can rank below an older `pass`, giving a wrong `ready=true` and a wrong focus cell or step. Tie-breaking on a random `run_id` is effectively arbitrary.",
+    "suggestion": "Within one cell's history, order by append position (line order under flock) or by a per-history monotonic sequence number written with each record. Use `started_at` only for cross-cell decisions (newest run) and document how a clock jump is handled."
+  },
+  {
+    "location": "cell-contract.md > State, freshness, gate-grade > Fresh (source_fingerprint walk)",
+    "issue": "The walk uses `lstat` and never follows symlinks. It does not say what happens when the module path itself is a symlink, or how symlinked files inside the module are treated. Their target content is not part of the fingerprint.",
+    "implementation_impact": "If the root is a symlink, the walk can see no entries and produce a constant fingerprint, so stale records look fresh. Editing a symlink target outside the tree also never stales evidence.",
+    "suggestion": "Specify that the root path is resolved (`realpath`) before the walk. For inner symlinks, either hash the link text plus the target's stat, or make them an input error (exit 2) naming the path."
+  },
+  {
+    "location": "tier-matrix.md > Rules > Visual review (`<module>-visual-pending.json`)",
+    "issue": "The spec does not cover several cases for the pending file. A patch or loop-back after a defect is written can make that defect stale. A later cold run can show the defect fixed. Several cold runs can write before the merge. A file can be left over by an earlier psm-validate invocation that never reached Phase 2.",
+    "implementation_impact": "Defects that are stale or already fixed get merged as blocking findings into `adversarial.json`, or a second write overwrites the first and drops a defect.",
+    "suggestion": "Tag each pending entry with `source_fingerprint`, session, and cell. At merge, drop entries whose fingerprint is not current or whose session differs. Specify that writes are read-merge under flock, not overwrite."
+  },
+  {
+    "location": "cell-contract.md > Runner (`--cells`), Warm container (`--warm`), Failed-only rerun (`--scenarios-from-failed`)",
+    "issue": "Input validation is not specified for these cases: `--cells` listing the same version twice (`9.1:chromium,9.1:firefox`); a `--cells` entry outside the configured cells; and `--warm` or `--scenarios-from-failed` combined with more than one cell.",
+    "implementation_impact": "Two boots of one version could run in one invocation, history could be written for cells the plan ignores, or the warm/failed-only resolution could be ambiguous when several cells are given.",
+    "suggestion": "Specify these as input errors (exit 2): a version repeated in `--cells` (or merge the repeats into one browser list), a cell outside the configured set, and `--warm` or `--scenarios-from-failed` with anything other than exactly one cell."
+  },
+  {
+    "location": "cell-contract.md > Failed-only rerun (CAP-4) > record gets `scenario_set: partial`",
+    "issue": "When the failed set plus transitive `requires` plus the smoke equals every valid spec, the record is still marked `partial`, even on a cold boot (for example a cold failed-only run after `warm-reset`).",
+    "implementation_impact": "A cold run that covered the full set is not gate-grade, which forces a redundant cold full rerun of the same cell.",
+    "suggestion": "Specify that the child sets `scenario_set: full` when `scenarios_run` equals the full discovered set (as in the fallback case), and `partial` otherwise."
+  },
+  {
+    "location": "cell-contract.md > Evidence record > Storage (readers)",
+    "issue": "Appends are one `write()` under `flock`, but the spec does not say whether plan and aggregate take a lock when they read. A read during a concurrent append (another session, or a keeper-related write) can see a partial last line.",
+    "implementation_impact": "A cell transiently gets `corrupt-history` and loses passing gate-grade evidence. That changes `e2e_step`, can fail the Phase 2 entry check, or triggers a needless rerun.",
+    "suggestion": "Specify that readers take `LOCK_SH` on the history file, or ignore a trailing line that has no newline terminator rather than treating it as unparsable."
+  },
+  {
+    "location": "cell-contract.md > Configured cells (normalizer: string identity vs numeric order); Config keys > psm_e2e_canary default",
+    "issue": "Versions that are numerically equal but different strings (`9.1` and `9.1.0`) are both accepted as configured. Their numeric order is a tie, and the default canary is defined as the 'newest' version.",
+    "implementation_impact": "The default canary, the order of `e2e_next_cells`, and the focus-cell tie-break become nondeterministic. The same tag can also be booted twice.",
+    "suggestion": "Specify that numerically equal versions in one list are an input error (exit 2), or define a deterministic secondary order (for example the longer string first)."
+  },
+  {
+    "location": "cell-contract.md > Warm container > Teardown; Config keys > psm_e2e_slots (admission)",
+    "issue": "ps-run-layer stops this owner's keeper before a run without `--warm`, but the spec does not order that stop against slot counting. It also does not say whether `--stop-job` waits until the keeper's container is gone.",
+    "implementation_impact": "With a tight cap (for example `psm_e2e_slots` 1 or 2), the cold run counts the keeper's slot as still in use. It can wait, then record `no-slots` for a slot that it is freeing itself.",
+    "suggestion": "Specify that keeper teardown finishes (the container is no longer running) before the slot count, or that ps-run-layer excludes containers of keepers it is stopping from the count."
+  }
+]

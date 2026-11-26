@@ -1,0 +1,6 @@
+{"round": 2, "critical_high": 29, "fixed": 29, "escalated": 0, "dropped": 0, "code_defects": 0,
+ "questions_for_budi": [],
+ "medium_low": [
+  {"location": "Design Notes > Record (exactly Fields keys + boot_wall_clock)", "issue": "boot_log/ps_domain/orchestrator dropped from records; diagnostic regression vs today's aggregate log tail (contract Fields whitelist; scope suggestion)"},
+  {"location": "Design Notes > Timing / I/O row Timings", "issue": "#n suffixes are ordinal only; tests should not read wait-healthy#2 as the PS wait after a port retry (spec makes no DB/PS claim)"}
+ ]}

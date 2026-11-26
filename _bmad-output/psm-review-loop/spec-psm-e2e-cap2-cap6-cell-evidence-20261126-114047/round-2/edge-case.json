@@ -1,0 +1,86 @@
+[
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Design Notes > Interim orchestration (Fase 1 'the loop ends when all_reuse is true')",
+    "issue": "Fase 1 can only end when all_reuse is true. Some E2E states can never become reusable in this slice: ps-run-layer prints skipped because Docker or Playwright is absent and appends nothing (the cell stays missing); psm_e2e_enabled is false; headless never passes --allow-image-pull, so a missing image gives an inconclusive 'errors' record on every run; a firefox binary is missing (browser-unavailable every run); a headless run gets an E2E fail it will never patch. The contract's exit for these cases ('E2E loop ended', and in headless 'V is clean once its loop has run its stale layers once') is in Plan > Phase 1 and E2E loop ended, which this slice does not adopt.",
+    "implementation_impact": "The documented Fase 1 loop never ends, or the orchestrator has to invent a stop rule. Headless callers either hang or each improvise a different one.",
+    "suggestion": "Add an interim stop rule to Interim orchestration: the Fase 1 loop for V also ends when E2E is disabled, when ps-run-layer prints e2e_status skipped, when the same E2E reasons repeat for V after a run with no patch in between, or in headless after V's stale layers have run once. After any of these, go on to Fase 2 and report the cells as not proven."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Boundaries > Always (Plan > Derivation predicate not-gradeable in scope) + Design Notes > Plan shape (all_reuse) + Interim orchestration",
+    "issue": "Take a smoke-only module (authored_assertions 0) or a module whose spec notes equal the current e2e_scenario_notes. Each cell's newest gate-grade pass gets reason not-gradeable or scenario-notes, so it is never reuse:true. per_version[V].rerun therefore always lists e2e and all_reuse is never true. The contract counts not-gradeable as passing only inside steps 4 to 7, which are deferred, so the spec has no interim rule for this.",
+    "implementation_impact": "On every smoke-only module, the Fase 1 loop never ends, and every Fase 2 call re-boots all cells for evidence that cannot change.",
+    "suggestion": "State the interim rule: for the Fase 1 loop's end condition, a cell whose plan reason is not-gradeable or scenario-notes counts as done, but it still never counts toward ready. Or have the docs end the loop when the only e2e reasons left are these two, and report them."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Tasks > docs (On Activation step 2 browser narrowing as --cells) vs Design Notes > Interim orchestration (Fase 1 --versions V; Fase 2 runs all e2e rerun_matrix entries)",
+    "issue": "The operator narrows the scope at On Activation, for example to chromium only. Fase 1 runs E2E as --versions V, which drives every configured browser and ignores the narrowing. per_version[V].rerun still lists e2e while the narrowed-out firefox cell is missing. Fase 2 groups every e2e rerun_matrix entry, out-of-scope cells included, into --cells. The spec never says where the narrowing is applied in these commands, or how the loop ends while out-of-scope cells stay missing.",
+    "implementation_impact": "Either the narrowing is silently ignored and firefox is booted anyway, or the Fase 1 loop never ends because the narrowed-out cells can never be reused.",
+    "suggestion": "Define it in Interim orchestration: filter the e2e entries by the operator's scope before building --cells, in both Fase 1 (--cells V:<in-scope browsers>) and Fase 2. The Fase 1 end condition then ignores e2e entries for out-of-scope cells, and the report names those cells as not proven."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Design Notes > Interim orchestration (Fase 2) + Plan shape (all_reuse now includes per-cell e2e)",
+    "issue": "Today's docs gate the Layer 2 and Layer 5 --merge-only on all_reuse being true. all_reuse now also needs every configured E2E cell of every version to have passing evidence. The spec takes the all_reuse gate away only from the e2e report view, and says nothing about --merge-only for Layers 2 and 5. The contract's 'always, no all_reuse gate' rule sits in Plan > Phase 2, which is not in scope.",
+    "implementation_impact": "When any E2E cell is unproven (for example firefox missing), the canonical flashlight and scenario files are never merged. Layers 2 and 5 then also read as not run in the aggregate.",
+    "suggestion": "Add to the Interim orchestration Fase 2 step: run ps-run-layer.py --merge-only for flashlight and scenario unconditionally (no all_reuse gate) before the aggregate, and update run-phases.md to match."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Tasks > docs (run-phases.md bullet)",
+    "issue": "The run-phases.md docs task covers only --config as a ps-run-layer flag and --session on plan calls. run-phases.md still documents the table row 'ps-run-layer.py --layer e2e --per-version', the Fase 2 command '--layer <flashlight|e2e> ... --per-version --jobs <N>', and '--merge-only --versions <semua>' for e2e. All three are now exit 2 (--per-version is rejected; --merge-only --layer e2e takes only --module, --reports-dir and --config).",
+    "implementation_impact": "An orchestrator that follows run-phases.md, which SKILL.md says to read before running any layer, gets exit 2 on every E2E step.",
+    "suggestion": "Extend the run-phases.md task: rewrite the e2e table row and the Fase 1/2 e2e commands to the Interim orchestration forms (--versions V or --cells, --session, --config, no --per-version), and make the e2e --merge-only take no --versions."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Boundaries > Always (Headless config copy)",
+    "issue": "The spec says headless writes psm_target_versions and psm_e2e_browsers into <module>-psm-config.headless.<session>.json. Unlike cell-contract.md ('a copy of the resolved config'), it does not say that every other resolved key is kept. Those keys include psm_flashlight_tag_map, db image, ps_domain, orchestrator, startup timeout and psm_e2e_enabled. The file it describes may hold only the two keys.",
+    "implementation_impact": "Plan, runner, children and aggregate lose the caller's tag map and Docker settings. Tags resolve to the defaults, so every record can read stale-tag, and boots use the wrong DB image or port.",
+    "suggestion": "Change the wording to: the copy is the full resolved config (<psm_reports_dir>/psm-config.json content) with only psm_target_versions and psm_e2e_browsers replaced. Add a test that a tag-map key survives the copy."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Design Notes > Interim orchestration (plan / ps-run-layer / aggregate commands) + Boundaries (aggregate --tag-map/--extra-tag-map)",
+    "issue": "The operator uses --extra-tag-map (the SKILL.md channel for tags outside psm_flashlight_tag_map) or --tag-map in ps-run-layer's passthrough. The interim plan and aggregate commands pass only --config, so they do not forward these flags. The contract requires the orchestrator to pass the same tag values to plan, ps-run-layer and aggregate.",
+    "implementation_impact": "Records carry the extra tag, while plan and aggregate resolve the default tag. Every cell then reads stale-tag forever and ready never becomes true.",
+    "suggestion": "Add to every interim plan, ps-run-layer and aggregate command: '[--tag-map M] [--extra-tag-map E] (the same values on all three when used)', and add this to the SKILL.md and run-phases.md docs tasks."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Design Notes > Plan shape (per_version[V].layers.e2e over V in --versions)",
+    "issue": "The plan is called with an explicit --versions entry that is not a configured string. It may be not configured at all (9.2), or numerically equal to a configured one (9.1.0 when 9.1 is configured). ps-run-layer rejects both, but for the plan the spec defines neither per_version[V].layers.e2e, nor whether e2e is in rerun, nor whether this is exit 2.",
+    "implementation_impact": "The plan either emits an empty or garbage e2e entry that makes all_reuse true while there is no evidence, or crashes on a lookup by browser. A 9.1.0/9.1 mismatch reads a different history file name.",
+    "suggestion": "State: the plan's --versions entries must equal configured strings, else exit 2 naming the configured set (the same rule as ps-run-layer). Or: a non-configured V gets layers.e2e = {} and no e2e in rerun, with a stderr note."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Design Notes > Runner interim (child exit 2) + Boundaries ('prints the Runner > Output JSON line; exit 3/1/0/2/143')",
+    "issue": "One child exits 2 while in-flight siblings finish and append a fail record. Two things are unspecified: whether the exit code is 2 or 3 (the 'appended fail wins' rule), and whether the Output JSON line is printed on exit 2 and with which e2e_status. The same question applies to exit 2 input errors raised before any spawn.",
+    "implementation_impact": "Orchestrator and tests cannot tell an input error apart from a verdict, and a parser that expects the line may break on exit 2.",
+    "suggestion": "Add: 'child exit 2 → exit 2 even when an appended record is fail; the Output line is still printed with e2e_status \"ran\", reason \"input-error after <ver>\" and the appended list. Input errors before spawn print no Output line.'"
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Design Notes > Timing (aggregate boots[...]) + Acceptance Criteria 1 (one key per distinct boot_id)",
+    "issue": "The aggregate selects a record that ps-run-layer wrote: crash, browser-unavailable, or a filled cell with no child result. Such a record has boot_id null ('null for fields no engine produced'). The spec does not say whether e2e_phase_durations[ver].boots gets a null key, skips the record, or shares the sibling engine's boot. Nor does it say whether a browser-unavailable record in a version that did boot carries that boot's boot_id and boot_phases.",
+    "implementation_impact": "A null or 'None' key appears in boots, two engines of one boot may count the boot twice or not at all, and AC1's per-boot_id count is ambiguous.",
+    "suggestion": "State: records with boot_id null add nothing to boots and add browsers[engine] only with wall_clock. A browser-unavailable record for a version whose child returned copies that version's boot_id and boot_phases from the child."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Design Notes > Aggregate ('versions[ver].reason = the reason of the first cell lacking passing evidence, in psm_e2e_browsers order')",
+    "issue": "Take version V with chromium missing and firefox's newest gate-grade record a fail. e2e_state is fail, but the first lacking cell in browser order is chromium, so reason is missing. The spec also does not say what versions[ver].reason is when e2e_state is pass.",
+    "implementation_impact": "A failing version reports reason missing. Headless callers that copy e2e_state and reason get a contradictory verdict, and the pass case is implemented as null in some places and absent in others.",
+    "suggestion": "Define: when e2e_state is fail, reason = fail (or the first failing cell's reason); otherwise the first lacking cell's reason in psm_e2e_browsers order; reason = null when e2e_state is pass."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Design Notes > Runner interim (exit 2 input errors for --cells)",
+    "issue": "The --cells value is malformed: a token without ':', an empty browser list ('9.1:'), an empty token from a trailing or doubled comma, or a browser repeated inside one cell ('9.1:chromium+chromium'). The spec lists only a repeated version and a cell outside the configured set.",
+    "implementation_impact": "The implementer may crash with an unpacking error, silently run fewer cells, or append two records for one cell in one run.",
+    "suggestion": "Add to the exit 2 list: any --cells token that does not match '<ver>:<browser>(+<browser>)*' and any empty token. Inside one cell, run the browsers through the normalizer (drop duplicates) or reject them as exit 2; say which."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Boundaries > Always (ps-run-layer --config for every layer; --session for layer e2e) + Design Notes ('ps-run-layer reads --config through its own key map: configured set, ...')",
+    "issue": "Two cases are left open for ps-run-layer with --layer flashlight or scenario. If its --config holds an invalid configured set (webkitx, empty list, 9.1+9.1.0), the spec does not say whether ps-run-layer runs the normalizer and exits 2 for a non-E2E layer. If --session is passed to a non-e2e layer, the spec does not say whether it is accepted, ignored or exit 2.",
+    "implementation_impact": "Layer 2 and 5 runs fail, or don't, on an E2E-only config error depending on how it is implemented. Tests and docs then disagree on the behavior.",
+    "suggestion": "State: the configured-set normalizer runs only for layer e2e (other layers just forward --config). --session with a non-e2e layer is exit 2, or is ignored; pick one and test it."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md: Design Notes > Interim orchestration (Quickstart TDD verdict) + Tasks > docs (e2e-quickstart.md)",
+    "issue": "The TDD loop runs only --cells 9.1:chromium, then the aggregate with --config <cfg> (3x2 configured). ready is then always false, and the aggregate exits 2 with '--static wajib' when no <module>-static.json is in the reports dir. The spec does not say which aggregate field the author reads as RED/GREEN, or whether a static scan into the reports dir is a prerequisite.",
+    "implementation_impact": "The documented TDD verdict step either errors out or always reads not ready, so the author cannot see the cell turn green.",
+    "suggestion": "Specify that the quickstart verdict reads e2e_cells['9.1']['chromium'] (state, gate_grade, reason), not ready, and that it runs ps-static-scan.py --reports-dir ... first, or that the aggregate is called with --require e2e."
+  }
+]

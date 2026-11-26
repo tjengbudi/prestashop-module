@@ -1,0 +1,98 @@
+[
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:48-49 (Plan steps 5 cold-version, 6 cold-canary)",
+  "issue": "A cell gets a fresh fail and then a fresh pass on the same source_fingerprint with no patch in between (a flaky scenario, or a warm rerun that passes). Step 6 needs the canary to have 'no fresh fail record', so it never matches. Step 5 for a non-canary focus has no such clause and promotes on the same history.",
+  "implementation_impact": "The canary stays at step 7 focus until the source changes. Because a fail is not an infra cause, blocked-infra never stops the loop. The canary and non-canary focus cells resolve the same history differently, so the plan test and the implementation can disagree.",
+  "suggestion": "Judge both steps on the newest fresh conclusive record (cold-canary/cold-version when it is a pass), or state explicitly that a fresh fail blocks promotion until a patch, and apply the same rule to step 5 and step 6."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:22, 29, 40, 44",
+  "issue": "A cold, full, fresh, conclusive pass that has a missing field (for example authored_assertions=None). Line 22 says it is never gate-grade, so step 2 blocked-not-gradeable ('newest gate-grade record is a pass ... or a missing field') can never match it. The rerun_matrix reason not-gradeable also needs a 'gate-grade pass', and blocked-infra causes do not include missing fields.",
+  "implementation_impact": "When the runner always omits the field, the gate step reruns the cell forever with no blocked step, and the rerun_matrix has no reason to assign.",
+  "suggestion": "Define 'gradeable candidate' = fresh + conclusive + cold + full, regardless of missing fields. Step 2 and reason not-gradeable/missing-field then apply to the newest candidate whose pass has a missing field."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:14, 40",
+  "issue": "For a line that does not parse, 'until a newer valid record exists' is undefined, because a corrupt line has no started_at and 'newest' is ordered by started_at. The rerun_matrix also lists corrupt-history first, with no condition, so it applies even after newer valid records exist. No step says how a corrupt-history cell feeds failing/focus/gate derivation.",
+  "implementation_impact": "A cell with one old corrupt line may never reach passing gate-grade, which keeps ready false and repeats the gate step forever. Implementers can also order a corrupt line differently from one another.",
+  "suggestion": "Order corrupt lines by file position: a valid line after the corrupt line clears it. Apply reason corrupt-history only when no valid line follows. Treat the cell as 'missing' in step derivation."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:14, 53, 58 (with ps-e2e-run.py status skipped / skipped_image)",
+  "issue": "A run where E2E is skipped (Playwright or Docker absent) leaves no per-cell result. The append rule then writes 'inconclusive' with reason crash for every admitted cell. No state or reason 'skipped' exists, and ps-run-layer's exit rule (1 when any record is inconclusive) conflicts with ps-e2e-run's exit 0 for skipped. skipped_image (image missing, pull not allowed) is also not mapped to a reason.",
+  "implementation_impact": "The orchestrator cannot tell 'skipped, end the E2E loop' from a crash. A second skip in the same session derives blocked-infra with cause crash, and the report names the wrong cause.",
+  "suggestion": "Add inconclusive reasons 'skipped' and 'skipped-image' written by ps-run-layer. Keep exit 0 plus status skipped for the Playwright/Docker case, and state whether these reasons count toward blocked-infra."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:65 (Warm container > Chain)",
+  "issue": "ps-run-layer starts a keeper and 'waits for its session file'. The contract gives no timeout and no behavior for a keeper that exits before writing session.json: image pull refused, bring-up or wait-healthy timeout, port conflict, or invalid TTL.",
+  "implementation_impact": "The iteration can hang forever, or end with no record. Without a record the next plan call emits the same warm focus step and restarts the failing keeper again and again.",
+  "suggestion": "Bound the wait by --startup-timeout plus the pull allowance. When the keeper process is dead or the wait times out, append an inconclusive record (reason keeper-start with the keeper's cause and boot_phases) and let the next run cold-boot."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:65-66, 116 (keeper slot admission)",
+  "issue": "The contract does not say whether starting a keeper goes through ps-run-layer slot admission (wait-slots, no-slots). It also does not say which registry entry carries the pending 'slots' claim, because the keeper is detached under its own warm Job ID and is not the admitted child. Before its container runs, the claim may be counted by neither the iteration nor the keeper.",
+  "implementation_impact": "Concurrent admissions can overshoot psm_e2e_slots while a keeper is pulling or booting, which is the WSL wait-healthy stall the cap is meant to prevent. A keeper started under a full cap can also bypass the cap entirely.",
+  "suggestion": "Before starting a keeper, ps-run-layer admits it at cost 1 under slots.lock and writes the 'slots' claim into the keeper's registry entry. When no slot frees within the startup timeout, the iteration records no-slots without starting a keeper."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:68-69 (Attach lease vs Idle TTL)",
+  "issue": "The idle TTL can expire at the same moment an iteration takes the lease. The keeper's 'no lease held' check and its teardown are not atomic against the iteration's flock, and the pre-iteration check may pass just before teardown starts. The idle clock is also undefined between the keeper writing session.json and the first lease.",
+  "implementation_impact": "An iteration attaches to a container that is being torn down. It then fails mid-run with errors that look like module findings, or with a confusing inconclusive cause, and the warm path flakes in exactly the long-idle case.",
+  "suggestion": "Before tearing down, the keeper takes the lease itself (non-blocking flock) and holds it until it has deleted session.json. After the iteration acquires the lease, it re-checks that session.json exists and the keeper is alive. Idle time starts when session.json is written."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:70, 116 (keeper-dead leaves container to --cleanup-orphans)",
+  "issue": "A dead keeper leaves a running container labelled psm.slots, which counts toward the host-wide cap. Nothing in the contract or in the run-phases flow says who runs --cleanup-orphans or when.",
+  "implementation_impact": "Each keeper crash leaks a slot until someone cleans it up by hand. With small psm_e2e_slots, later cells wait, become no-slots, and then blocked-infra, with no hint that an orphan is the cause.",
+  "suggestion": "Specify that ps-run-layer (or the orchestrator) runs --cleanup-orphans before slot counting, or at least before reporting no-slots. Also list orphaned labelled containers in the no-slots record."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:94 (parallel-unconfirmed -> next run --sequential-browsers)",
+  "issue": "The contract says ps-run-layer 'admits that version's next run with --sequential-browsers', but the next run is a separate ps-run-layer process. It does not say where that fact is read from (newest record reason? which session? which fingerprint?) or when the override ends.",
+  "implementation_impact": "Implementers may keep it in memory, where it is lost, and the parallel-unconfirmed loop repeats. Or they may make it sticky forever, so the version never drives browsers in parallel again and CAP-7 silently degrades.",
+  "suggestion": "Derive the override from the version's history: force sequential when any configured cell of V has a newest record with reason parallel-unconfirmed. A conclusive record clears it."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:94 (rerun-seq result merge)",
+  "issue": "The sequential rerun reports a finding whose (scenario, action) was not in the parallel findings. Examples: a prerequisite or the smoke fails only sequentially, or another action of the same scenario fails. Only the intersection kept in findings and the rerun's inconclusive steps are specified.",
+  "implementation_impact": "A real failure that only the rerun exposed can be silently dropped, so the cell reports pass. Or it is kept, and the 'identical findings to a sequential run' claim and its test disagree with the implementation.",
+  "suggestion": "Add rerun-only findings to findings (they reproduced sequentially), or define them as inconclusive steps. State this in the identical-findings fixture."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:92-94 (cross-engine lock covers only BO scenarios)",
+  "issue": "Engine A runs a BO scenario that changes shop config (country, payment, module setting) while engine B runs an FO-only scenario without the lock. The interference can make B pass a check that a sequential run would fail. Only parallel failures are re-verified sequentially.",
+  "implementation_impact": "A parallel run can record a false pass as gate-grade evidence, which breaks the honesty law and the CAP-7 identical-findings claim.",
+  "suggestion": "Make the lock a read/write lock: BO scenarios take it exclusive and FO-only scenarios take it shared. FO-only scenarios then stay parallel with each other but never overlap a BO scenario of the other engine."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:109 vs 124 (aggregate record selection vs headless verdict)",
+  "issue": "When a cell has no gate-grade record, the aggregate selects its newest record of any kind (warm, partial, stale, not-run). A warm or stale fail then makes versions[ver].layers.e2e 'fail' and feeds pass/findings/e2e_phase_durations. Headless calls only a fresh gate-grade fail 'fail' and calls a stale fail inconclusive (stale-fail).",
+  "implementation_impact": "The same histories give the version verdict fail in the aggregate and inconclusive in the headless return. Convergence-only evidence then shows up as release-gate findings and timings.",
+  "suggestion": "Make aggregate per-version state match the headless rule: fail only on a fresh gate-grade fail, and inconclusive (with the cell reason) otherwise. Or explicitly mark non-gate-grade selected records as convergence-only in e2e_cells and exclude them from findings."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:122 (Headless config copy path)",
+  "issue": "Two headless callers run at the same time on the same module (for example psm-develop and psm-optimize, or two sessions), and both write <psm_reports_dir>/<module>-psm-config.headless.json.",
+  "implementation_impact": "One run's plan, runner or aggregate reads the other caller's configured set and canary, so ready and the versions verdict cover the wrong cells.",
+  "suggestion": "Include the session token in the file name (<module>-psm-config.headless.<session>.json), or write it atomically under flock and pass the per-session path."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:19, 45 (--session absent)",
+  "issue": "A plan call or a ps-run-layer --layer e2e run without --session: a manual operator run, an older caller, or the quickstart. The contract does not say what session records then carry, or how blocked-infra compares them with a missing current session.",
+  "implementation_impact": "If null equals null, unrelated manual runs trigger blocked-infra. If null never matches, repeated infra failures loop forever. The warm owner token is also undefined.",
+  "suggestion": "Make --session required for plan and for ps-run-layer --layer e2e (exit 2 when missing), or state that a null session never matches in the blocked-infra comparison and disables warm."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:84-85 (requires validation)",
+  "issue": "A spec declares requires: [\"psm-universal-smoke\"]. The smoke is not a discovered spec, so the rule 'names a spec that does not exist' would skip the dependent spec. The contract does not say whether the smoke is a valid prerequisite.",
+  "implementation_impact": "A reasonable spec is silently skipped and a scenario_note is added. That leads to blocked-not-gradeable and blocks ready until the spec is edited.",
+  "suggestion": "Treat psm-universal-smoke as an always-present valid name in requires (no-op, since it always runs first), or name it explicitly as an invalid target in the note."
+ },
+ {
+  "location": "_bmad-output/specs/spec-psm-e2e-tiered-gate/cell-contract.md:116-117 (slot counting via docker ps)",
+  "issue": "The slot count query (docker ps --filter label=psm.slots) fails or hangs. A stalled WSL daemon is exactly the saturation symptom described. The contract does not say whether admission waits, admits, or records a reason.",
+  "implementation_impact": "Admission may hang with no timeout while holding slots.lock, blocking every other session. Or it may treat a failed query as zero used slots and overshoot the cap.",
+  "suggestion": "Run docker ps with a timeout and treat a failure as 'cap full' inside the wait-slots loop. When the startup timeout passes, record the cell inconclusive (reason docker-unavailable). Never hold slots.lock across a blocking call without a timeout."
+ }
+]

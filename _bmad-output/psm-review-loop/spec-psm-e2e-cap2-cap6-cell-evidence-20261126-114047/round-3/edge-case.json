@@ -1,0 +1,86 @@
+[
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Design Notes > Runner interim, Stop) + I/O row 'Stopped' (line 48)",
+    "issue": "`--stop-job <job>` sends SIGTERM to every live process registered under the Job ID, in registry order (ps-flashlight-run.py stop_job). ps-run-layer passes its Job ID to every child (plan_children), so children are signalled too. A child can exit on that SIGTERM, with no output or a partial one, and ps-run-layer can reap it before its own stop handler runs. Under 'append each child's records as soon as it is reaped', that child then gets `crash` records (or inconclusive records from partial output). The spec does not say how ps-run-layer tells a stop-induced child exit apart from a crash.",
+    "implementation_impact": "The 'Stopped' row ('no crash for the rest') becomes a race. Spurious `crash` records go into the history and can feed the later blocked-infra two-record rule, and the I/O-row test is flaky.",
+    "suggestion": "State that once a stop is pending (own SIGTERM received, or a reaped child's returncode is 143 or -15), ps-run-layer appends nothing for that child or any later one. Alternatively, ps-run-layer checks a stop flag set by its handler before every append, and the handler is installed before any child is spawned."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Design Notes > Runner interim) + contract Runner > Output",
+    "issue": "The output line's `reason` field is never defined: not for `ran`, not for `skipped`, not for a child exit 2. The spec says the line is printed on a child exit 2 but gives no `e2e_status` value for it. Precedence is also open when outcomes combine in one run: a child reports `status: skipped` while another child exits 2 (is it exit 0 `skipped` or exit 2?), or a child exits 2 while a sibling appends `fail` (is `e2e_status` `ran`?).",
+    "implementation_impact": "The implementer has to invent the `reason` values and the precedence. The orchestrator's 'printed skipped → E2E loop ended' rule can then fire on a run that actually exited 2, or fail to fire, depending on the guess.",
+    "suggestion": "Add one precedence line, e.g. 'stop(143) > child exit 2 (exit 2, e2e_status ran, reason \"input-error after <ver>\") > appended fail (3) > any child skipped (0, skipped) > inconclusive (1) > 0'. Define `reason`: null for ran, the child's or docker_available's skip reason for skipped."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:94 (Design Notes > Interim orchestration, 'V's E2E loop ended')",
+    "issue": "V's E2E loop ends only on a printed `skipped`, a disabled or not-required E2E, or a plan fingerprint equal to the one 'printed by V's last E2E run'. A pre-spawn input error (exit 2, e.g. psm_reports_dir equal to the module root, a reserved passthrough flag, a fingerprint stat error) prints no output line by design, so it leaves no fingerprint to compare. Nothing says what the orchestrator does when an E2E run exits 2 with no line.",
+    "implementation_impact": "Following the docs literally, Fase 1 sees V still has scoped e2e entries and a loop that has not ended, so it reissues the same deterministic failing command forever, or the model improvises.",
+    "suggestion": "Add: 'An E2E run that exits 2 (with or without an output line) ends the E2E loop for the session; the orchestrator reports the stderr error, and every scoped cell stays unproven.'"
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:28 (Headless config copy) + :94 (`<cfg>` = <psm_reports_dir>/psm-config.json) + :91 (Normalizer: unreadable config → exit 2)",
+    "issue": "SKILL.md step 1 allows the resolver to be absent ('Resolver absen? Pakai default kanonik skrip'). In that case `<psm_reports_dir>/psm-config.json` is never written. The interim commands still pass `--config <cfg>` to every plan, ps-run-layer and aggregate call, and an unreadable config file is exit 2. The headless copy also has no source file to copy 'verbatim'.",
+    "implementation_impact": "When the resolver is absent, every plan, E2E and aggregate call exits 2 and no verdict is produced at all, which the docs never describe. The headless copy step is undefined.",
+    "suggestion": "Specify the resolver-absent path. Either omit `--config` (script defaults are the configured set), or write a minimal JSON holding only `psm_target_versions`/`psm_e2e_browsers` (headless: the caller's values, else script defaults) and forward that."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:92 (Design Notes > Aggregate, versions[ver].reason for e2e_state fail)",
+    "issue": "`e2e_state` is `fail` when a cell's newest gate-grade record is `fail`. That cell's plan reason, however, is judged on its newest fresh record, which can be a newer non-gate-grade record: `inconclusive` (a later crash or browser-unavailable record), `not-run`, `warm-only` or `partial`. 'The first failing cell's reason (`fail`)' does not say whether this is the literal string `fail` or that cell's plan reason. `e2e_cells[...].reason` is defined as the plan reason, so the two fields can disagree. 'First' has no stated order for the fail case: browser order is given only for `inconclusive`.",
+    "implementation_impact": "The same failing cell can show `reason: fail` per version and `reason: inconclusive` in e2e_cells. Implementations and tests diverge on which value is right.",
+    "suggestion": "State: 'e2e_state fail → versions[ver].reason = \"fail\" (literal), taking the first cell in psm_e2e_browsers order whose newest gate-grade record is fail; that cell's e2e_cells reason is also \"fail\" whatever newer non-gate-grade record exists.' Or explicitly accept the divergence."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:93 (Design Notes > Timing, aggregate boots/browsers)",
+    "issue": "The shape of `e2e_phase_durations` is unspecified in these cases. (1) A configured version has no selected record (all cells missing or corrupt): is the key absent, or `{boots:{}, browsers:{}}`? (2) A selected record has null `phase_durations` or `wall_clock` (crash, browser-unavailable, written by ps-run-layer): is the `browsers[<engine>]` entry omitted, or `{phases: null}` or `{phases: {}}`? (3) `boot_wall_clock` is null on a record whose `boot_id` is set. (4) The unit and rounding of record `wall_clock` (finished_at − started_at) are not given, while phases use 3-decimal seconds.",
+    "implementation_impact": "Consumers (SKILL.md Vonis fields, tests) cannot assert a stable shape. A null `phases` can crash readers that iterate it.",
+    "suggestion": "Add: 'every configured version has an entry, `{boots:{}, browsers:{}}` when nothing is selected; a browsers entry exists only for a selected record whose phase_durations holds browser:<engine>; wall_clock values are seconds rounded to 3 decimals, null when unknown.'"
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:25 ('--merge-only --layer e2e takes no --session') + :90 ('--merge-only --layer e2e takes only --module, --reports-dir, --config')",
+    "issue": "The spec says which flags the e2e report view takes, but not what happens when others are passed: `--session`, `--cells`, `--versions`, `--per-version`, `--jobs`, a passthrough after `--`. Exit 2 and silently ignoring them are both possible readings. The generic rule '--session with another layer → exit 2' does not cover layer e2e in merge-only mode.",
+    "implementation_impact": "Docs and tests may pass `--versions` or `--session` from habit (today's merge-only uses `--versions <semua>`). The behavior then depends on the implementer's guess, and a silently ignored `--versions` could suggest that the view was narrowed.",
+    "suggestion": "State: '--merge-only --layer e2e with any of --session, --cells, --versions, --per-version, or passthrough → exit 2 naming the allowed flags' (or 'ignored with a stderr note')."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Runner interim input errors: --versions / --cells parsing)",
+    "issue": "A repeated version in `--cells` is exit 2, but `--versions 9.1,9.1` (a duplicate), an empty item (`9.1,,8.1`, a trailing comma) and whitespace around items are not covered for layer e2e. 'A --versions entry must equal a configured string' does not say whether items are stripped first. The normalizer lowercases config browsers, but nothing says whether `--cells 9.1:Chromium` or `9.1: chromium` is normalized or rejected.",
+    "implementation_impact": "A duplicate `--versions` entry could spawn two children for one version, appending two records per cell from concurrent boots, or be deduped silently. The case handling of `--cells` may differ from the config's.",
+    "suggestion": "Add: '--versions items are stripped; an empty item or a duplicate is exit 2 (as for --cells); --cells browsers are stripped and lowercased like config browsers before the configured-set check.'"
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:91 (Design Notes > Normalizer input)",
+    "issue": "Only 'a comma-separated string or a list of strings' and 'absent/null → default' are defined. Other inputs are not: a non-string JSON value (`\"psm_target_versions\": 9.1`, the list `[9.1, 8.1]`, a boolean), an empty string `\"\"`, and empty items (`\"9.1,,8.1\"`, `\"chromium,\"`). An empty string could be read as an empty list (exit 2) or as absent (the default).",
+    "implementation_impact": "A config with numeric versions written by hand, or a resolver emitting \"\" for an unset key, gets inconsistent treatment across plan, runner and aggregate, or crashes with a TypeError instead of exit 2.",
+    "suggestion": "Add: 'a value that is neither a string nor a list of strings → exit 2; empty items after stripping are dropped; a value with no non-empty item (including \"\") is the empty list → exit 2.'"
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:88 (Design Notes > Record, timestamps) + contract Evidence record > Storage",
+    "issue": "The reader's line rules leave three cases open. (1) Whether the empty segment after the final `\\n`, or a blank or whitespace-only line, counts as a corrupt line. If it does, every history whose last record ends in `\\n` reads as `corrupt-history`. (2) Whether a naive `started_at` with no offset counts as UTC or as corrupt. (3) Whether a valid ISO timestamp with a non-UTC offset (`+07:00`) counts as corrupt. The spec only adds acceptance of `Z` and of missing fractional seconds.",
+    "implementation_impact": "A naive splitting reader marks every cell `corrupt-history`. Records written or edited by hand in tests are classified inconsistently.",
+    "suggestion": "Add: 'blank and whitespace-only lines are ignored (neither records nor corrupt); started_at must carry offset +00:00 or Z; a naive or other-offset timestamp makes the line corrupt.'"
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:70 (Tasks > ps-plan-layers.py read_history) + :92 (Aggregate, cell with no valid record)",
+    "issue": "Reading a history can fail at the OS level: permission denied, the path is a directory, an I/O error, or a dangling symlink. The spec does not say whether that is exit 2 naming the path (like the fingerprint stat rule), `corrupt-history`, or `missing`.",
+    "implementation_impact": "An implementation that treats it as `missing` hides a broken reports dir behind a plausible rerun reason. One that lets the exception escape gives a traceback instead of exit 2.",
+    "suggestion": "Add: 'a history that exists but cannot be opened or read (not ENOENT) is an input error, exit 2 naming the path, in plan, ps-run-layer, merge-only and aggregate alike.'"
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Runner interim, --cells `<ver>:<browser>[+<browser>]`) + :27 (ps-e2e-run.py --engines)",
+    "issue": "The order of browsers inside one cell token (`9.1:firefox+chromium`) is unspecified. The spec does not say whether the child gets `--engines` in token order or in `psm_e2e_browsers` order, so the sequential drive order, the `#n`/timestamp sequence and the order of `appended` in the output line are all open.",
+    "implementation_impact": "The same logical run gives a different engine order and a different `appended` list depending on how the token was typed, so tests that assert `appended` or timing order break nondeterministically across implementations.",
+    "suggestion": "State: 'ps-run-layer reorders each cell's browsers into psm_e2e_browsers order before passing --engines; appended lists cells in numeric version order, then psm_e2e_browsers order.'"
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:27 (Boundaries > ps-e2e-run.py --engines)",
+    "issue": "`ps-e2e-run.py --engines` validation is not specified: an empty value, an unknown engine, a duplicate, an engine outside the config's `psm_e2e_browsers`. Nor is the interaction with an explicit `--browsers` in a direct run. The spec says only that the normalizer replaces the `parse_browsers` fallback for browsers.",
+    "implementation_impact": "A direct or mis-wired call with `--engines webkitx` or `--engines ''` may silently fall back to defaults or drive zero engines, producing child output whose cells do not match what ps-run-layer admitted.",
+    "suggestion": "Add: '--engines goes through the shared normalizer (exit 2 on empty, unknown or numerically duplicate input); when present it overrides --browsers and the config; no configured-set check in the child.'"
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:94 (Interim orchestration, Fase 2 'an appended fail re-enters Fase 1 for that version (interactive)')",
+    "issue": "After a Fase 2 E2E `fail` sends the run back to Fase 1 for version V, the spec does not say what comes after V's Fase 1 loop ends. Does Fase 2 run again in full (new plan, Layer 3 re-spawned or reused, a new grouped E2E call), or only the wrap-up? The wrap-up ('Then, without any all_reuse gate…') reads as if it runs right after the grouped call, so it is unclear whether it runs before the re-entry, after it, or both.",
+    "implementation_impact": "The model may run the merge-only and aggregate twice, skip the second Fase 2 E2E pass for other versions whose fingerprint the patch changed, or never return to the wrap-up, which leaves no final verdict.",
+    "suggestion": "Add: 'after a re-entered Fase 1 loop ends, Fase 2 runs again from its plan call (Layer 3 per plan reuse); the wrap-up runs only once the grouped E2E call appends no fail or every remaining version's E2E loop has ended.'"
+  }
+]

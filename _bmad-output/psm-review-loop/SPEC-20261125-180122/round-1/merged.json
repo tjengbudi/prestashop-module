@@ -1,0 +1,494 @@
+{
+ "run_id": "20261125-180122",
+ "round": 1,
+ "complete": true,
+ "lenses": {
+  "adversarial": {
+   "reported": 15,
+   "valid": true,
+   "count": 15
+  },
+  "edge-case": {
+   "reported": 12,
+   "valid": true,
+   "count": 12
+  },
+  "implementer": {
+   "reported": 30,
+   "valid": true,
+   "count": 30
+  }
+ },
+ "invalid": [],
+ "missing": [],
+ "unexpected": [],
+ "findings": [
+  {
+   "id": "adversarial-1",
+   "lens": "adversarial",
+   "location": "cell-contract.md > Warm container (CAP-5) > Teardown",
+   "issue": "The rule says ps-run-layer stops this owner's live keepers 'before any run without --warm', and only the parenthetical lists E2E steps. ps-run-layer is also the runner for Layers 2 and 5. Every fix-loop iteration in the hosting version reruns Layers 2 and 5 (a patch stales them by mtime) before the E2E step. Read literally, the rule tears the keeper down every iteration.",
+   "implementation_impact": "An implementer who applies the rule to every ps-run-layer invocation destroys the keeper before each warm iteration. CAP-5 and the success signal ('no bring-up/wait-healthy') can then never pass. One who applies it only to e2e needs to guess, so the two readings can drift between the runner and the tests.",
+   "suggestion": "Limit the rule to `ps-run-layer.py --layer e2e` runs without `--warm`, and say explicitly that runs for `flashlight` and `scenario` never stop a keeper. Add a test: a Layer 2 run between two warm iterations leaves the keeper alive and the second iteration shows no bring-up."
+  },
+  {
+   "id": "adversarial-2",
+   "lens": "adversarial",
+   "location": "cell-contract.md > Config keys > psm_e2e_slots (wait-slots) + Runner > Fail-fast; SPEC.md CAP-3 success",
+   "issue": "The wait-slots timeout (the startup timeout, default 180 s) applies to 'the cell' whenever the cap is full. The contract does not separate cells queued behind this invocation's own running cells from cells blocked by foreign containers. A version run takes many minutes, so a cell queued behind its own sibling exceeds 180 s and gets `no-slots`. The CAP-3 test (`--slots 1`, three versions) would then record `no-slots` for cells 2 and 3 before cell 1 even fails, not `not-run`.",
+   "implementation_impact": "With any cap below demand (a small `psm_e2e_slots`, or another session holding slots), a healthy tier-1 run produces `no-slots` inconclusive cells. On the second occurrence `blocked-infra` ends the E2E loop. The CAP-3 acceptance test fails, or passes only because of timing.",
+   "suggestion": "Make the timeout apply only while the wait is caused by containers or claims outside this ps-run-layer invocation. A cell queued behind its own invocation's running cells waits without a deadline, or the timer restarts each time one of its own cells releases a slot. State this rule in the CAP-3 test."
+  },
+  {
+   "id": "adversarial-3",
+   "lens": "adversarial",
+   "location": "cell-contract.md > Failed-only rerun (CAP-4), Parallel browsers > Parallel-only failures, Scenario prerequisites",
+   "issue": "The failed-only rerun and the sequential confirmation both run only the failed set plus its declared transitive `requires` on a DB reset to a baseline (warm: pre-install; rerun-seq: post-warmup-bo). `requires` is a new optional field that no existing spec declares. A failed scenario that depends on state created by earlier specs (for example bankwire checkout after the BO country/payment setup) therefore runs without its setup. There is no fallback for 'no requires declared'.",
+   "implementation_impact": "On existing modules, failed-only iterations fail spuriously even after a correct fix, so the fix loop never converges in warm mode. The sequential confirmation can also 'confirm' a parallel-only failure through a missing-setup failure at the same (scenario, step, action), which breaks the CAP-7 guarantee of identical findings.",
+   "suggestion": "Define a fallback: when a failed scenario declares no `requires` and is not the first authored spec in run order, run the full set, or all specs that precede it in order. For rerun-seq, rerun the engine's full scenario set on the restored dump. Alternatively, document that CAP-4/CAP-7 confirmation need declared `requires`, and have the plan emit a note when they are missing."
+  },
+  {
+   "id": "adversarial-4",
+   "lens": "adversarial",
+   "location": "cell-contract.md > intro (live tests) + Scenario prerequisites example; SPEC.md Success signal + Non-goals",
+   "issue": "The success signal and the live tests depend on bankwire, with a fault injected into 'one authored spec's expect_text'. The contract never names that spec. It says bankwire's checkout spec 'would declare' `requires`, but does not say whether the bankwire specs are edited as part of this work. The Non-goals exclude 'writing new E2E scenarios for any module'. If the injected spec is checkout-with-bank and `requires` is not added, the warm failed-only iteration after the revert runs checkout on a pre-install DB and fails.",
+   "implementation_impact": "The headline success signal can fail for fixture reasons unrelated to the feature. Implementers must also guess whether changing bankwire specs is in or out of scope.",
+   "suggestion": "Name the exact spec file and field that the fault injection modifies. State whether adding `requires` to bankwire's existing specs is in scope (amending existing specs, not writing new ones), or pick a dependency-free spec for the injection."
+  },
+  {
+   "id": "adversarial-5",
+   "lens": "adversarial",
+   "location": "cell-contract.md > Parallel browsers > Parallel-only failures",
+   "issue": "rerun-seq restores only the DB dump. It does not reset files written by the parallel pass (var/cache, uploads, module-written files, overrides) or reload opcache, although the warm reset treats all three as necessary. It also changes `{browser}` to `<engine>-seq`, which makes the rerun a different test from the parallel pass (different data values, lengths, uniqueness). The DB restore already prevents collisions, so the stated reason for the change does not hold. The claim 'so state written by the parallel pass cannot be confirmed as a failure' and the 'identical to a sequential run' guarantee are therefore overstated.",
+   "implementation_impact": "Failures caused by file or cache state from the parallel pass can be confirmed as blocking. Failures that depend on the `{browser}` value can disappear or appear in the confirmation. The identical-findings live test may flake, and its own retry-once rule hides this.",
+   "suggestion": "Reuse the warm reset sequence (reset-db, reset-files against a docroot list captured with the snapshot-db dump, var/cache wipe, reset-opcache) before rerun-seq, and keep `{browser}` = `<engine>`, since the DB restore already isolates data. Or state the file-state limitation explicitly and weaken the guarantee to match."
+  },
+  {
+   "id": "adversarial-6",
+   "lens": "adversarial",
+   "location": "cell-contract.md > Parallel browsers > Parallel-only failures; tier-matrix.md Rules (inconclusive blocks promotion)",
+   "issue": "Only engines with findings are rerun sequentially. Contention from parallel driving on a shared WSL daemon (timeouts that classify a step as inconclusive, a flaky BO-authenticated step) produces `inconclusive` steps that are never rechecked sequentially. The cell then has `inconclusive-steps`, blocks promotion, and on repetition triggers `blocked-infra`.",
+   "implementation_impact": "Parallel mode can turn a module that passes sequentially into a blocked gate. This contradicts CAP-7's promise that findings match a sequential run, and wastes full version boots on reruns.",
+   "suggestion": "Also run rerun-seq for engines whose parallel pass left inconclusive steps, and drop the parallel-only inconclusive steps that come out conclusive in the rerun (record them under `parallel_only` or a sibling field). Or make a version whose newest record has parallel-induced `inconclusive-steps` run with `--sequential-browsers` next time, as is already done for `parallel-unconfirmed`."
+  },
+  {
+   "id": "adversarial-7",
+   "lens": "adversarial",
+   "location": "cell-contract.md > State, freshness, gate-grade > Fresh",
+   "issue": "`source_fingerprint` excludes 'the run's screenshot directory when it lies inside' the module. Plan and aggregate also compute the fingerprint with 'one shared function', but they have no `--screenshot-dir` input and do not know which screenshot directory the run used.",
+   "implementation_impact": "When a screenshot directory sits inside the module but outside `psm_reports_dir`, the runner excludes it and plan/aggregate include it. Fingerprints then disagree, every record reads `stale-source`, and the loop never reaches `done`, or flaps as screenshots change.",
+   "suggestion": "Exclude only paths that every caller can derive from config (for example `psm_reports_dir` and a fixed `<psm_reports_dir>/e2e-shots`). Otherwise reject a screenshot directory inside the module outside reports_dir as an input error (exit 2), or persist the excluded paths in the record and have plan/aggregate reuse them."
+  },
+  {
+   "id": "adversarial-8",
+   "lens": "adversarial",
+   "location": "cell-contract.md > State, freshness, gate-grade > Fresh",
+   "issue": "Freshness rests on (path, size, mtime_ns) only. A content change that keeps size and mtime goes undetected: `rsync -a`/`cp -p`/`tar x` from another checkout (a common pattern when syncing between /mnt/c and the WSL home), or a same-size edit by a tool that restores mtime. Old evidence then counts as fresh for new code.",
+   "implementation_impact": "This violates the honesty law: `ready` can be true for code no E2E ever ran against. Because E2E evidence now persists across sessions in append-only histories, the window for this is larger than with today's per-run files.",
+   "suggestion": "Hash file contents (SHA-256 per file, optionally cached by (path, size, mtime_ns, inode) to keep it cheap), or at least add inode/ctime. Add a test: replace a file with same-size different content and restore its mtime; every cell becomes stale."
+  },
+  {
+   "id": "adversarial-9",
+   "lens": "adversarial",
+   "location": "SPEC.md frontmatter `companions` + 'Canonical contract' blockquote vs cell-contract.md > Docs to update",
+   "issue": "The SPEC declares its companions, including psm-validate SKILL.md and references/run-phases.md, to be 'the complete, preservation-validated contract'. cell-contract.md says those two files 'describe today's flow, not this contract' and are overridden where they differ. They still prescribe `--per-version` for e2e, `--jobs` for E2E, `all_reuse` as the gate, and visual-review timing that this contract forbids.",
+   "implementation_impact": "An implementer reading the contract as instructed gets contradictory, authoritative-looking commands. For example, `--per-version` with layer e2e is now exit 2, and `all_reuse` is now informational. This invites implementing against the old flow.",
+   "suggestion": "Move SKILL.md and run-phases.md out of `companions:` into a 'brownfield references (superseded where they differ)' list, or state the precedence in the blockquote itself and list the specific superseded sections there."
+  },
+  {
+   "id": "adversarial-10",
+   "lens": "adversarial",
+   "location": "SPEC.md Why / Success signal / Open Questions",
+   "issue": "The whole motivation is wall-clock ('roughly a full day'), but no success criterion measures time. The wall-clock budget is an Open Question, and the success signal counts boots and phases only. The spec also never shows that E2E boots dominate the 18 h bankwire run. Each fix-loop iteration still cold-boots the hosting version's Layer 2 and Layer 5 containers before the warm E2E step, and Layer 3 is respawned after every loop-back.",
+   "implementation_impact": "Every CAP can be delivered and verified while the operator's wait barely changes. There is no threshold for rejecting the work or prioritising the parts (warm keeper, parallel browsers) that matter most.",
+   "suggestion": "Before implementation, extract per-phase durations from the existing bankwire progress logs/reports to set a baseline. Then add a measurable target to the success signal (for example a maximum fix-loop iteration wall-clock and a full-gate wall-clock on bankwire), or state explicitly that the success criterion is structural only and time targets come after CAP-6 ships."
+  },
+  {
+   "id": "adversarial-11",
+   "lens": "adversarial",
+   "location": "cell-contract.md > Evidence record > Storage; Headless (config copy)",
+   "issue": "Cell histories are append-only and never pruned, and each record carries findings, console_errors, screenshots lists, and phase timings. Every plan and aggregate call parses every line of every configured cell's history. Headless also writes a new `<module>-psm-config.headless.<session>.json` per call and never deletes it.",
+   "implementation_impact": "Over months of fix loops (warm iterations append one record per iteration), histories and config copies grow without bound, plan calls slow down, and the reports directory fills with clutter. There is no defined safe way to compact a history without breaking the 'newest record' and 'recorded failure' semantics.",
+   "suggestion": "Define retention: for example keep, per cell, the newest record of each (boot, scenario_set, fingerprint) class plus the newest N records, compacted under the same flock by an explicit rewrite step. Delete the headless config copy at the end of the call."
+  },
+  {
+   "id": "adversarial-12",
+   "lens": "adversarial",
+   "location": "cell-contract.md > Docs to update; Runner (exit code 3)",
+   "issue": "The list of docs to update omits the sibling callers whose contracts change. psm-optimize compares per-version validate status against a baseline ('no new failures compared to before'). With headless stopping at the first unclean step, versions not reached carry 'not reached', so the baseline and after-runs are not comparable per version. psm-develop, psm-cross-version, and psm-scaffold say 'ready true in 1.7.x, 8.x and 9.x' and read per-version status. The new `ps-e2e-run.py` exit code 3 (formerly 1) also affects the quickstart TDD loop and any shell logic that tests for exit 1.",
+   "implementation_impact": "Sibling skills can treat an unreached version as a regression, or as a pass, and psm-optimize's delta check cannot detect regressions on versions the canary failure prevented from running.",
+   "suggestion": "Add the SKILL.md of psm-optimize, psm-develop, psm-cross-version, and psm-scaffold to 'Docs to update', with the rule for `not reached` versions (for example, never compared and never counted as a pass). Also document exit 3 in references/e2e-quickstart.md."
+  },
+  {
+   "id": "adversarial-13",
+   "lens": "adversarial",
+   "location": "cell-contract.md > Scenario prerequisites (`requires`) ordering",
+   "issue": "'Every run orders scenarios so each runs after its transitive requires: universal smoke first, otherwise today's file-name order' does not define the algorithm. Many topological orders are compatible with file-name order (for example, a dependent pulled forward next to its prerequisite vs prerequisites hoisted to the front), and the contract does not say which one applies.",
+   "implementation_impact": "Different implementations, or the plan vs runner vs rerun-seq, can order state-dependent scenarios differently, which changes outcomes. Failed-only and rerun-seq selections then do not reproduce the order of the full run they are compared against.",
+   "suggestion": "Specify a deterministic algorithm, for example: a stable topological sort (Kahn's) that always picks the ready spec with the smallest file name. Add a test with a dependent whose file name sorts before its prerequisite."
+  },
+  {
+   "id": "adversarial-14",
+   "lens": "adversarial",
+   "location": "cell-contract.md > Evidence record > Storage (ps-run-layer appends after child exit)",
+   "issue": "Records for all admitted cells are appended only by ps-run-layer after the child exits (or from its SIGTERM stop handler). If ps-run-layer itself is SIGKILLed, hits a harness timeout, or WSL restarts, the children's per-cell results, already in their output files, are never turned into history, and no `crash` record is written either.",
+   "implementation_impact": "A long tier-1 run (three version boots) can vanish without trace. The plan sees `missing` and re-boots everything, and the progress log gives no record-level explanation. This is safe for honesty but directly works against the speed goal.",
+   "suggestion": "Have each child (version process) append its own cell records under the same flock when it finishes, with ps-run-layer adding only the records for cells that left none. Or let ps-run-layer, on its next start, sweep child output files left by a dead predecessor (identified via the job registry) into history."
+  },
+  {
+   "id": "adversarial-15",
+   "lens": "adversarial",
+   "location": "cell-contract.md > Evidence record > Fields (`session`): 'passed as --session to every plan call ... reject a missing token (exit 2)'",
+   "issue": "`--session` becomes mandatory on every `ps-plan-layers.py` call, including Phase 1 per-version calls whose E2E fields are not read, runs with `psm_e2e_enabled` false, and gating with `--require` without e2e. The contract gives no reason why a non-E2E plan needs a session.",
+   "implementation_impact": "Existing plan invocations in run-phases.md, the tests, and any caller that plans only Layers 1/2/5 break with exit 2. That adds churn and an extra failure mode unrelated to E2E.",
+   "suggestion": "Require `--session` only when the plan emits E2E step fields (layer e2e configured and enabled). Otherwise make it optional and treat its absence as 'no session' (no `blocked-infra`, no `e2e_warm`)."
+  },
+  {
+   "id": "edge-case-1",
+   "lens": "edge-case",
+   "location": "cell-contract.md > Parallel browsers (CAP-7) > Parallel-only failures; SPEC.md CAP-7",
+   "issue": "The sequential rerun (rerun-seq) drives only the failed set, its transitive `requires`, and the universal smoke. Modules whose specs declare no `requires` (every existing module) lose the scenarios that ran before the failing one in file-name order. A failure that depends on state those earlier scenarios left behind does not reproduce.",
+   "implementation_impact": "A genuine failure moves to `parallel_only`, the cell becomes a passing gate-grade record, and `ready` can turn true. That breaks the honesty law.",
+   "suggestion": "Specify that rerun-seq drives the full scenario set in file order (restored DB, `<engine>-seq` data), or that a parallel finding which does not reproduce in a reduced selection stays in `inconclusive` rather than `parallel_only`."
+  },
+  {
+   "id": "edge-case-2",
+   "lens": "edge-case",
+   "location": "cell-contract.md > Parallel browsers (CAP-7) > Parallel-only failures and the BO-login fallback (`browser:<engine>#2`)",
+   "issue": "Before rerun-seq and the BO-login second pass, only the DB is restored from the `snapshot-db` dump. Files the parallel pass wrote are not reset: `var/cache` (including the Symfony container and `class_index`), uploads, module-written files, and OPcache. The warm reset defines `reset-files` and `reset-opcache` for exactly these, but the CAP-7 reruns do not use them.",
+   "implementation_impact": "Leftover cache or file state can create or hide a finding in the confirming pass, so the identical-findings guarantee can break silently.",
+   "suggestion": "State whether rerun-seq also runs `reset-files` (relative to a docroot list captured with `snapshot-db`) and `reset-opcache`. If it deliberately does not, state that and add a matching case to the identical-findings test."
+  },
+  {
+   "id": "edge-case-3",
+   "lens": "edge-case",
+   "location": "cell-contract.md > Config keys > psm_e2e_slots (wait-slots); SPEC.md CAP-3 success",
+   "issue": "It is not specified whether the `wait-slots` startup timeout (default 180 s) applies to cells queued behind cells that this same ps-run-layer invocation has already admitted, nor when that clock starts. An E2E version run takes many minutes, so any queued cell exceeds 180 s.",
+   "implementation_impact": "When slots are short, tier-1 cells become `no-slots` instead of waiting their turn. Two such runs give `blocked-infra`, and the CAP-3 test (`--slots 1`, three queued cells) can produce `no-slots` instead of `not-run`.",
+   "suggestion": "Specify that the `wait-slots` timer runs only while the slots are held by other invocations or containers, not by this invocation's own in-flight cells. Alternatively, start the timer per cell when it reaches the head of the queue and nothing of this run is in flight."
+  },
+  {
+   "id": "edge-case-4",
+   "lens": "edge-case",
+   "location": "cell-contract.md > Config keys > psm_e2e_slots ('a failed or timed-out call counts as cap full'); Evidence record > Storage (skipped)",
+   "issue": "When Docker is absent or the daemon is down, `docker ps --filter label=psm.slots` fails before any child starts. The spec says to treat that as cap full, so the run waits and then records `no-slots`. The child that would report `status: skipped` never runs.",
+   "implementation_impact": "A host without Docker gets `no-slots` records and then `blocked-infra` instead of `e2e_status: skipped`. The report shows the wrong cause, and the `--cleanup-orphans` pre-step fails as well.",
+   "suggestion": "Before counting slots, specify a Docker availability probe in ps-run-layer that prints `e2e_status: skipped` and exits 0 when the docker CLI or daemon is absent, leaving no record (the same as a child that is skipped)."
+  },
+  {
+   "id": "edge-case-5",
+   "lens": "edge-case",
+   "location": "cell-contract.md > Evidence record > Newest / latest",
+   "issue": "Record order uses wall-clock `started_at`, with ties broken by `run_id`, a random token. WSL2 clocks can jump backwards (resync after host sleep), so a later run of the same cell can carry an earlier `started_at`.",
+   "implementation_impact": "A newer gate-grade `fail` can rank below an older `pass`, giving a wrong `ready=true` and a wrong focus cell or step. Tie-breaking on a random `run_id` is effectively arbitrary.",
+   "suggestion": "Within one cell's history, order by append position (line order under flock) or by a per-history monotonic sequence number written with each record. Use `started_at` only for cross-cell decisions (newest run) and document how a clock jump is handled."
+  },
+  {
+   "id": "edge-case-6",
+   "lens": "edge-case",
+   "location": "cell-contract.md > State, freshness, gate-grade > Fresh (source_fingerprint walk)",
+   "issue": "The walk uses `lstat` and never follows symlinks. It does not say what happens when the module path itself is a symlink, or how symlinked files inside the module are treated. Their target content is not part of the fingerprint.",
+   "implementation_impact": "If the root is a symlink, the walk can see no entries and produce a constant fingerprint, so stale records look fresh. Editing a symlink target outside the tree also never stales evidence.",
+   "suggestion": "Specify that the root path is resolved (`realpath`) before the walk. For inner symlinks, either hash the link text plus the target's stat, or make them an input error (exit 2) naming the path."
+  },
+  {
+   "id": "edge-case-7",
+   "lens": "edge-case",
+   "location": "tier-matrix.md > Rules > Visual review (`<module>-visual-pending.json`)",
+   "issue": "The spec does not cover several cases for the pending file. A patch or loop-back after a defect is written can make that defect stale. A later cold run can show the defect fixed. Several cold runs can write before the merge. A file can be left over by an earlier psm-validate invocation that never reached Phase 2.",
+   "implementation_impact": "Defects that are stale or already fixed get merged as blocking findings into `adversarial.json`, or a second write overwrites the first and drops a defect.",
+   "suggestion": "Tag each pending entry with `source_fingerprint`, session, and cell. At merge, drop entries whose fingerprint is not current or whose session differs. Specify that writes are read-merge under flock, not overwrite."
+  },
+  {
+   "id": "edge-case-8",
+   "lens": "edge-case",
+   "location": "cell-contract.md > Runner (`--cells`), Warm container (`--warm`), Failed-only rerun (`--scenarios-from-failed`)",
+   "issue": "Input validation is not specified for these cases: `--cells` listing the same version twice (`9.1:chromium,9.1:firefox`); a `--cells` entry outside the configured cells; and `--warm` or `--scenarios-from-failed` combined with more than one cell.",
+   "implementation_impact": "Two boots of one version could run in one invocation, history could be written for cells the plan ignores, or the warm/failed-only resolution could be ambiguous when several cells are given.",
+   "suggestion": "Specify these as input errors (exit 2): a version repeated in `--cells` (or merge the repeats into one browser list), a cell outside the configured set, and `--warm` or `--scenarios-from-failed` with anything other than exactly one cell."
+  },
+  {
+   "id": "edge-case-9",
+   "lens": "edge-case",
+   "location": "cell-contract.md > Failed-only rerun (CAP-4) > record gets `scenario_set: partial`",
+   "issue": "When the failed set plus transitive `requires` plus the smoke equals every valid spec, the record is still marked `partial`, even on a cold boot (for example a cold failed-only run after `warm-reset`).",
+   "implementation_impact": "A cold run that covered the full set is not gate-grade, which forces a redundant cold full rerun of the same cell.",
+   "suggestion": "Specify that the child sets `scenario_set: full` when `scenarios_run` equals the full discovered set (as in the fallback case), and `partial` otherwise."
+  },
+  {
+   "id": "edge-case-10",
+   "lens": "edge-case",
+   "location": "cell-contract.md > Evidence record > Storage (readers)",
+   "issue": "Appends are one `write()` under `flock`, but the spec does not say whether plan and aggregate take a lock when they read. A read during a concurrent append (another session, or a keeper-related write) can see a partial last line.",
+   "implementation_impact": "A cell transiently gets `corrupt-history` and loses passing gate-grade evidence. That changes `e2e_step`, can fail the Phase 2 entry check, or triggers a needless rerun.",
+   "suggestion": "Specify that readers take `LOCK_SH` on the history file, or ignore a trailing line that has no newline terminator rather than treating it as unparsable."
+  },
+  {
+   "id": "edge-case-11",
+   "lens": "edge-case",
+   "location": "cell-contract.md > Configured cells (normalizer: string identity vs numeric order); Config keys > psm_e2e_canary default",
+   "issue": "Versions that are numerically equal but different strings (`9.1` and `9.1.0`) are both accepted as configured. Their numeric order is a tie, and the default canary is defined as the 'newest' version.",
+   "implementation_impact": "The default canary, the order of `e2e_next_cells`, and the focus-cell tie-break become nondeterministic. The same tag can also be booted twice.",
+   "suggestion": "Specify that numerically equal versions in one list are an input error (exit 2), or define a deterministic secondary order (for example the longer string first)."
+  },
+  {
+   "id": "edge-case-12",
+   "lens": "edge-case",
+   "location": "cell-contract.md > Warm container > Teardown; Config keys > psm_e2e_slots (admission)",
+   "issue": "ps-run-layer stops this owner's keeper before a run without `--warm`, but the spec does not order that stop against slot counting. It also does not say whether `--stop-job` waits until the keeper's container is gone.",
+   "implementation_impact": "With a tight cap (for example `psm_e2e_slots` 1 or 2), the cold run counts the keeper's slot as still in use. It can wait, then record `no-slots` for a slot that it is freeing itself.",
+   "suggestion": "Specify that keeper teardown finishes (the container is no longer running) before the slot count, or that ps-run-layer excludes containers of keepers it is stopping from the count."
+  },
+  {
+   "id": "implementer-1",
+   "lens": "implementer",
+   "location": "cell-contract.md > Evidence record > Producers + Fields (null fields) vs State, freshness > Fresh vs Plan step 3 blocked-infra (test) and rerun reason 'not-run'",
+   "issue": "Records that ps-run-layer writes itself (no-slots, not-run, crash, stopped, browser-unavailable, keeper-start) have no image_tag. image_tag comes only from the child ('The child emits per version ... image_tag'), and 'null for fields no engine produced' applies. Fresh requires image_tag == resolved tag, so these records are never fresh. That contradicts two things: (a) the blocked-infra rule and its test ('two no-slots records in one session on one fingerprint give blocked-infra'), which need both records to be fresh; (b) the plan reason 'not-run', which is only reachable 'by the newest fresh record', so a newest not-run record reads as 'stale-tag'. ps-run-layer cannot fill the tag either: Config keys says it reads from --config 'only the E2E keys below, the configured set and psm_flashlight_startup_timeout', which leaves out psm_flashlight_tag_map.",
+   "implementation_impact": "The mandated blocked-infra test cannot pass as written, a repeated no-slots/crash loop never ends, and the not-run reason never surfaces. The warm pre-iteration check ('its image tag equals the resolved tag') also needs a tag that ps-run-layer is not allowed to resolve.",
+   "suggestion": "Make ps-run-layer resolve the tag itself (from psm_flashlight_tag_map in --config plus any --tag-map/--extra-tag-map in the passthrough, via fl.resolve_tag) and stamp image_tag on every record it writes. Alternatively, define freshness for engine-less records as fingerprint-only."
+  },
+  {
+   "id": "implementer-2",
+   "lens": "implementer",
+   "location": "cell-contract.md > Config keys > psm_e2e_slots (wait-slots bullet) vs Runner > Fail-fast ('ps-run-layer queues cells under the cap') vs SPEC CAP-3 success",
+   "issue": "A cell that cannot get a slot waits in wait-slots 'for at most the startup timeout' (default 180 s), then gets no-slots. Nothing separates waiting on foreign load from queueing behind this run's own in-flight cells. A cold version run takes many minutes, so with a cap below the run's demand (e.g. psm_e2e_slots=2 in tier 1 with three versions, or the CAP-3 test with --slots 1 and three versions), every queued cell times out to no-slots instead of waiting its turn. In the CAP-3 scenario the queued cells would be recorded as no-slots long before the first cell's exit 3 could make them not-run.",
+   "implementation_impact": "The implementer has to guess whether the startup-timeout bound applies to intra-run queueing. Implemented literally, any cap smaller than a tier's demand turns into inconclusive no-slots, and after two of those, blocked-infra. That defeats the 'queue under the cap' design and makes the CAP-3 live behaviour contradict its test.",
+   "suggestion": "State that the timeout covers only time during which the run has nothing of its own in flight, or that it restarts whenever one of this run's own cells frees a slot. Cells blocked only by their own siblings wait without a bound. Add a test with slots < demand that expects no no-slots records."
+  },
+  {
+   "id": "implementer-3",
+   "lens": "implementer",
+   "location": "cell-contract.md > Runner > Fail-fast + Config keys > psm_e2e_slots (slot_claims: 'a claim counts until a running container carries its psm.run or its process exits')",
+   "issue": "The child tears down its container (in finally) before it exits with code 3. Once the container is gone the psm.slots label disappears, and the claim no longer counts because the container already ran, so the slot frees before ps-run-layer sees exit 3. A cell waiting in wait-slots (the CAP-3 test: --slots 1, three versions) can be admitted and start bring-up in that window, which breaks 'the progress log shows no bring-up for them'.",
+   "implementation_impact": "CAP-3 becomes racy: the success test is flaky, and in production one extra cell may boot after a conclusive failure.",
+   "suggestion": "Keep a child's claim counted until ps-run-layer has reaped the child's exit code, so admission is re-evaluated only after the fail-fast decision. Alternatively, have the version process signal 'fail' to ps-run-layer (e.g. a result file written before teardown) and check it under slots.lock before admitting."
+  },
+  {
+   "id": "implementer-4",
+   "lens": "implementer",
+   "location": "cell-contract.md > Scenario prerequisites ('bankwire checkout-with-bank.json ... would declare') vs SPEC Non-goals ('Writing new E2E scenarios for any module') vs Success signal / live identical-findings test",
+   "issue": "Whether bankwire's checkout-with-bank.json actually gets the 'requires' field is left as a conditional example. The live tests depend on it. The warm iteration resets the DB to a pre-install baseline, and the failed-only selection, and the rerun-seq on a post-warmup-bo dump, run only the failed scenario plus its 'requires'. Without the field, checkout-with-bank runs without its BO setup scenarios and fails or diverges for reasons unrelated to the injected expect_text fault. The identical-findings test then compares sets that differ by setup state, and the success-signal iteration after the revert patch does not pass.",
+   "implementation_impact": "I would have to guess whether editing the bankwire fixture spec is in scope. If it is not, the CAP-4, CAP-5 and CAP-7 live tests are non-deterministic or fail.",
+   "suggestion": "Make it an explicit deliverable: add 'requires' to modules/bankwire/tests/e2e/checkout-with-bank.json (or to the temp copy inside the live-test setup). Note that this is a fixture edit, not a new scenario."
+  },
+  {
+   "id": "implementer-5",
+   "lens": "implementer",
+   "location": "tier-matrix.md > Tier 1 'Starts when' + Rules (Phase 1 bullet) / cell-contract.md > Plan > Phase 1 / SPEC Constraints (headless)",
+   "issue": "'Clean on Layers 1, 2, and 5' is defined only as phase1_reuse true ('no layer other than e2e and adversarial reruns'). That is freshness, not passing. The tier matrix reads it as passing ('every version clean'). Also, headless psm-validate never patches source. If 'clean' means passing, a headless run whose hosting version has a blocking Layer 2 error never reaches the E2E step, and its Phase 1 loop has no defined termination. If 'clean' means fresh, a module with a failing Layer 2 still burns E2E boots.",
+   "implementation_impact": "The loop exit condition and the moment tier 0 is allowed to run would be guessed. Headless behaviour for a module that fails Layer 1/2/5 is undefined: possibly an infinite loop, or E2E skipped silently.",
+   "suggestion": "Define 'clean' explicitly (I assume fresh, i.e. phase1_reuse) in tier-matrix and Plan > Phase 1. For headless, state that each Phase 1 loop runs once, and whether E2E runs when Layers 1/2/5 have blocking findings."
+  },
+  {
+   "id": "implementer-6",
+   "lens": "implementer",
+   "location": "cell-contract.md > Plan > Phase 2 entry + bullet 'A run that prints e2e_status: skipped ... ends the E2E loop'",
+   "issue": "The Phase 2 entry check requires a plan call showing 'e2e_step gate, done, or a step that ends the E2E loop'. e2e_status: skipped (Playwright/Docker absent) and psm_e2e_enabled false come from run output or orchestrator config, not from an e2e_step. After a skipped run, the plan still derives 'focus' (no record was written), so a literal Phase 2 entry check fails and 'the hosting loop for a tier-0 step run again', which repeats a step the text says must not be repeated.",
+   "implementation_impact": "Read literally, the orchestrator procedure loops forever on machines without Playwright, or with E2E disabled.",
+   "suggestion": "Add an orchestrator-side 'E2E loop ended' state (skipped / disabled / --require without e2e) that the Phase 2 entry check treats like a terminal step. Alternatively, have the plan accept an --e2e-disabled flag and emit e2e_step 'skipped'."
+  },
+  {
+   "id": "implementer-7",
+   "lens": "implementer",
+   "location": "cell-contract.md > Plan > Phase 1 (phase1_reuse) / Phase 2 entry",
+   "issue": "Without Docker, ps-run-layer never persists per-version flashlight/scenario files (skipped payloads are not written, ps-run-layer.py main). The plan therefore reports those layers as rerun forever, phase1_reuse never becomes true, and neither the hosting loop nor the Phase 2 entry check can ever pass. Today all_reuse was read by judgment. The new contract makes phase1_reuse a mechanical gate with no exit for 'layer unavailable on this host'.",
+   "implementation_impact": "On a Docker-less host the mechanical procedure never reaches Phase 2 or the aggregate.",
+   "suggestion": "Define phase1_reuse to ignore layers whose last run reported skipped (unavailable), or specify an orchestrator rule that ends Phase 1 when a Docker layer reports skipped."
+  },
+  {
+   "id": "implementer-8",
+   "lens": "implementer",
+   "location": "cell-contract.md > Headless (return JSON: 'a version none of whose configured cells has a record carrying this call's --session ... gets reason not reached: stopped at <step>')",
+   "issue": "No script computes this. The aggregate does not take --session, and the plan's outputs do not report which versions have records from the current session. The headless orchestrator (a prompt) would have to read the .jsonl histories by hand, which goes against SKILL.md's 'read verdicts as-is, do not reassemble' rule.",
+   "implementation_impact": "I would have to guess where this logic goes: plan, aggregate or prose. If it goes in prose it is non-deterministic.",
+   "suggestion": "Give ps-aggregate.py an optional --session and have it emit versions[ver].reached (or the 'not reached' reason) itself. Headless then copies it."
+  },
+  {
+   "id": "implementer-9",
+   "lens": "implementer",
+   "location": "cell-contract.md > Aggregate (first bullet: '--config ... gains the plan's --tag-map/--extra-tag-map')",
+   "issue": "The aggregate is said to read only the configured set from --config. It is not stated whether it also applies psm_flashlight_tag_map from that config (the plan does, via apply_config_file). If it does not, an operator with a custom tag map who passes only --config gets every record judged stale-tag in the aggregate while the plan calls them fresh.",
+   "implementation_impact": "Plan and aggregate may disagree on freshness, which drops ready falsely.",
+   "suggestion": "State that the aggregate resolves tags exactly as the plan does (apply psm_flashlight_tag_map from --config, explicit --tag-map wins), and add a test where config carries a non-default tag map."
+  },
+  {
+   "id": "implementer-10",
+   "lens": "implementer",
+   "location": "cell-contract.md > Config keys (preamble: ps-run-layer reads only E2E keys...; psm_e2e_slots 'Maps to ps-run-layer.py --slots (CONFIG_KEY_TO_DEST in ps-flashlight-run.py)')",
+   "issue": "CONFIG_KEY_TO_DEST is consumed by fl.apply_config_file, which also maps psm_target_versions -> versions and psm_flashlight_* keys. ps-run-layer is forbidden to map psm_target_versions -> --versions, so it cannot use apply_config_file with that table. Adding psm_e2e_slots to the shared table only affects children, which have no 'slots' dest. Where the --slots mapping actually lives is contradictory.",
+   "implementation_impact": "Guesswork on how ps-run-layer loads config. Reusing apply_config_file as-is would silently fill --versions from config, which the contract forbids.",
+   "suggestion": "Specify a separate ps-run-layer-only key map (psm_e2e_slots, psm_e2e_warm_ttl, psm_e2e_canary, psm_flashlight_startup_timeout, psm_flashlight_tag_map if the first finding is adopted), or an apply_config_file parameter that restricts the keys applied."
+  },
+  {
+   "id": "implementer-11",
+   "lens": "implementer",
+   "location": "cell-contract.md > State, freshness, gate-grade > Fresh ('... psm_reports_dir and the run's screenshot directory when they lie inside it')",
+   "issue": "Plan, runner and aggregate must share one fingerprint function, but only the runner knows the screenshot directory (--screenshot-dir arrives in ps-run-layer's passthrough). The plan and aggregate never receive it. If the screenshot dir lies inside the module dir and outside psm_reports_dir, the runner's fingerprint excludes it and the plan's includes it, so every record looks stale-source.",
+   "implementation_impact": "Freshness can differ between producer and readers, which leads to endless reruns.",
+   "suggestion": "Drop the screenshot-dir exclusion and require that the screenshot dir lie outside the module or inside psm_reports_dir (exit 2 otherwise). Alternatively, give plan and aggregate the same --screenshot-dir."
+  },
+  {
+   "id": "implementer-12",
+   "lens": "implementer",
+   "location": "tier-matrix.md > Rules (Phase/Layer 3 bullet: 'A loop-back to tier 0 re-enters Phase 1, and Layer 3 output from before the new patch is stale and is spawned again')",
+   "issue": "Layer 3 subagents are spawned at the start of Phase 2, concurrently with tier 1. If tier 1 fails and the loop goes back, those subagents may still be running. Nothing says to discard their results. If the orchestrator merges them after the fix patch, adversarial.json gets an mtime newer than the source, and the plan's mtime-based freshness treats a review of pre-patch code as fresh.",
+   "implementation_impact": "Stale Layer 3 findings, or a stale 'clean' review, can gate the release.",
+   "suggestion": "On loop-back, discard (do not merge) in-flight Layer 3 results, or merge them only when no patch has landed since spawn, e.g. by recording the source fingerprint at spawn time."
+  },
+  {
+   "id": "implementer-13",
+   "lens": "implementer",
+   "location": "tier-matrix.md > Rules > Visual review (<module>-visual-pending.json)",
+   "issue": "Pending visual defects are not tied to a fingerprint or run. A defect seen on the cold canary run in Phase 1 waits in visual-pending.json across a later loop-back patch that may have fixed it, and is then merged into adversarial.json in Phase 2 as a blocking finding against code that no longer has it. It is also unspecified what happens to pending entries when the session ends without reaching Phase 2.",
+   "implementation_impact": "Stale blocking findings can drop ready, and leftover pending files from earlier sessions get merged into a new session.",
+   "suggestion": "Record source_fingerprint (and session) with each pending entry. At merge time, drop entries whose fingerprint is not current or whose session differs, and log what was dropped."
+  },
+  {
+   "id": "implementer-14",
+   "lens": "implementer",
+   "location": "cell-contract.md > Warm container > Owner (session.json fields)",
+   "issue": "session.json lists 'orchestrator mode, container, DB and network names, compose project, published port...', but not the compose file path. fl._exec in compose mode needs session['compose_file'] ('docker compose -f <file> -p <project> exec'), and the keeper's tmpdir holding it is private. The iteration process cannot run reset, install or wait in compose mode with the listed fields.",
+   "implementation_impact": "I would have to guess between adding the field and switching iterations to 'docker exec <ps_container>' in both modes.",
+   "suggestion": "Add compose_file (and tmpdir) to session.json, or state that iterations always use plain 'docker exec' on the recorded PS container name."
+  },
+  {
+   "id": "implementer-15",
+   "lens": "implementer",
+   "location": "cell-contract.md > Config keys > psm_e2e_warm_ttl ('the keeper validates it before it detaches (exit 2)') vs Warm container > Chain ('ps-run-layer ... starts one detached'; 'a keeper that exits first gives the cell an inconclusive record, reason keeper-start')",
+   "issue": "It is unclear who detaches (ps-run-layer via start_new_session, or the keeper by forking itself), and whether a keeper exit 2 is an input error (no record, ps-run-layer exits 2) or a keeper-start inconclusive record. If the keeper daemonizes by forking after bring-up, the container's psm.owner-pid label points at a dead PID, and --cleanup-orphans would remove a live keeper's container.",
+   "implementation_impact": "This affects keeper ownership safety and the exit-code and record semantics.",
+   "suggestion": "State that ps-run-layer validates psm_e2e_warm_ttl at config load (exit 2, no keeper started) and launches the keeper as a new session without the keeper forking. If the keeper must fork, it has to do so before bring-up so the labels carry the final PID."
+  },
+  {
+   "id": "implementer-16",
+   "lens": "implementer",
+   "location": "cell-contract.md > Warm container > Owner ('The On Activation report lists live keepers of other owner tokens for the module with their --stop-job command')",
+   "issue": "No script or flag produces this list. --list-jobs shows registry entries without owner tokens, and keepers' session.json files live in <tmp>/psm-warm/, which nothing enumerates. The SKILL.md On Activation update is also missing from 'Docs to update' (only 'On Activation step 2 scope' is listed), and so is minting the session token there.",
+   "implementation_impact": "The orchestrator would have to hand-parse tmp files, or the requirement gets dropped.",
+   "suggestion": "Add a flag (e.g. ps-flashlight-run.py --list-warm --module <path>) that prints keepers with owner token, warm-id, age and stop command. Add 'On Activation: mint --new-session, list foreign keepers' to Docs to update."
+  },
+  {
+   "id": "implementer-17",
+   "lens": "implementer",
+   "location": "cell-contract.md > Evidence record > Fields (boot_id) + Phase timings (warm iteration boot '<keeper boot_id>#<iteration RUN_ID>'; 'The iteration that started the keeper embeds the keeper's boot_phases in its record')",
+   "issue": "A warm record's boot_id is either the keeper's RUN_ID ('RUN_ID of the process that ran bring-up') or the composite '<keeper boot_id>#<RUN_ID>'. The first iteration's record must carry two boots (the keeper's bring-up and the iteration's reset/install), but boot_phases is a single object per record. The name of the keeper's baseline-capture phase is never given ('snapshot-db'? 'baseline'?). Also, 'The keeper only boots, holds and tears down' contradicts 'the keeper captures the baseline'.",
+   "implementation_impact": "The record schema and e2e_phase_durations aggregation (counting each boot once) cannot be implemented without a guess.",
+   "suggestion": "Specify the exact shape: e.g. boot_id = composite, boot_phases = iteration phases, plus an optional keeper_boot {boot_id, boot_phases} on the first iteration. Name the baseline phase (e.g. 'baseline') and list it in CAP-6."
+  },
+  {
+   "id": "implementer-18",
+   "lens": "implementer",
+   "location": "cell-contract.md > Warm container > Reset per iteration",
+   "issue": "Several points are unspecified or unverifiable: (a) 'all of var/cache' could mean deleting the directory or only its contents (the directory's ownership and permissions matter for www-data recreating it); (b) reset-opcache depends on pgrep being present in the image (procps is often absent in slim images), and the claim 'verified on the three default tags' cannot be checked from the repo (no record or test of it); (c) mysqldump without --databases has no CREATE DATABASE, so the DB name and charset for the recreate must come from parameters.php; (d) snapshot_db/restore_db and DB_PRELUDE live in ps-scenario-run.py, and 'reuse' does not say whether to import that module or move the helpers into a shared place.",
+   "implementation_impact": "Reset may fail on some tags, turning warm mode off (warm-reset), or may leave var/cache unwritable. A wrong guess silently disables CAP-5.",
+   "suggestion": "Say 'delete contents of var/cache, keep the directory', specify a pgrep-free detection (e.g. scan /proc/*/comm), point to evidence of the three-tag verification or turn it into a live test, and say where the shared DB helpers live."
+  },
+  {
+   "id": "implementer-19",
+   "lens": "implementer",
+   "location": "SPEC.md > CAP-1 success ('With a module that has a blocking E2E bug, no non-canary cell boots until the canary passes'; test exception 'during a loop-back')",
+   "issue": "Focus cell derivation takes failing cells from any earlier records, including a previous session's, so a new session whose newest failing cell is 8.1:firefox starts with that non-canary cell before the canary has passed. The plan cannot tell 'loop-back' from 'resumed with an old failure', so the test exception ('the focus cell and its version during a loop-back') cannot be expressed in plan terms. It is also unclear whether 'lists' refers to e2e_next_cells or also to e2e_required_cells (blocked-by-scope lists required cells).",
+   "implementation_impact": "The CAP-1 property test cannot be written unambiguously, and the success claim is false for resumed sessions.",
+   "suggestion": "Rephrase the test: 'e2e_next_cells contains a non-canary cell only when e2e_step is focus or cold-version and that cell is, or shares the version of, e2e_focus_cell'. Drop the 'during a loop-back' wording, and qualify the CAP-1 success sentence accordingly."
+  },
+  {
+   "id": "implementer-20",
+   "lens": "implementer",
+   "location": "SPEC.md > Why ('must cut the wait') / Success signal / Open Questions (wall-clock budget)",
+   "issue": "The source's load-bearing claim is that E2E 'takes all day', and the goal is to reduce that. No done-criterion measures wall-clock reduction. The success signal checks only structural properties (boot counts, absent phases), and the target budget is left as an open question. Whether the work achieved its purpose cannot be tested.",
+   "implementation_impact": "There is no acceptance test for the primary goal, and no baseline-versus-after comparison is required.",
+   "suggestion": "Add a criterion, e.g. 'on bankwire, a clean-module full validation using CAP-6 timings completes in <= X h versus the recorded ~18 h baseline', or at minimum require that a before/after CAP-6 report be produced, with the numeric budget left open."
+  },
+  {
+   "id": "implementer-21",
+   "lens": "implementer",
+   "location": "SPEC.md > frontmatter 'sources: []' and Assumptions ('Budi named 9 + Chrome')",
+   "issue": "The source request (Budi's in-chat request and his answers) is not recorded, even though the banner says source documents are listed for traceability. Two source terms change meaning without being flagged as decisions: 'Chrome' becomes Playwright 'chromium' (not the Chrome channel), and 'version 9' becomes 'newest target', which moves to 10.x if targets change.",
+   "implementation_impact": "Low: traceability is lost, and the canary default may drift from what Budi asked for.",
+   "suggestion": "Record the chat request in sources (or quote it). State that 'Chrome' means Playwright chromium and that the canary follows the newest target rather than being pinned to 9.x."
+  },
+  {
+   "id": "implementer-22",
+   "lens": "implementer",
+   "location": "cell-contract.md > Runner (ps-run-layer --layer e2e) / Entry points",
+   "issue": "Several CLI cases are undefined: (a) --layer e2e with neither --cells nor --versions (error, or all configured cells?); (b) a missing --tier (required? the record field tier would be null); (c) --warm or --scenarios-from-failed combined with more than one cell; (d) --cells naming a cell outside the configured set (exit 2 is only implied for the canary).",
+   "implementation_impact": "Argument validation and the corresponding tests would be guessed.",
+   "suggestion": "List them explicitly: e.g. require --cells or --versions (exit 2 otherwise), require --tier for e2e, allow --warm/--scenarios-from-failed only with exactly one cell, and exit 2 for unconfigured cells."
+  },
+  {
+   "id": "implementer-23",
+   "lens": "implementer",
+   "location": "cell-contract.md > Evidence record > Storage ('ps-run-layer prints e2e_status: skipped') + Runner exit codes",
+   "issue": "The output channel and format of 'e2e_status: skipped' are not given (stdout line? JSON? stderr?), although the orchestrator must detect it to end the E2E loop. The exit mapping (3/1/0 over appended records) also does not cover a run stopped via --stop-job (today 143) or a child exit 2 combined with other children's records.",
+   "implementation_impact": "The orchestrator's detection of skipped and stopped would be ad hoc.",
+   "suggestion": "Specify a machine-readable stdout summary for ps-run-layer --layer e2e (e.g. JSON {e2e_status, appended: [cells], exit}) and add 143/stopped to the exit table."
+  },
+  {
+   "id": "implementer-24",
+   "lens": "implementer",
+   "location": "cell-contract.md > Config keys ('--config joins RESERVED_PASSTHROUGH') / Runner (new child flags)",
+   "issue": "Only --config is added to RESERVED_PASSTHROUGH, but ps-run-layer now owns several child flags: --engines, --run-id, --progress-append, --sequential-browsers, --scenarios, --use-warm, --keep-warm, --warm-owner, --engine-worker. A passthrough copy of any of them would conflict with the value ps-run-layer sets (the same reasoning RESERVED_PASSTHROUGH already applies to --versions and -o). The contract does mention that a --browsers in the passthrough is exit 2.",
+   "implementation_impact": "The passthrough could override what ps-run-layer guarantees, e.g. engines or run-id, and break slot claims.",
+   "suggestion": "Add all flags that ps-run-layer sets on children to RESERVED_PASSTHROUGH (including prefix-abbreviation handling) and test it."
+  },
+  {
+   "id": "implementer-25",
+   "lens": "implementer",
+   "location": "cell-contract.md > Evidence record > Fields (session: 'passed as --session to every plan call ... both reject a missing ... token (exit 2)') / Docs to update",
+   "issue": "Making --session mandatory on every ps-plan-layers.py call breaks all current plan invocations, including Phase 1 loops for Layers 1/2/5, run-phases.md commands and the existing tests. The Docs list does not include run-phases' plan commands gaining --session, nor references/adversarial-lens.md, which still says Layer 3 is spawned 'once per run'. The loop-back re-spawn changes that.",
+   "implementation_impact": "Scope creep and doc drift that the implementer would have to discover.",
+   "suggestion": "Either require --session only when E2E tier fields are requested, or list every doc and test that must add it. Add adversarial-lens.md (re-spawn on loop-back) to Docs to update."
+  },
+  {
+   "id": "implementer-26",
+   "lens": "implementer",
+   "location": "cell-contract.md > Warm container > Owner ('It logs to its own <module>-e2e-<ver>-warm.progress.log') vs SKILL.md / run-phases.md monitoring rule",
+   "issue": "An idle keeper writes nothing for up to psm_e2e_warm_ttl (60 min). The monitoring rule treats '±3 min without new lines and no DONE' as suspected stuck and offers to stop the job. No heartbeat for the keeper is specified.",
+   "implementation_impact": "The orchestrator would flag healthy keepers as stuck and propose stopping them.",
+   "suggestion": "Have the keeper emit ALIVE idle heartbeats (e.g. phase 'idle' every 15 s with remaining TTL), or exempt -warm.progress.log from the stall rule in run-phases.md."
+  },
+  {
+   "id": "implementer-27",
+   "lens": "implementer",
+   "location": "cell-contract.md > Config keys > psm_e2e_slots ('Before entering wait-slots, ps-run-layer runs the --cleanup-orphans routine once') vs references/headless.md ('Job yang bukan dimulai run ini tak pernah disentuh')",
+   "issue": "The automatic cleanup removes dead-owner artifacts of other runs and sessions, including during headless runs, while headless.md forbids touching jobs the run did not start. The contract does not reconcile the two rules.",
+   "implementation_impact": "Policy ambiguity: should cleanup run automatically in headless mode?",
+   "suggestion": "State that dead-owner removal through cleanup_decision is allowed in all modes (and update headless.md), or limit the automatic cleanup to interactive runs."
+  },
+  {
+   "id": "implementer-28",
+   "lens": "implementer",
+   "location": "cell-contract.md > Plan (e2e_blocked_causes: '{\"<ver>:<browser>\": cause} for a blocked-* step')",
+   "issue": "blocked-by-scope is a blocked-* step, but its 'cause' value is never defined (blocked-not-gradeable and blocked-infra have one).",
+   "implementation_impact": "The output schema would be guessed.",
+   "suggestion": "Define it, e.g. cause 'out-of-scope' for each cell in e2e_required_cells that the filter removed."
+  },
+  {
+   "id": "implementer-29",
+   "lens": "implementer",
+   "location": "cell-contract.md > Aggregate ('e2e_screenshot_dir = common parent of the selected records' screenshots')",
+   "issue": "Today e2e_screenshot_dir is a list of run folders (ps-aggregate.py normalises it to a list). The contract turns it into a single 'common parent' without saying so, which can collapse to the reports dir or to '/'. SKILL.md's 'Sebut folder screenshot' reads the field, and run-phases' visual review needs the per-run folders.",
+   "implementation_impact": "A silent type change, plus the risk of a useless root path.",
+   "suggestion": "Keep it a list (the distinct run folders of the selected records), or state the type change and a fallback when no common parent exists below psm_reports_dir."
+  },
+  {
+   "id": "implementer-30",
+   "lens": "implementer",
+   "location": "cell-contract.md > preamble ('They run on a temp copy of bankwire')",
+   "issue": "The fixture's source path is not given. bankwire exists at modules/bankwire (with tests/e2e) and at /home/budi/dev/prestashop/bankwire (without tests/e2e). The temp copy is also not a git repo, so deleted_specs and scenario-note behaviour differ from a real checkout.",
+   "implementation_impact": "Minor: the live-test fixture setup has to be guessed.",
+   "suggestion": "Name the fixture path (modules/bankwire relative to the project root) and say whether the temp copy is git-initialised."
+  }
+ ],
+ "duplicates_removed": [],
+ "clusters": [
+  [
+   "adversarial-7",
+   "adversarial-8"
+  ],
+  [
+   "edge-case-7",
+   "implementer-13"
+  ]
+ ]
+}

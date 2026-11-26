@@ -5,9 +5,17 @@
 """Satukan empat lapis validasi jadi satu vonis terstruktur — deterministik.
 
 Menerima output JSON ps-static-scan.py (Lapis 1) dan ps-flashlight-run.py
-(Lapis 2), file temuan adversarial buatan model (Lapis 3), plus output
-ps-e2e-run.py (Lapis 4, uji perilaku browser), lalu menghitung `pass` per versi
-dan keseluruhan secara NATIVE — bukan lewat model.
+(Lapis 2), file temuan adversarial buatan model (Lapis 3), plus histori bukti E2E
+per sel (Lapis 4, `<reports>/<module>-e2e-<ver>-<browser>.jsonl`, dibaca lewat
+--reports-dir + --module), lalu menghitung `pass` per versi dan keseluruhan secara
+NATIVE — bukan lewat model.
+
+Versi target = psm_target_versions dari --config (default skrip bila absen); sel E2E
+wajib = psm_target_versions x psm_e2e_browsers. Per sel dipilih record gate-grade
+terbaru, else record terbaru (aturan state/kesegaran milik ps-plan-layers). Bila
+`--require` memuat e2e, `ready` jatuh selama ada sel terkonfigurasi tanpa bukti lulus
+gate-grade. `--e2e` = exit 2; `<module>-e2e.json`/`<module>-e2e-<ver>.json` diabaikan.
+Versi terkonfigurasi yang absen dari hasil static = belum terbukti (ready false), bukan exit 2.
 
 Aturan lolos: sebuah versi lolos hanya bila TAK ADA temuan severity `error` dari
 lapis manapun yang KONKLUSIF di versi itu. Lapis yang tak konklusif (Docker absen,
@@ -23,6 +31,7 @@ import argparse
 import datetime
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -405,110 +414,240 @@ def flashlight_layer(flash, full_ver):
     return layer
 
 
-def authored_assertions(e2e, full_ver):
-    """Assertion authored yang benar-benar dinilai di versi ini. None = tak tercatat.
+# --- Lapis 4 (E2E): histori bukti per sel (cell-contract.md > Aggregate) -----------------
+# Bukti E2E dibaca HANYA dari histori append-only per sel `<reports>/<module>-e2e-<ver>-<browser>.jsonl`.
+# Aturan state/kesegaran/gate-grade TIDAK ditulis ulang di sini: semuanya milik ps-plan-layers
+# (record_state, newest_gate_grade, has_passing_evidence, cell_reason, is_failing) supaya plan
+# dan vonis tak pernah berbeda pendapat soal sel yang sama.
+_RUN_DIR_RE = re.compile(r"^run-\d{8}-\d{6}$")
+E2E_MISSING_REASON = "missing"
 
-    Tipe dijaga, bukan cuma nilai: `"0"`/`[]`/`true`/`-1` yang lolos jadi hitungan sah akan
-    memulihkan `ready` persis seperti di static_layer. Tak tercatat = cakupan tak diketahui,
-    dan tak diketahui tak pernah boleh terbaca sebagai teruji.
+
+def evaluate_cell(records, corrupt_tail, fingerprint, image_tag, current_notes):
+    """Nilai satu sel dari histori valid-nya. Return dict internal:
+
+    `selected` = record gate-grade TERBARU, else record terbaru (None bila tak ada record);
+    `gate_grade` = selected gate-grade; `newest_gate_grade`; `passing` = punya bukti lulus
+    gate-grade; `reason` = alasan plan (None bila passing), dengan `stale-fail` menggantikan
+    `stale-source`/`stale-tag` bila sel `failing` (Plan > Derivation). `corrupt_tail` selalu
+    memberi `corrupt-history` dan tak pernah bukti lulus (lewat cell_reason/has_passing_evidence).
     """
-    v = ((e2e or {}).get("versions") or {}).get(full_ver) or {}
-    return _int_fact(v, "authored_assertions")
+    g = pl.newest_gate_grade(records, fingerprint, image_tag)
+    selected = g if g is not None else (records[-1] if records else None)
+    passing = pl.has_passing_evidence(records, corrupt_tail, fingerprint, image_tag)
+    reason = pl.cell_reason(records, corrupt_tail, fingerprint, image_tag, current_notes)
+    if reason in ("stale-source", "stale-tag") and pl.is_failing(records):
+        reason = "stale-fail"
+    return {"records": records, "corrupt_tail": corrupt_tail, "selected": selected,
+            "gate_grade": g is not None, "newest_gate_grade": g, "passing": passing,
+            "reason": None if passing else reason}
 
 
-def is_smoke_only(e2e, full_ver):
-    """True bila Lapis 4 di versi ini tak menegakkan satu assertion authored pun.
+def _missing_cell():
+    return evaluate_cell([], False, None, None, None)
 
-    Satu definisi dipakai e2e_layer (yang menjatuhkan `ready`) dan main (yang meng-echo
-    field-nya): dua perhitungan terpisah atas pertanyaan yang sama pernah bikin field dan
-    gerbang berbeda pendapat.
 
-    Dulu jawabannya diambil dari NAMA skenario — ada `source` bukan `builtin:` = "ada uji
-    perilaku". Premis struktural itu bisa dipuaskan file yang tak menegakkan apa pun: spec
-    berisi dua `screenshot` membalik `ready` false->true tanpa menguji sebutir pun. Sekarang
-    jawabannya hitungan assertion konklusif dari produsen. `None` (tak tercatat) BUKAN 0 —
-    itu ditangani terpisah di e2e_layer sebagai "tak bisa dipastikan".
+def evaluate_e2e_cells(reports_dir, module_name, versions, browsers, fingerprint, tag_map,
+                       current_notes):
+    """Semua sel terkonfigurasi -> {ver: {browser: info evaluate_cell}}.
+
+    Tanpa `reports_dir` (tanpa --reports-dir + --module) tiap sel `missing`. Error OS saat
+    membaca histori -> pl.PlanInputError (CLI: exit 2 menyebut path-nya).
     """
-    return authored_assertions(e2e, full_ver) == 0
+    out = {}
+    for ver in versions:
+        tag = pl.fl.resolve_tag(tag_map, ver)
+        row = {}
+        for b in browsers:
+            if reports_dir is None:
+                row[b] = _missing_cell()
+                continue
+            records, corrupt = pl.read_history(pl.history_path(reports_dir, module_name, ver, b),
+                                               ver, b)
+            row[b] = evaluate_cell(records, corrupt, fingerprint, tag, current_notes)
+        out[ver] = row
+    return out
 
 
-def e2e_layer(e2e, full_ver):
-    """Lapis 4 — konklusif hanya bila browser+container naik bersih & module ter-install.
+def e2e_cell_entry(info):
+    """Entri `e2e_cells[ver][browser]` = {state, gate_grade, reason, findings, parallel_only}.
 
-    Tak konklusif (degrade jujur, tak memblok): Playwright/Docker absen, image belum
-    ada, binary browser belum di-`install`, container tak healthy, PS tak terjangkau,
-    module gagal install (itu wilayah vonis Lapis 2), atau timeout. Konklusif: assertion
-    browser (smoke/skenario) benar-benar dievaluasi — kegagalannya memblok.
+    `findings` = temuan record terpilih APA ADANYA, gate-grade atau tidak — di sini saja temuan
+    record non-gate-grade tampil; yang memblok hanya dari record gate-grade (e2e_layer).
     """
-    if not e2e or e2e.get("status") == "skipped" or not e2e.get("e2e_available", False):
-        reason = (e2e or {}).get("reason", "Playwright/Docker tak tersedia — uji E2E dilewati.")
-        return {"state": "skipped", "conclusive": False, "errors": 0, "reason": reason, "findings": []}
+    sel = info["selected"]
+    if sel is None:
+        return {"state": None, "gate_grade": False, "reason": info["reason"], "findings": [],
+                "parallel_only": None}
+    finds = sel.get("findings")
+    return {"state": pl.record_state(sel)["state"], "gate_grade": info["gate_grade"],
+            "reason": info["reason"], "findings": list(finds) if isinstance(finds, list) else [],
+            "parallel_only": sel.get("parallel_only")}
 
-    v = e2e.get("versions", {}).get(full_ver)
-    if v is None:
-        return {"state": "skipped", "conclusive": False, "errors": 0,
-                "reason": "versi tak ada di hasil e2e", "findings": []}
 
-    # Kegagalan infrastruktur → tak konklusif, jangan memblok.
-    infra = list(v.get("errors", []))
-    if v.get("skipped_browser"):
-        infra.append("tak ada browser yang bisa diluncurkan (jalankan 'playwright install')")
-    if _bool_fact(v.get("install") or {}, "ok") is not True:
-        # Identity-strict (seam kembar flashlight): `ok="false"`/0/1 truthiness dulu bisa
-        # meloloskan install tak-terkonfirmasi jadi "ter-install" -> e2e lanjut ke konklusif.
-        infra.append("module tak ter-install — perilaku browser tak bisa dinilai (Lapis 2 memvonis install)")
-    if not v.get("browsers"):
-        infra.append("tak ada browser dijalankan")
-    if infra:
-        # `boot_log` yatim di KEDUA lapis; ditutup berpasangan supaya kelasnya tak selamat
-        # satu seam di sebelahnya — persis cara PSM_NO_CONSOLE dulu lolos satu ronde.
-        return {"state": "not_conclusive", "conclusive": False, "errors": 0,
-                "reason": "; ".join(dict.fromkeys(infra)) + _log_tail(v.get("boot_log"), "log container"),
-                "findings": []}
+def _console_count(val):
+    if isinstance(val, bool):
+        return 0
+    if isinstance(val, int):
+        return max(val, 0)
+    if isinstance(val, list):
+        return len(val)
+    return 0
 
-    # Konklusif (≥1 browser jalan & module ter-install): temuan browser memblok versi ini.
-    # Masalah per-browser (browser_notes) & spec authored rusak (scenario_notes) TAK
-    # membatalkan temuan konklusif — hanya coverage yang disurface sbg catatan (tak memblok).
-    findings = [
-        {"source": "e2e", "id": f.get("id", "e2e"), "severity": f.get("severity", ERROR),
-         "message": f.get("message", ""), "fix": f.get("fix", ""), "location": f.get("location", "")}
-        for f in v.get("findings", [])
-    ]
+
+def e2e_verdict(row, browsers):
+    """(e2e_state, reason) satu versi atas sel terkonfigurasinya.
+
+    `fail` bila record gate-grade terbaru suatu sel = fail (reason literal `fail`); selain itu
+    `inconclusive` bila ada sel tanpa bukti lulus gate-grade (reason = alasan sel PERTAMA
+    seperti itu, urut psm_e2e_browsers); selain itu `pass` (reason None). Tanpa browser
+    terkonfigurasi = tak ada bukti (`inconclusive`, `missing`) — tak pernah lolos vakum.
+    """
+    if not browsers:
+        return "inconclusive", E2E_MISSING_REASON
+    infos = [(row or {}).get(b) or _missing_cell() for b in browsers]
+    if any(i["newest_gate_grade"] is not None
+           and pl.record_state(i["newest_gate_grade"])["state"] == "fail" for i in infos):
+        return "fail", "fail"
+    lacking = [i for i in infos if not i["passing"]]
+    if lacking:
+        return "inconclusive", lacking[0]["reason"]
+    return "pass", None
+
+
+def e2e_layer(row, full_ver, browsers):
+    """Lapis 4 satu versi, dari record TERPILIH sel-sel terkonfigurasinya saja.
+
+    `conclusive` = tiap sel punya record terpilih yang konklusif. Temuan yang MEMBLOK hanya dari
+    record terpilih yang gate-grade. `inconclusive_note` menyebut sel tanpa bukti lulus
+    gate-grade beserta alasannya — kanal yang menjatuhkan `ready` (compute_ready), jadi
+    sel yang dipersempit/parsial/hilang/rusak/basi tak pernah terhitung. Error console =
+    advisory (tak menggerbang). Ekor `boot_log` ikut ke `reason` seperti dulu.
+    """
+    row = row or {}
+    infos = [(b, row.get(b) or _missing_cell()) for b in browsers]
+    state, reason = e2e_verdict(row, browsers)
+    conclusive = bool(infos) and all(
+        i["selected"] is not None and pl.record_state(i["selected"])["conclusive"]
+        for _b, i in infos)
+    findings = []
+    for b, i in infos:
+        if not i["gate_grade"]:
+            continue
+        for f in i["selected"].get("findings") or []:
+            if not isinstance(f, dict):
+                continue
+            findings.append({"source": "e2e", "id": f.get("id", "e2e"),
+                             "severity": f.get("severity", ERROR),
+                             "message": f.get("message", ""), "fix": f.get("fix", ""),
+                             "location": f.get("location", ""), "browser": b})
+        # Rekaman gate-grade ber-state `fail` tanpa satu pun temuan ERROR (findings rusak /
+        # severity lain) tak boleh membuat versi `pass`: state rekaman yang memvonis.
+        if pl.record_state(i["selected"])["state"] == "fail" and not any(
+                f["severity"] == ERROR and f.get("browser") == b for f in findings):
+            findings.append({"source": "e2e", "id": "e2e-fail", "severity": ERROR,
+                             "message": f"[{b}] sel E2E gagal (rekaman tanpa temuan ERROR yang terbaca)",
+                             "fix": "baca rekaman histori sel ini", "location": "", "browser": b})
     errs = sum(1 for f in findings if f["severity"] == ERROR)
-    layer = {"state": "fail" if errs else "pass", "conclusive": True, "errors": errs, "findings": findings}
-    notes = []
-    # Tanpa spec authored, Lapis 4 cuma membuktikan "shop tak rusak" — BUKAN perilaku
-    # module. Itu setengah lapis yang tak pernah dievaluasi, kembar persis dgn phpstan-absen
-    # di flashlight_layer, jadi ia lewat kanal yang sama: `ready` jatuh, `pass` tak diblok.
-    # Dulu dihitung di main() sbg `e2e_smoke_only` yang tak dibaca gerbang mana pun, jadi
-    # module tanpa satu pun uji perilaku dapat hijau empat-lapis penuh.
-    n_assert = authored_assertions(e2e, full_ver)
-    if n_assert is None:
-        notes.append("hasil E2E tak mencatat `authored_assertions` (file lapis dari skrip lama "
-                     "atau salah bentuk) — cakupan uji perilaku tak bisa dipastikan; "
-                     "jalankan ulang Lapis 4")
-    elif is_smoke_only(e2e, full_ver):
-        notes.append("nol assertion authored dinilai — perilaku module tak teruji (spec tanpa "
-                     "aksi expect_* tak menegakkan apa pun); tulis skenario di tests/e2e/")
-    inc = v.get("inconclusive") or []
-    if inc:
-        notes.append(f"{len(inc)} assertion tak konklusif (mis. login BO gagal)")
-    for bn in (v.get("browser_notes") or []):
-        notes.append(f"coverage browser: {bn}")
-    sn = e2e.get("scenario_notes") or []
-    if sn:
-        notes.append(f"{len(sn)} spec E2E authored dilewati: {'; '.join(sn)}")
-    if notes:
-        layer["inconclusive_note"] = "; ".join(notes) + " — tak memblok"
-    # Error console/JS: OBSERVASI, bukan celah cakupan. Kanalnya dipisah dari
-    # `inconclusive_note` karena compute_ready menjatuhkan `ready` atas note itu — dan
-    # `ready` yang bergantung pada berisik-tidaknya skrip pihak-ketiga saat itu bukan
-    # ketegasan, melainkan tak deterministik. Tetap disurface supaya tak jadi sinyal yatim.
-    if v.get("console_errors"):
-        layer["advisory_note"] = (f"{v['console_errors']} error console/JS terdeteksi — advisory: "
+    lacking = [(b, i) for b, i in infos if not i["passing"]]
+    tail = ""
+    if reason:
+        for _b, i in lacking:
+            log = (i["selected"] or {}).get("boot_log")
+            if isinstance(log, str) and log.strip():
+                tail = _log_tail(log, "log container")
+                break
+    layer = {"state": state, "conclusive": conclusive, "errors": errs,
+             "reason": (reason + tail) if reason else None, "findings": findings}
+    if lacking:
+        cells = ", ".join(f"{full_ver}:{b} ({i['reason']})" for b, i in lacking)
+        layer["inconclusive_note"] = f"sel E2E tanpa bukti lulus gate-grade: {cells}"
+    console = sum(_console_count((i["selected"] or {}).get("console_errors")) for _b, i in infos)
+    if console:
+        layer["advisory_note"] = (f"{console} error console/JS terdeteksi — advisory: "
                                   "tak memblok & tak menjatuhkan `ready`; tegakkan dengan aksi "
                                   "`expect_no_console_error` di skenario")
     return layer
+
+
+def _selected_records(cells, versions, browsers):
+    for ver in versions:
+        for b in browsers:
+            sel = cells[ver][b]["selected"]
+            if sel is not None:
+                yield ver, b, sel
+
+
+def e2e_phase_durations(cells, versions, browsers):
+    """`e2e_phase_durations[ver] = {boots: {<boot_id>: {phases, wall_clock}}, browsers:
+    {<engine>: {phases, wall_clock}}}` dari record terpilih; tiap boot_id (keeper_boot
+    termasuk) sekali. Record ber-boot_id null tak menambah boots."""
+    out = {}
+    for ver in versions:
+        boots, brs = {}, {}
+        for b in browsers:
+            sel = cells[ver][b]["selected"]
+            if sel is None:
+                continue
+            bid = sel.get("boot_id")
+            if isinstance(bid, str) and bid not in boots:
+                boots[bid] = {"phases": sel.get("boot_phases") or {},
+                              "wall_clock": sel.get("boot_wall_clock")}
+            kb = sel.get("keeper_boot")
+            if isinstance(kb, dict) and isinstance(kb.get("boot_id"), str) \
+                    and kb["boot_id"] not in boots:
+                boots[kb["boot_id"]] = {"phases": kb.get("boot_phases") or {},
+                                        "wall_clock": kb.get("wall_clock")}
+            brs[b] = {"phases": sel.get("phase_durations") or {},
+                      "wall_clock": sel.get("wall_clock")}
+        out[ver] = {"boots": boots, "browsers": brs}
+    return out
+
+
+def _run_folder(shot):
+    """Folder run berstempel (`run-YYYYMMDD-HHMMSS`) sebuah path screenshot; fallback induk berkas."""
+    path = Path(shot)
+    for parent in path.parents:
+        if _RUN_DIR_RE.match(parent.name):
+            return str(parent)
+    return str(path.parent)
+
+
+def e2e_summary(cells, versions, browsers):
+    """Field E2E top-level dari record TERPILIH (cell-contract.md > Aggregate)."""
+    selected = list(_selected_records(cells, versions, browsers))
+    pf = [s for _v, _b, s in selected if pl.record_state(s)["state"] in ("pass", "fail")]
+    notes, shot_dirs = [], []
+    for _v, _b, s in selected:
+        for n in s.get("scenario_notes") or []:
+            if n not in notes:
+                notes.append(n)
+        shots = s.get("screenshots")
+        for shot in (shots if isinstance(shots, list) else []):
+            if isinstance(shot, str) and shot:
+                d = _run_folder(shot)
+                if d not in shot_dirs:
+                    shot_dirs.append(d)
+    run = [b for b in browsers
+           if any(pl._driven(s.get("phase_durations"), b) for _v, bb, s in selected if bb == b)]
+    not_run = []
+    for ver in versions:
+        for b in browsers:
+            recs = cells[ver][b]["records"]
+            if recs and recs[-1].get("state") == "not-run":
+                not_run.append({"cell": f"{ver}:{b}", "reason": recs[-1].get("reason")})
+    return {
+        "e2e_cells": {ver: {b: e2e_cell_entry(cells[ver][b]) for b in browsers}
+                      for ver in versions},
+        "not_run_cells": not_run,
+        "e2e_smoke_only": bool(pf) and all(pl._authored(s) == 0 for s in pf),
+        "e2e_scenario_notes": notes,
+        "e2e_browsers": list(browsers),
+        "e2e_browsers_run": run,
+        "e2e_screenshot_dir": shot_dirs,
+        "e2e_phase_durations": e2e_phase_durations(cells, versions, browsers),
+        "e2e_has_records": any(cells[v][b]["records"] for v in versions for b in browsers),
+    }
 
 
 def _version_matches(entry, full_ver):
@@ -674,11 +813,14 @@ def scenario_layer(scen, full_ver):
             "scenarios_run": len(ver.get("scenarios", []))}
 
 
-def merge_version(full_ver, static, flash, adversarial, e2e, scen=None):
+def merge_version(full_ver, static, flash, adversarial, e2e_row=None, scen=None, browsers=()):
+    """Vonis satu versi. `e2e_row` = {browser: info evaluate_cell} sel versi ini, `browsers` =
+    psm_e2e_browsers terkonfigurasi; tanpa keduanya Lapis 4 = tanpa bukti (`missing`)."""
     s = static_layer(static, full_ver)
     fl = flashlight_layer(flash, full_ver)
     adv = adversarial_layer(adversarial, full_ver)
-    e = e2e_layer(e2e, full_ver)
+    e = e2e_layer(e2e_row, full_ver, browsers)
+    e2e_state, e2e_reason = e2e_verdict(e2e_row, browsers)
     sc = scenario_layer(scen, full_ver)
 
     all_findings = [f for layer in (s, fl, adv, e, sc) for f in layer["findings"]]
@@ -692,6 +834,10 @@ def merge_version(full_ver, static, flash, adversarial, e2e, scen=None):
         "conclusive": conclusive,
         "flashlight_conclusive": fl["conclusive"],
         "e2e_conclusive": e["conclusive"],
+        # Vonis E2E per versi (cell-contract.md > Aggregate): fail | inconclusive | pass, dan
+        # alasannya (`fail` literal; alasan sel pertama tanpa bukti lulus; null saat pass).
+        "e2e_state": e2e_state,
+        "reason": e2e_reason,
         # Rollup KEEMPAT lapis. SKILL.md & psm-scaffold sudah disuruh membaca "hitungan
         # error/warning per versi dari situ apa adanya" — hitungan yang tak pernah ada
         # produsennya: satu-satunya `warnings` yang diemit milik lapis static saja, jadi
@@ -704,21 +850,56 @@ def merge_version(full_ver, static, flash, adversarial, e2e, scen=None):
     }
 
 
+def _input_error(msg, *hints):
+    print(f"error: {msg}", file=sys.stderr)
+    for h in hints:
+        print(h, file=sys.stderr)
+    return 2
+
+
+def read_aggregate_config(path):
+    """--config -> (versions, browsers, psm_flashlight_tag_map). Error -> CellConfigError.
+
+    Himpunan sel dibaca LANGSUNG lewat normalizer bersama (ps-flashlight-run), bukan
+    apply_config_file: `--versions` tak pernah menyusutkan himpunan wajib.
+    """
+    fl = pl.fl
+    cfg = fl.read_config_json(path) if path else {}
+    versions = fl.normalize_versions(cfg.get("psm_target_versions"))
+    browsers = fl.normalize_engines(cfg.get("psm_e2e_browsers"))
+    tag_map = cfg.get("psm_flashlight_tag_map")
+    if tag_map is not None and not isinstance(tag_map, str):
+        raise fl.CellConfigError(f"psm_flashlight_tag_map={tag_map!r} harus string versi=tag,...")
+    return versions, browsers, tag_map
+
+
 def main():
     ap = argparse.ArgumentParser(description="Satukan empat lapis validasi jadi vonis terstruktur.",
                                  epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--reports-dir", help="Folder laporan. Dengan --module, keempat nama file "
-                                          "lapis kanonik DITURUNKAN (<module>-<lapis>.json) dan lapis "
+    ap.add_argument("--reports-dir", help="Folder laporan. Dengan --module, nama file lapis "
+                                          "kanonik DITURUNKAN (<module>-<lapis>.json) dan lapis "
                                           "yang filenya absen dilewati — path tak perlu diketik. "
-                                          "Flag lapis eksplisit tetap menang bila diberikan.")
+                                          "Flag lapis eksplisit tetap menang bila diberikan. Lapis 4 "
+                                          "(E2E) dibaca dari histori per sel di folder ini.")
     ap.add_argument("--module", help="Path folder module. Wajib bersama --reports-dir; juga "
                                      "menegakkan identitas: file lapis milik module lain ditolak.")
     ap.add_argument("--static", help="JSON output ps-static-scan.py (wajib kecuali --reports-dir/--module)")
     ap.add_argument("--flashlight", help="JSON output ps-flashlight-run.py (opsional bila dilewati)")
     ap.add_argument("--adversarial", help="JSON temuan adversarial buatan model (opsional)")
-    ap.add_argument("--e2e", help="JSON output ps-e2e-run.py (Lapis 4, opsional bila dilewati)")
+    ap.add_argument("--e2e", help="DIHAPUS — Lapis 4 dibaca dari histori sel lewat --reports-dir "
+                                  "+ --module; memberi flag ini = exit 2")
     ap.add_argument("--scenario", help="JSON output ps-scenario-run.py (Lapis 5, opsional bila dilewati)")
-    ap.add_argument("--versions", help="Versi target dipisah koma (default: dari hasil static)")
+    ap.add_argument("--config", help="JSON hasil resolve-psm-config.py. Versi target = "
+                                     "psm_target_versions, sel E2E wajib = psm_target_versions x "
+                                     "psm_e2e_browsers, tag image dari psm_flashlight_tag_map "
+                                     "(default skrip bila absen).")
+    ap.add_argument("--tag-map", help="Peta LENGKAP versi=tag (MENGGANTI psm_flashlight_tag_map/"
+                                      "default) — sama seperti yang diteruskan ke plan & runner")
+    ap.add_argument("--extra-tag-map", help="Tag TAMBAHAN versi=tag (MENAMBAH di atas peta)")
+    ap.add_argument("--session", help="Token sesi validasi (opsional; divalidasi [a-z0-9]{16}, "
+                                      "belum dipakai)")
+    ap.add_argument("--versions", help="Opsional, harus SAMA (sebagai himpunan) dengan "
+                                       "psm_target_versions dari --config; beda = exit 2")
     ap.add_argument("--require", help="Lapis yang WAJIB tuntas agar `ready` true, dipisah koma "
                                       f"({'|'.join(LAYERS)}). DEFAULT: KEEMPATNYA — siap-rilis berarti "
                                       "keempat lapis membuktikannya. Runner yang tak sanggup (tanpa Docker/"
@@ -728,6 +909,16 @@ def main():
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     args = ap.parse_args()
 
+    # File E2E tunggal bukan lagi bukti: sel dibuktikan oleh historinya sendiri. Menerima
+    # --e2e diam-diam akan mengkredit file lama (atau run langsung ps-e2e-run) ke `ready`.
+    if args.e2e:
+        return _input_error("--e2e tak lagi diterima — bukti Lapis 4 = histori per sel "
+                            "<module>-e2e-<ver>-<browser>.jsonl",
+                            "beri --reports-dir + --module (histori dibaca dari folder laporan)")
+    if args.session is not None and not pl.valid_session(args.session):
+        return _input_error(f"--session tak valid: {args.session!r} — harus [a-z0-9]{{16}} "
+                            "(dari ps-plan-layers.py --new-session)")
+
     # Nama file lapis DITURUNKAN bila folder+module diberi. Mengetik empat path dengan tangan
     # di akhir run panjang adalah kerja deterministik yang sudah punya satu jawaban benar
     # (cermin layer_file() di ps-run-layer.py), dan salah ketik segmen module diam-diam
@@ -735,10 +926,29 @@ def main():
     if bool(args.reports_dir) != bool(args.module):
         print("error: --reports-dir dan --module harus diberikan bersama", file=sys.stderr)
         sys.exit(2)
+
+    # Versi target = himpunan TERKONFIGURASI (bukan --versions, bukan versi di hasil static).
+    try:
+        target_versions, cfg_browsers, cfg_tag_map = read_aggregate_config(args.config)
+    except pl.fl.CellConfigError as e:
+        return _input_error(f"himpunan sel terkonfigurasi tak sah: {e}")
+    if args.versions is not None:
+        try:
+            asked = pl.fl.normalize_versions(args.versions, key="--versions")
+        except pl.fl.CellConfigError as e:
+            return _input_error(str(e))
+        if set(asked) != set(target_versions):
+            return _input_error(f"--versions {','.join(asked)} beda dari versi terkonfigurasi "
+                                f"({','.join(target_versions)})",
+                                "versi target agregat = psm_target_versions dari --config; "
+                                "hapus --versions atau samakan")
+
     if args.reports_dir:
         mod_name = Path(args.module).resolve().name
         for layer in LAYERS:
-            if getattr(args, layer, None):
+            # Lapis 4 tak punya file kanonik lagi: <module>-e2e.json / -e2e-<ver>.json yang
+            # tersisa (run lama, atau report view --merge-only) DIABAIKAN, bukan bukti.
+            if layer == "e2e" or getattr(args, layer, None):
                 continue  # flag eksplisit menang
             cand = Path(args.reports_dir) / f"{mod_name}-{layer}.json"
             if cand.exists():
@@ -754,7 +964,6 @@ def main():
     static = load_json(args.static, "static-scan")
     flash = load_json(args.flashlight, "flashlight") if args.flashlight else None
     adversarial = load_json(args.adversarial, "adversarial") if args.adversarial else None
-    e2e = load_json(args.e2e, "e2e") if args.e2e else None
     scen = load_json(args.scenario, "scenario") if args.scenario else None
 
     # Bentuk file lapis buatan skrip digerbang SEBELUM dibaca — kalau tidak, file terpotong
@@ -767,7 +976,7 @@ def main():
     # yang mengemit `ready`, jadi kelas itu tak boleh punya permukaan di sini.
     static_module = (static or {}).get("module")
     if static_module:
-        for payload, label in ((flash, "flashlight"), (adversarial, "adversarial"), (e2e, "e2e")):
+        for payload, label in ((flash, "flashlight"), (adversarial, "adversarial")):
             other = (payload or {}).get("module")
             if other and other != static_module:
                 print(f"error: file lapis {label} milik module '{other}', bukan '{static_module}' "
@@ -775,7 +984,7 @@ def main():
                 sys.exit(2)
 
     for payload, label, keys in ((static, "static-scan", ("id", "severity", "message")),
-                                 (flash, "flashlight", ()), (e2e, "e2e", ())):
+                                 (flash, "flashlight", ())):
         if payload is None:
             continue
         shape_notes = validate_layer_shape(payload, keys)
@@ -787,21 +996,12 @@ def main():
                   "jalankan ulang lapis itu lalu ulangi", file=sys.stderr)
             return 2
 
-    if args.versions:
-        target_versions = [v.strip() for v in args.versions.split(",")]
-    else:
-        target_versions = list(static.get("versions", {}).keys())
-
     # Gerbang himpunan kosong, kembaran `--require` kosong di bawah. Nol versi target bikin
-    # tiap loop cakupan lolos secara vakum -> ready=true atas NOL versi terbukti. Harus
-    # mendahului gerbang skema adversarial: dengan target kosong, `known` juga kosong, jadi
-    # tiap token versi reviewer gagal resolve dan exit 2-nya menyalahkan file yang benar.
+    # tiap loop cakupan lolos secara vakum -> ready=true atas NOL versi terbukti. Normalizer
+    # sudah menolak daftar kosong; gerbang ini tetap dijaga di titik pakai.
     if not target_versions:
-        print("error: tak ada versi target — hasil static-scan tak memuat satu versi pun",
-              file=sys.stderr)
-        print("jalankan ps-static-scan.py dengan --versions lalu ulangi, atau sebut "
-              "--versions di sini (vonis atas nol versi bukan vonis)", file=sys.stderr)
-        return 2
+        return _input_error("tak ada versi target — psm_target_versions kosong",
+                            "vonis atas nol versi bukan vonis")
 
     # Gerbang skema di satu-satunya seam model->skrip: tolak KERAS (exit 2, bukan
     # exit 1 vonis-gagal) supaya pelanggaran tak diam-diam tak-memblok / ter-drop.
@@ -814,33 +1014,40 @@ def main():
               "(severity: error|warning; versions: token yang sama dengan --versions)", file=sys.stderr)
         return 2
 
-    # Gerbang input: Lapis 1 selalu jalan & selalu konklusif, jadi versi target yang TAK ADA
-    # di hasilnya berarti pemanggil meminta vonis atas versi yang tak pernah dipindai. Dulu
-    # versi itu cuma "tak menyumbang temuan" -> tak ada yang memblok -> pass=true & exit 0:
-    # ketiadaan bukti terbaca sebagai lolos. Itu kekeliruan pemanggil, bukan vonis.
-    scanned = set(static.get("versions", {}).keys())
-    unscanned = [v for v in target_versions if v not in scanned]
-    if unscanned:
-        print(f"error: versi target tak ada di hasil static-scan: {', '.join(unscanned)}",
-              file=sys.stderr)
-        print(f"  hasil static memuat: {', '.join(sorted(scanned)) or '(kosong)'}", file=sys.stderr)
-        print("jalankan ps-static-scan.py dengan --versions yang sama lalu ulangi "
-              "(vonis atas versi yang tak dipindai bukan vonis)", file=sys.stderr)
-        return 2
+    # Versi terkonfigurasi yang TAK ADA di hasil static (run yang dipersempit) BUKAN input error:
+    # static_layer menandainya tak konklusif, version_ready menjatuhkan `ready` versi itu, dan
+    # laporan menyebutnya belum terbukti. (Gerbang `unscanned` exit 2 lama dihapus.)
+
+    # Lapis 4: histori per sel, dinilai dgn fungsi plan (fingerprint + tag sama dgn runner).
+    raw_tag_map = args.tag_map if args.tag_map is not None else cfg_tag_map
+    tag_map = pl.fl.parse_tag_map(raw_tag_map, args.extra_tag_map)
+    try:
+        if args.reports_dir:
+            module_dir = Path(args.module).resolve()
+            fingerprint = pl.source_fingerprint(module_dir, args.reports_dir)
+            current_notes = pl._e2e_scenario_notes(module_dir)
+            cells = evaluate_e2e_cells(args.reports_dir, module_dir.name, target_versions,
+                                       cfg_browsers, fingerprint, tag_map, current_notes)
+        else:
+            cells = evaluate_e2e_cells(None, None, target_versions, cfg_browsers, None,
+                                       tag_map, None)
+    except pl.PlanInputError as e:
+        return _input_error(str(e))
 
     versions = {}
     overall_pass = True
     all_conclusive = True
     all_e2e_conclusive = True
     for full_ver in target_versions:
-        m = merge_version(full_ver, static, flash, adversarial, e2e, scen)
+        m = merge_version(full_ver, static, flash, adversarial, cells[full_ver], scen,
+                          browsers=cfg_browsers)
         versions[full_ver] = m
         overall_pass = overall_pass and m["pass"]
         all_conclusive = all_conclusive and m["flashlight_conclusive"]
         all_e2e_conclusive = all_e2e_conclusive and m["e2e_conclusive"]
+    e2e = e2e_summary(cells, target_versions, cfg_browsers)
 
     flashlight_ran = bool(flash and flash.get("docker_available"))
-    e2e_ran = bool(e2e and e2e.get("e2e_available") and e2e.get("status") == "ran")
 
     # Default KETAT: keempat lapis. Dulu defaultnya "lapis yang filenya diberikan" —
     # itu membuat lapis yang TAK dijalankan otomatis TAK diwajibkan, jadi pemanggil
@@ -879,6 +1086,8 @@ def main():
     # ketiga skill sibling ditulis per-versi ("siap hanya bila `ready` true di 1.7.x, 8.x, 9.x")
     # dan sampai sekarang tak ada yang mengemitnya, jadi mereka membaca yang global lalu
     # menyebutnya per-versi. Diisi di sini karena `required` baru diketahui setelah gerbangnya.
+    # Bila `e2e` diwajibkan, sel tanpa bukti lulus gate-grade membawa `inconclusive_note` di
+    # layers.e2e versinya, jadi `ready` jatuh lewat kanal yang sama (sel tak-gradeable juga).
     for m in versions.values():
         m["ready"] = version_ready(m, required)
 
@@ -896,41 +1105,27 @@ def main():
             "static": True,
             "flashlight": flashlight_ran,
             "adversarial": adversarial is not None,
-            "e2e": e2e_ran,
+            "e2e": e2e["e2e_has_records"],
             "scenario": scen is not None,
         },
+        # Bukti E2E per sel: tiap sel terkonfigurasi tampil, termasuk yang dipersempit/hilang.
+        "e2e_cells": e2e["e2e_cells"],
+        "not_run_cells": e2e["not_run_cells"],
+        # Cakupan E2E: tanpa assertion authored, Lapis 4 hanya membuktikan "shop tak rusak".
+        "e2e_smoke_only": e2e["e2e_smoke_only"],
+        # Himpunan browser WAJIB (terkonfigurasi) vs engine yang benar-benar men-drive di
+        # record terpilih — penyempitan terekam di laporan, bukan diingat model.
+        "e2e_browsers": e2e["e2e_browsers"],
+        "e2e_browsers_run": e2e["e2e_browsers_run"],
+        "e2e_phase_durations": e2e["e2e_phase_durations"],
     }
-    # Spec E2E authored yang dilewati (JSON rusak / tanpa steps) di-echo di top-level supaya
-    # TAK hilang walau semua versi tak konklusif — jangan biarkan uji authored diam-diam absen.
-    e2e_scenario_notes = (e2e or {}).get("scenario_notes") or []
-    if e2e_scenario_notes:
-        result["e2e_scenario_notes"] = e2e_scenario_notes
-    # Cakupan E2E: tanpa spec authored, Lapis 4 hanya membuktikan "shop tak rusak" — BUKAN
-    # perilaku module. e2e_smoke_only MENJATUHKAN ready & DIRUTEKAN SKILL.md; ia sudah memikul
-    # kejujuran ini, jadi echo scenario_sources (daftar nama file, nol pembaca) DIHAPUS —
-    # ia justru menawarkan ulang premis STRUKTURAL nama-file yang count_authored_assertions
-    # sudah didiskreditkan (spec 2 screenshot = nol assertion tapi "punya source").
-    if e2e_ran:
-        # Field top-level = "tiap versi yang benar-benar jalan cuma smoke". Versi yang tak jalan
-        # tak dihitung: ia sudah tak konklusif lewat kanal infra, dan menyebutnya "smoke only"
-        # akan menyalahkan spec atas container yang gagal boot.
-        ran_vers = [v for v in target_versions if v in ((e2e or {}).get("versions") or {})]
-        result["e2e_smoke_only"] = bool(ran_vers) and all(is_smoke_only(e2e, v) for v in ran_vers)
-        # Cakupan browser yang dipersempit (menu On Activation / --browsers) DIREKAM di laporan,
-        # bukan cuma diingat model dari percakapan — pemanggil headless (psm-scaffold/develop/
-        # cross-version) tak bisa melihat penyempitan tanpa field. Diminta vs yang bisa jalan.
-        result["e2e_browsers"] = (e2e or {}).get("browsers") or []
-        result["e2e_browsers_run"] = (e2e or {}).get("browsers_available") or []
-    # Folder screenshot E2E di-echo agar path artefak visual ('cek web asli') sampai ke laporan
-    # gabungan — supaya render bisa ditinjau, bukan cuma diproduksi lalu terlupakan.
-    # Bentuknya DUA: run langsung ps-e2e-run.py mengemit satu string; file lapis hasil merge
-    # ps-run-layer mengemit DAFTAR (satu folder run per invokasi orkestrator — konvergensi
-    # per-versi memang menstempel ulang tiap kali). Dinormalkan ke daftar supaya peninjau
-    # visual menerima SEMUA folder, bukan yang kebetulan pertama.
-    e2e_shot_dir = (e2e or {}).get("screenshot_dir")
-    if e2e_shot_dir:
-        dirs = e2e_shot_dir if isinstance(e2e_shot_dir, list) else [e2e_shot_dir]
-        result["e2e_screenshot_dir"] = [d for d in dirs if d]
+    # Spec E2E authored yang dilewati di-echo top-level supaya TAK hilang walau semua versi tak
+    # konklusif — dari record terpilih (bukan dari module sekarang).
+    if e2e["e2e_scenario_notes"]:
+        result["e2e_scenario_notes"] = e2e["e2e_scenario_notes"]
+    # Folder run screenshot record terpilih — supaya render bisa ditinjau, bukan cuma diproduksi.
+    if e2e["e2e_screenshot_dir"]:
+        result["e2e_screenshot_dir"] = e2e["e2e_screenshot_dir"]
     out = json.dumps(result, indent=2, ensure_ascii=False)
     if args.output:
         Path(args.output).write_text(out, encoding="utf-8")

@@ -14,15 +14,34 @@ Sebuah file lapis boleh dipakai ulang HANYA bila ketiganya benar:
   3. cakupan versinya memuat semua versi yang diminta.
 Selain itu -> rerun, dengan alasan yang bisa dibaca manusia.
 
+Lapis 4 (E2E) TIDAK lagi dinilai lewat file lapis: buktinya histori append-only per SEL
+(versi, browser) `<reports>/<module>-e2e-<ver>-<browser>.jsonl`, dinilai per sel atas
+`source_fingerprint` + tag image (cell-contract.md > Evidence record / State, freshness,
+gate-grade / Plan). Himpunan sel wajib = psm_target_versions x psm_e2e_browsers dari
+--config (bukan --versions). Fungsi bukti E2E di modul ini (source_fingerprint, history_path,
+read_history, append_record, derive_state, record_state, is_fresh, is_gate_grade,
+is_passing_gate_grade, has_passing_evidence, is_failing, is_not_gradeable, cell_reason,
+plan_e2e_cells) dipakai ulang ps-run-layer & ps-aggregate — nama & bentuknya stabil.
+
+Sesi: `--new-session` mencetak token acak [a-z0-9]{16} (flag lain apa pun = exit 2);
+selain itu `--session <token>` wajib (absen/salah bentuk = exit 2), belum dipakai slice ini.
+
 Kenapa skrip, bukan prompt: menghitung mtime rekursif, menstat empat file, dan
 membandingkan himpunan versi tiap run adalah kerja mekanis yang mahal diulang dan
 berbahaya bila salah — file lapis basi membuat vonis mengklaim coverage atas kode yang
 sudah berubah, dan ps-aggregate tak bisa mendeteksinya (ia percaya JSON yang disodorkan).
 """
 import argparse
+import fcntl
+import hashlib
 import importlib.util
 import json
+import os
+import re
+import secrets
+import stat
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 LAYERS = ("static", "flashlight", "adversarial", "e2e", "scenario")
@@ -67,12 +86,56 @@ ss = load_sibling(Path(__file__).resolve().parent / "ps-static-scan.py", "ps_sta
 fl = load_sibling(Path(__file__).resolve().parent / "ps-flashlight-run.py", "ps_flashlight_run")
 
 
-def newest_source_mtime(module_dir):
-    """mtime file termuda di source module. Return (mtime, path) — (0.0, None) bila kosong."""
+class PlanInputError(Exception):
+    """Input/IO yang membuat vonis mustahil (stat sumber, baca/tulis histori). CLI: exit 2.
+
+    Pesannya selalu menyebut path pemicunya.
+    """
+
+
+def is_bookkeeping_name(name):
+    """File catatan di AKAR module yang ditulis skill saudara & tak pernah dimuat PrestaShop.
+
+    Hanya berlaku untuk entri top-level: `.psm-*` (mis. `.psm-develop-plan.json`) dan
+    `.memlog.md`. Menulisnya tak boleh membasikan bukti lapis mana pun.
+    """
+    return name.startswith(".psm-") or name == ".memlog.md"
+
+
+def _reports_rel(root_real, reports_dir):
+    """Posisi folder laporan relatif akar module (keduanya realpath).
+
+    None = di luar module (atau tak disebut); "" = SAMA dengan akar module; selain itu path
+    relatif POSIX folder laporan yang terletak tegas DI DALAM module.
+    """
+    if not reports_dir:
+        return None
+    rep = os.path.realpath(reports_dir)
+    if rep == root_real:
+        return ""
+    rel = os.path.relpath(rep, root_real)
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep) or os.path.isabs(rel):
+        return None
+    return Path(rel).as_posix()
+
+
+def newest_source_mtime(module_dir, reports_dir=None):
+    """mtime file termuda di source module. Return (mtime, path) — (0.0, None) bila kosong.
+
+    Dilewati: `ss.is_skipped` (vendor/, node_modules/, .git/ — dan penghapusan tetap tak
+    membasikan Lapis 1/2/5), file catatan top-level (is_bookkeeping_name), dan `reports_dir`
+    bila ia tegas di dalam module — jadi menulis laporan tak membasikan lapis mana pun.
+    """
     newest, where = 0.0, None
     module_dir = Path(module_dir)
+    skip_rel = _reports_rel(os.path.realpath(module_dir), reports_dir)
     for p in module_dir.rglob("*"):
         if not p.is_file() or ss.is_skipped(p, module_dir):
+            continue
+        rel = p.relative_to(module_dir)
+        if len(rel.parts) == 1 and is_bookkeeping_name(rel.name):
+            continue
+        if skip_rel and (rel.as_posix() + "/").startswith(skip_rel + "/"):
             continue
         try:
             m = p.stat().st_mtime
@@ -81,6 +144,377 @@ def newest_source_mtime(module_dir):
         if m > newest:
             newest, where = m, p
     return newest, where
+
+
+def source_fingerprint(module_dir, reports_dir=None):
+    """SHA-256 (hex) atas daftar terurut (path relatif, size, mtime_ns) tiap file module.
+
+    Satu-satunya definisi "source sama" untuk bukti E2E — plan, runner, agregat memanggil ini.
+    Akar diresolve realpath, lalu di-walk dengan lstat tanpa pernah mengikuti symlink di
+    bawahnya (symlink dicatat sbg entri, tak dimasuki). Dikecualikan: `.git` top-level, file
+    catatan top-level (is_bookkeeping_name), dan `reports_dir` bila tegas di dalam module.
+    vendor/, node_modules/, tests/e2e TERMASUK (install menyalin seluruh folder). Menambah,
+    menghapus, me-rename atau menyentuh file mana pun mengubah fingerprint.
+
+    Entri yang lenyap selama walk dilewati; error stat lain -> PlanInputError (exit 2) yang
+    menyebut path-nya. `reports_dir` == akar module juga PlanInputError.
+    """
+    root = os.path.realpath(module_dir)
+    try:
+        st_root = os.lstat(root)
+    except OSError as e:
+        raise PlanInputError(f"akar module tak bisa di-stat: {root} ({e})") from None
+    if not stat.S_ISDIR(st_root.st_mode):
+        raise PlanInputError(f"akar module bukan folder: {root}")
+    skip_rel = _reports_rel(root, reports_dir)
+    if skip_rel == "":
+        raise PlanInputError(f"folder laporan sama dengan akar module: {root} — "
+                             "psm_reports_dir harus di luar module atau di sub-foldernya")
+    entries = []
+    stack = [(root, "")]
+    while stack:
+        abs_dir, rel_dir = stack.pop()
+        try:
+            with os.scandir(abs_dir) as it:
+                children = list(it)
+        except FileNotFoundError:
+            if not rel_dir:
+                raise PlanInputError(f"akar module lenyap: {root}") from None
+            continue
+        except OSError as e:
+            raise PlanInputError(f"folder module tak terbaca: {abs_dir} ({e})") from None
+        for ent in children:
+            rel = f"{rel_dir}/{ent.name}" if rel_dir else ent.name
+            if not rel_dir and ent.name == ".git":
+                continue
+            try:
+                st = ent.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            except OSError as e:
+                raise PlanInputError(f"file module tak bisa di-stat: {ent.path} ({e})") from None
+            if stat.S_ISDIR(st.st_mode):
+                if rel != skip_rel:
+                    stack.append((ent.path, rel))
+                continue
+            if not rel_dir and is_bookkeeping_name(ent.name):
+                continue
+            entries.append([rel, st.st_size, st.st_mtime_ns])
+    payload = json.dumps(sorted(entries), separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(payload.encode("ascii")).hexdigest()
+
+
+# --- Histori bukti E2E per sel (cell-contract.md > Evidence record) ------------------
+RECORD_STATES = ("pass", "fail", "inconclusive", "not-run")
+# Record pass/fail yang salah satu key ini absen/null dibaca `inconclusive`,
+# reason `incomplete-record` (aturan authored_assertions=None lama, digeneralisasi).
+INCOMPLETE_KEYS = ("session", "source_fingerprint", "image_tag", "boot", "scenario_set",
+                   "install", "authored_assertions", "inconclusive", "scenario_notes",
+                   "browser_notes")
+SESSION_RE = re.compile(r"^[a-z0-9]{16}$")
+_SESSION_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def new_session_token():
+    """Token sesi validasi acak `[a-z0-9]{16}` (dicetak `--new-session`)."""
+    return "".join(secrets.choice(_SESSION_ALPHABET) for _ in range(16))
+
+
+def valid_session(token):
+    """True bila `token` berbentuk `[a-z0-9]{16}`."""
+    return isinstance(token, str) and bool(SESSION_RE.match(token))
+
+
+def history_path(reports_dir, module_name, ver, browser):
+    """Path histori satu sel: `<reports>/<module>-e2e-<ver>-<browser>.jsonl` (string versi terkonfigurasi)."""
+    return Path(reports_dir) / f"{module_name}-e2e-{ver}-{browser}.jsonl"
+
+
+def parse_utc(value):
+    """String UTC ISO-8601 -> datetime ber-tz; selain itu None.
+
+    Menerima `+00:00` maupun `Z`, dengan atau tanpa pecahan detik. Offset selain nol,
+    tanpa zona waktu, atau bukan string -> None.
+    """
+    if not isinstance(value, str) or "T" not in value:
+        return None
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None or dt.utcoffset() != timedelta(0):
+        return None
+    return dt
+
+
+def _parse_record(raw, ver, browser):
+    """Satu baris histori -> dict record, atau None bila baris itu RUSAK.
+
+    Rusak = tak ter-decode/ter-parse jadi objek JSON, `started_at` bukan UTC ISO-8601,
+    `state` di luar enum, atau `version`/`browser` bukan sel file ini.
+    """
+    try:
+        rec = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(rec, dict):
+        return None
+    if parse_utc(rec.get("started_at")) is None:
+        return None
+    if rec.get("state") not in RECORD_STATES:
+        return None
+    if rec.get("version") != ver or rec.get("browser") != browser:
+        return None
+    return rec
+
+
+def read_history(path, ver, browser):
+    """Baca histori satu sel di bawah LOCK_SH. Return (records, corrupt_tail).
+
+    `records` = record valid dalam urutan append (yang terakhir = terbaru; started_at tak
+    pernah dipakai untuk mengurutkan dalam satu sel). Baris rusak dilewati dan tak
+    menyembunyikan record sebelumnya; `corrupt_tail` True selama tak ada baris valid sesudah
+    baris rusak terakhir (sel itu: reason `corrupt-history`, tanpa bukti lulus). Baris kosong
+    bukan baris. File absen -> ([], False). Error OS lain -> PlanInputError (exit 2).
+    """
+    try:
+        with open(path, "rb") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            try:
+                data = f.read()
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except FileNotFoundError:
+        return [], False
+    except OSError as e:
+        raise PlanInputError(f"histori E2E tak terbaca: {path} ({e})") from None
+    records, corrupt_tail = [], False
+    for raw in data.split(b"\n"):
+        if not raw.strip():
+            continue
+        rec = _parse_record(raw, ver, browser)
+        if rec is None:
+            corrupt_tail = True
+        else:
+            records.append(rec)
+            corrupt_tail = False
+    return records, corrupt_tail
+
+
+def append_record(path, record):
+    """Tambahkan SATU record ke histori sel: satu write() di bawah LOCK_EX.
+
+    Diawali `\\n` bila byte terakhir file bukan newline (penulis yang terbunuh di tengah
+    baris), jadi baris setengah jadi itu tetap terbaca sbg satu baris rusak, bukan menelan
+    record baru. Baris tak pernah ditulis ulang. Error OS -> PlanInputError (exit 2).
+    """
+    data = (json.dumps(record, ensure_ascii=True) + "\n").encode("ascii")
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            size = os.fstat(fd).st_size
+            if size and os.pread(fd, 1, size - 1) != b"\n":
+                data = b"\n" + data
+            written = os.write(fd, data)
+            while written < len(data):  # tulis pendek (jarang di file biasa): sisanya, masih ber-lock
+                written += os.write(fd, data[written:])
+        finally:
+            os.close(fd)  # melepas LOCK_EX
+    except OSError as e:
+        raise PlanInputError(f"histori E2E tak bisa ditulis: {path} ({e})") from None
+
+
+# --- State, freshness, gate-grade (cell-contract.md) ------------------------------
+def _driven(phase_durations, engine):
+    keys = (phase_durations or {}) if isinstance(phase_durations, dict) else {}
+    head = f"{fl.CELL_PHASE_PREFIX}{engine}"
+    return any(k == head or k.startswith(head + "#") for k in keys)
+
+
+def derive_state(cell, engine=None):
+    """Aturan State atas hasil satu sel (dipakai ps-run-layer saat merge). Return
+    {state, conclusive, reason}.
+
+    `inconclusive` bila engine tak di-drive (tak ada `browser:<engine>` di phase_durations
+    sel), `errors` tak kosong, `install.ok` tak true, atau `launch_error` terisi; reason =
+    sebab pertama: `install` (hasil install yang ok-nya tak true), `launch-error`, `errors`,
+    `not-driven` (install absen/null tanpa sebab lain juga `install`). Selain itu `fail` bila
+    `findings` tak kosong, else `pass`.
+    """
+    engine = engine or cell.get("browser")
+    install = cell.get("install")
+    install_ok = isinstance(install, dict) and install.get("ok") is True
+    driven = _driven(cell.get("phase_durations"), engine)
+    if not driven or cell.get("errors") or not install_ok or cell.get("launch_error"):
+        if isinstance(install, dict) and not install_ok:
+            reason = "install"
+        elif cell.get("launch_error"):
+            reason = "launch-error"
+        elif cell.get("errors"):
+            reason = "errors"
+        elif not driven:
+            reason = "not-driven"
+        else:
+            reason = "install"
+        return {"state": "inconclusive", "conclusive": False, "reason": reason}
+    if cell.get("findings"):
+        return {"state": "fail", "conclusive": True, "reason": None}
+    return {"state": "pass", "conclusive": True, "reason": None}
+
+
+def record_state(rec):
+    """State EFEKTIF record yang dibaca dari histori: {state, conclusive, reason}.
+
+    Pembaca percaya state tersimpan, kecuali aturan incomplete-record: `pass`/`fail` yang
+    salah satu INCOMPLETE_KEYS-nya absen/null -> `inconclusive`, reason `incomplete-record`.
+    `conclusive` = state pass/fail; reason null untuk pass/fail.
+    """
+    state = rec.get("state")
+    if state in ("pass", "fail"):
+        if any(rec.get(k) is None for k in INCOMPLETE_KEYS):
+            return {"state": "inconclusive", "conclusive": False, "reason": "incomplete-record"}
+        return {"state": state, "conclusive": True, "reason": None}
+    return {"state": state, "conclusive": False, "reason": rec.get("reason")}
+
+
+def is_fresh(rec, fingerprint, image_tag):
+    """Segar = source_fingerprint record == fingerprint sekarang DAN image_tag == tag ter-resolve."""
+    return (rec.get("source_fingerprint") is not None
+            and rec.get("source_fingerprint") == fingerprint
+            and rec.get("image_tag") is not None and rec.get("image_tag") == image_tag)
+
+
+def is_gate_grade(rec, fingerprint, image_tag):
+    """Gate-grade = segar + conclusive (efektif) + `boot: cold` + `scenario_set: full`."""
+    return (is_fresh(rec, fingerprint, image_tag) and record_state(rec)["conclusive"]
+            and rec.get("boot") == "cold" and rec.get("scenario_set") == "full")
+
+
+def _authored(rec):
+    a = rec.get("authored_assertions")
+    return a if isinstance(a, int) and not isinstance(a, bool) else None
+
+
+def is_passing_gate_grade(rec, fingerprint, image_tag):
+    """Gate-grade + state pass + `inconclusive` kosong + authored_assertions >= 1 +
+    `scenario_notes` kosong + `browser_notes` kosong."""
+    return (is_gate_grade(rec, fingerprint, image_tag)
+            and record_state(rec)["state"] == "pass"
+            and not rec.get("inconclusive")
+            and (_authored(rec) or 0) >= 1
+            and not rec.get("scenario_notes")
+            and not rec.get("browser_notes"))
+
+
+def _newest(records, pred):
+    for rec in reversed(records):
+        if pred(rec):
+            return rec
+    return None
+
+
+def newest_gate_grade(records, fingerprint, image_tag):
+    """Record gate-grade TERBARU (urutan append) sebuah sel, atau None."""
+    return _newest(records, lambda r: is_gate_grade(r, fingerprint, image_tag))
+
+
+def has_passing_evidence(records, corrupt_tail, fingerprint, image_tag):
+    """Sel punya bukti lulus gate-grade: record gate-grade TERBARU-nya passing gate-grade.
+
+    `fail` gate-grade yang lebih baru selalu mengalahkan pass lama; ekor histori rusak
+    (corrupt_tail) = tak pernah punya bukti lulus.
+    """
+    if corrupt_tail:
+        return False
+    g = newest_gate_grade(records, fingerprint, image_tag)
+    return g is not None and is_passing_gate_grade(g, fingerprint, image_tag)
+
+
+def is_failing(records):
+    """Plan > Derivation `failing`: record cold, full, conclusive TERBARU (segar atau basi) = fail."""
+    r = _newest(records, lambda x: x.get("boot") == "cold" and x.get("scenario_set") == "full"
+                and record_state(x)["conclusive"])
+    return r is not None and record_state(r)["state"] == "fail"
+
+
+def _notes_equal(a, b):
+    return list(a or []) == list(b or [])
+
+
+def is_not_gradeable(records, fingerprint, image_tag, current_notes):
+    """Plan > Derivation `not-gradeable`: record gate-grade terbaru = pass dgn `inconclusive`
+    kosong yang authored_assertions-nya 0, ATAU yang scenario_notes-nya tak kosong & SAMA dgn
+    `e2e_scenario_notes` sekarang (`current_notes`, dari _e2e_scenario_notes)."""
+    g = newest_gate_grade(records, fingerprint, image_tag)
+    if g is None or record_state(g)["state"] != "pass" or g.get("inconclusive"):
+        return False
+    if _authored(g) == 0:
+        return True
+    notes = g.get("scenario_notes")
+    return bool(notes) and _notes_equal(notes, current_notes)
+
+
+def cell_reason(records, corrupt_tail, fingerprint, image_tag, current_notes):
+    """Alasan rerun satu sel (cell-contract.md > Plan), None bila sel punya bukti lulus.
+
+    Urutan, yang pertama berlaku: `corrupt-history`; `missing` (tak ada record valid);
+    tanpa record segar -> menilai record valid terbaru: fingerprint cocok tapi tag beda ->
+    `stale-tag`, selain itu `stale-source`; lalu menurut record SEGAR terbaru: `fail`,
+    `not-run`, `inconclusive`, `warm-only`, `partial`, `inconclusive-steps` (pass gate-grade
+    dgn `inconclusive` tak kosong), `not-gradeable`, `scenario-notes` (notes tak kosong yang
+    beda dari notes sekarang), `browser-notes` (pass gate-grade lain yang tak passing).
+    """
+    if corrupt_tail:
+        return "corrupt-history"
+    if has_passing_evidence(records, corrupt_tail, fingerprint, image_tag):
+        return None
+    if not records:
+        return "missing"
+    fresh = _newest(records, lambda r: is_fresh(r, fingerprint, image_tag))
+    if fresh is None:
+        last = records[-1]
+        if last.get("source_fingerprint") == fingerprint and fingerprint is not None:
+            return "stale-tag"
+        return "stale-source"
+    st = record_state(fresh)["state"]
+    if st in ("fail", "not-run", "inconclusive"):
+        return st
+    if fresh.get("boot") != "cold":
+        return "warm-only"
+    if fresh.get("scenario_set") != "full":
+        return "partial"
+    if fresh.get("inconclusive"):
+        return "inconclusive-steps"
+    if is_not_gradeable(records, fingerprint, image_tag, current_notes):
+        return "not-gradeable"
+    notes = fresh.get("scenario_notes")
+    if notes and not _notes_equal(notes, current_notes):
+        return "scenario-notes"
+    return "browser-notes"
+
+
+def plan_e2e_cells(reports_dir, module_name, versions, browsers, fingerprint, tag_map,
+                   current_notes):
+    """Vonis tiap sel terkonfigurasi -> {ver: {browser: {reuse, reason, path}}}.
+
+    `versions` (urut numerik) x `browsers` (urut psm_e2e_browsers) = himpunan TERKONFIGURASI,
+    bukan --versions. `path` = histori sel; `reason` null saat reuse. Error baca histori ->
+    PlanInputError (exit 2).
+    """
+    out = {}
+    for ver in versions:
+        tag = fl.resolve_tag(tag_map, ver)
+        row = {}
+        for browser in browsers:
+            path = history_path(reports_dir, module_name, ver, browser)
+            records, corrupt_tail = read_history(path, ver, browser)
+            reason = cell_reason(records, corrupt_tail, fingerprint, tag, current_notes)
+            row[browser] = {"reuse": reason is None, "reason": reason, "path": str(path)}
+        out[ver] = row
+    return out
 
 
 def layer_versions(payload):
@@ -203,7 +637,8 @@ def prov_for(layer, versions, ruleset, tag_map):
     return None
 
 
-def plan_per_version(reports_dir, module_name, requested, src_mtime, rel, ruleset, tag_map):
+def plan_per_version(reports_dir, module_name, requested, src_mtime, rel, ruleset, tag_map, *,
+                     e2e_cells):
     """Vonis reuse/rerun tiap (lapis, versi) atas file per-versi, tiap versi DINILAI SENDIRI.
 
     Inti siklus version-first: file per-versi 9.1 yang basi tak menyeret file 8.1 yang segar ke
@@ -211,39 +646,83 @@ def plan_per_version(reports_dir, module_name, requested, src_mtime, rel, rulese
     serentak. Tiap file per-versi mestinya bercakupan PERSIS {versi}-nya; plan_layer([versi])
     menuntut itu (cakupan kurang/lebih -> rerun beralasan). Deterministik: urutan versi mengikuti
     `requested`, urutan lapis mengikuti LAYERS.
+
+    Lapis `e2e` TIDAK dinilai dari file: `layers.e2e` = entri sel versi itu dari `e2e_cells`
+    (hasil plan_e2e_cells, wajib), berkunci browser `{reuse, reason, path}`; `rerun` memuat
+    `e2e` selama salah satu browser versi itu reuse=false.
     """
     out = {}
     for ver in requested:
         layers = {}
         for layer in LAYERS:
+            if layer == "e2e":
+                layers[layer] = dict(e2e_cells.get(ver) or {})
+                continue
             path = per_version_path(reports_dir, module_name, layer, ver)
             layers[layer] = plan_layer(path, [ver], src_mtime, rel,
                                        provenance=prov_for(layer, [ver], ruleset, tag_map))
-        out[ver] = {"layers": layers,
-                    "rerun": [l for l in LAYERS if not layers[l]["reuse"]]}
+        out[ver] = {"layers": layers, "rerun": _rerun_list(layers)}
     return out
 
 
-def per_version_rollup(per_version):
-    """Roll-up gerbang Fase 2: `all_reuse` + matriks (lapis, versi) yang masih rerun.
+def _rerun_list(layers):
+    """Lapis yang rerun, urut LAYERS. `e2e` (berkunci browser) rerun bila ada sel reuse=false."""
+    out = []
+    for layer in LAYERS:
+        entry = layers.get(layer)
+        if entry is None:
+            continue
+        if layer == "e2e":
+            if any(not c["reuse"] for c in entry.values()):
+                out.append(layer)
+        elif not entry["reuse"]:
+            out.append(layer)
+    return out
+
+
+def canonical_e2e_layer(e2e_cells):
+    """Bentuk `layers.e2e` mode kanonik: {browser: {ver: {reuse, reason, path}}} atas sel terkonfigurasi."""
+    out = {}
+    for ver, row in e2e_cells.items():
+        for browser, entry in row.items():
+            out.setdefault(browser, {})[ver] = entry
+    return out
+
+
+def per_version_rollup(per_version, e2e_cells):
+    """Roll-up Fase 2: `all_reuse` + matriks (lapis, versi[, browser]) yang masih rerun.
 
     Mode kanonik selalu punya roll-up `rerun` top-level; mode per-versi dulu tidak, jadi
     model meng-union sampai 4 lapis x N versi boolean DENGAN TANGAN di tiap iterasi loop
-    konvergensi — hitung/banding murni dengan satu jawaban benar, dan justru gerbang yang
-    memutuskan boleh-tidaknya sweep rilis mahal dimulai.
+    konvergensi — hitung/banding murni dengan satu jawaban benar.
 
     `per_version_capable` menandai cara tiap entri diproduksi: `ps-run-layer.py` hanya
     menjalankan/menyatukan lapis PER-VERSI (flashlight, e2e); `static` ditulis per-versi oleh
     pemanggil lewat `-o`, sedangkan `adversarial` sama sekali tak punya bentuk per-versi —
-    ia satu review lintas-versi di Fase 2. Tanpa penanda ini, perbedaan itu cuma hidup di
-    prosa yang harus diingat model di akhir run panjang.
+    ia satu review lintas-versi di Fase 2.
+
+    Entri lapis non-e2e dibatasi versi di `per_version` (--versions), urut versi lalu LAYERS.
+    Entri `e2e` menyusul, meliputi SETIAP sel terkonfigurasi di `e2e_cells` yang tak punya
+    bukti lulus, berapa pun --versions (urut versi numerik lalu psm_e2e_browsers), dan
+    membawa `browser` + `reason`. `all_reuse` = tiap `per_version[V].rerun` kosong —
+    informatif saja (mode per-versi selalu memuat `adversarial`).
     """
     matrix = []
     for ver, entry in per_version.items():
         for layer in entry["rerun"]:
+            if layer == "e2e":
+                continue
             matrix.append({"layer": layer, "version": ver,
                            "per_version_capable": layer in PER_VERSION_LAYERS})
-    return {"all_reuse": not matrix, "rerun_matrix": matrix}
+    for ver, row in e2e_cells.items():
+        for browser, cell in row.items():
+            if not cell["reuse"]:
+                matrix.append({"layer": "e2e", "version": ver, "browser": browser,
+                               "reason": cell["reason"],
+                               # e2e dijalankan lewat `--cells`, bukan `--per-version` (exit 2)
+                               "per_version_capable": False})
+    return {"all_reuse": all(not e["rerun"] for e in per_version.values()),
+            "rerun_matrix": matrix}
 
 
 def _e2e_scenario_notes(module_dir):
@@ -267,15 +746,36 @@ def _e2e_scenario_notes(module_dir):
     return notes
 
 
-def main():
+def _parse_scope_versions(raw):
+    """--versions (string koma, atau list bila diisi --config) -> list unik urut tertulis."""
+    items = raw if isinstance(raw, list) else str(raw or "").split(",")
+    out = []
+    for v in items:
+        v = str(v).strip()
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
     ap = argparse.ArgumentParser(
         description="Pra-pass: tentukan file lapis mana yang masih sah dipakai ulang.",
         epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("module_path", help="Path folder module PrestaShop")
+    ap.add_argument("module_path", nargs="?", help="Path folder module PrestaShop "
+                                                   "(tak dipakai dengan --new-session)")
+    ap.add_argument("--new-session", action="store_true",
+                    help="Cetak token sesi validasi acak [a-z0-9]{16} lalu keluar. Eksklusif: "
+                         "tanpa module_path & tanpa flag lain (selain itu exit 2).")
+    ap.add_argument("--session", help="Token sesi validasi dari --new-session (WAJIB kecuali "
+                                      "--new-session; absen/salah bentuk = exit 2)")
     ap.add_argument("--reports-dir", default=DEFAULT_REPORTS_DIR,
                     help=f"Folder laporan (psm_reports_dir; default kanonik: {DEFAULT_REPORTS_DIR})")
-    ap.add_argument("--versions", default="1.7.8,8.1,9.1", help="Versi target dipisah koma")
-    ap.add_argument("--config", help="JSON hasil resolve-psm-config.py — setelan keluarga (tag map, image DB, ps-domain, orchestrator, timeout, versi, browser) diisi dari sini untuk argumen yang tak diberikan eksplisit. Flag eksplisit selalu menang.")
+    ap.add_argument("--versions", default="1.7.8,8.1,9.1",
+                    help="Versi yang dinilai/dijalankan (cakupan run), dipisah koma — tiap entri "
+                         "harus string versi terkonfigurasi (psm_target_versions). Sel E2E wajib "
+                         "tetap SEMUA sel terkonfigurasi, berapa pun --versions.")
+    ap.add_argument("--config", help="JSON hasil resolve-psm-config.py — setelan keluarga (tag map, image DB, ps-domain, orchestrator, timeout, versi, browser) diisi dari sini untuk argumen yang tak diberikan eksplisit. Flag eksplisit selalu menang. Himpunan sel E2E wajib (psm_target_versions x psm_e2e_browsers) dibaca LANGSUNG dari sini (default skrip bila absen).")
     ap.add_argument("--rules", default=str(ss.DEFAULT_RULES),
                     help="Path ps-rules.json yang akan dipakai Lapis 1 (default: assets/ps-rules.json)")
     ap.add_argument("--extra-rules", help="Path aturan TAMBAHAN yang akan dipakai Lapis 1 — "
@@ -292,7 +792,29 @@ def main():
                          "dinilai sendiri) alih-alih file kanonik. Untuk siklus konvergensi "
                          "version-first: patch demi satu versi tak menyeret versi lain ke rerun.")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
+
+    # --new-session eksklusif: satu-satunya token argv. Flag lain apa pun (bahkan yang bernilai
+    # sama dgn default) = pemanggil salah paham kontraknya -> exit 2, bukan diabaikan diam-diam.
+    if args.new_session:
+        if len(argv) != 1:
+            print("error: --new-session eksklusif — tanpa module_path & tanpa flag lain",
+                  file=sys.stderr)
+            return 2
+        print(new_session_token())
+        return 0
+    if args.session is None:
+        print("error: --session wajib — buat token sekali per run dengan "
+              "`ps-plan-layers.py --new-session` lalu teruskan ke tiap panggilan plan",
+              file=sys.stderr)
+        return 2
+    if not valid_session(args.session):
+        print(f"error: --session tak valid: {args.session!r} — harus [a-z0-9]{{16}} "
+              "(dari --new-session)", file=sys.stderr)
+        return 2
+    if not args.module_path:
+        print("error: module_path wajib (kecuali --new-session)", file=sys.stderr)
+        return 2
     if args.config:
         fl.apply_config_file(args, ap, args.config)
 
@@ -312,13 +834,31 @@ def main():
     if not module_dir.is_dir():
         print(f"error: bukan folder: {module_dir}", file=sys.stderr)
         return 2
-    requested = [v.strip() for v in args.versions.split(",") if v.strip()]
+    requested = _parse_scope_versions(args.versions)
     if not requested:
         print("error: tak ada versi target — pra-pass atas nol versi memakai-ulang file lapis "
               "apa pun, termasuk yang meninjau versi lain", file=sys.stderr)
         print("sebut --versions (mis. dari psm_target_versions) lalu ulangi", file=sys.stderr)
         return 2
-    src_mtime, src_path = newest_source_mtime(module_dir)
+    # Himpunan sel WAJIB dibaca langsung dari --config (bukan dari args.versions yang diisi
+    # apply_config_file): --versions cuma cakupan run, tak pernah menyusutkan himpunan ini.
+    try:
+        cfg_versions, cfg_browsers = fl.configured_cells(args.config)
+    except fl.CellConfigError as e:
+        print(f"error: himpunan sel terkonfigurasi tak sah: {e}", file=sys.stderr)
+        return 2
+    outside = [v for v in requested if v not in cfg_versions]
+    if outside:
+        print(f"error: --versions {', '.join(outside)} bukan versi terkonfigurasi — tiap entri "
+              f"harus PERSIS salah satu dari: {', '.join(cfg_versions)}", file=sys.stderr)
+        return 2
+
+    try:
+        fingerprint = source_fingerprint(module_dir, args.reports_dir)
+    except PlanInputError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    src_mtime, src_path = newest_source_mtime(module_dir, args.reports_dir)
     rel = str(src_path.relative_to(module_dir)) if src_path else None
 
     ruleset = ss.ruleset_provenance([args.rules, args.extra_rules])
@@ -328,29 +868,45 @@ def main():
     # Input kedua tiap lapis dibangun oleh prov_for (satu pemilik) — mode kanonik & per-versi
     # memanggilnya sama persis, jadi vonis reuse keduanya tak bisa mendrift.
     tag_map = fl.parse_tag_map(args.tag_map, args.extra_tag_map)
-    if args.per_version:
-        pv = plan_per_version(args.reports_dir, module_dir.name, requested,
-                              src_mtime, rel, ruleset, tag_map)
-        result = {"module": module_dir.name, "versions": requested,
-                  "newest_source": rel, "mode": "per-version", "per_version": pv,
-                  **per_version_rollup(pv)}
-    else:
-        plans = {}
-        for layer in LAYERS:
-            path = Path(args.reports_dir) / f"{module_dir.name}-{layer}.json"
-            plans[layer] = plan_layer(path, requested, src_mtime, rel,
-                                      provenance=prov_for(layer, requested, ruleset, tag_map))
-        result = {"module": module_dir.name, "versions": requested,
-                  "newest_source": rel, "layers": plans,
-                  "rerun": [l for l, p in plans.items() if not p["reuse"]]}
 
     # Spec E2E authored adalah satu-satunya input yang ditulis TANGAN, dan satu-satunya
     # yang mengangkat Lapis 4 di atas smoke-only. Validasinya murah, tapi dulu hanya
     # dijalankan di dalam ps-e2e-run — setelah boot flashlight x N versi x M browser —
     # jadi satu typo baru ketahuan setelah run mahal selesai. Di sini penulisnya sempat
     # memperbaiki lebih dulu. Sengaja TAK memblok: smoke universal tetap berguna walau
-    # spec authored rusak (kejujurannya sudah dipikul e2e_smoke_only).
+    # spec authored rusak (kejujurannya sudah dipikul e2e_smoke_only). Juga pembanding
+    # `not-gradeable`/`scenario-notes` sel E2E.
     notes = _e2e_scenario_notes(module_dir)
+    try:
+        e2e_cells = plan_e2e_cells(args.reports_dir, module_dir.name, cfg_versions, cfg_browsers,
+                                   fingerprint, tag_map, notes)
+    except PlanInputError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    if args.per_version:
+        pv = plan_per_version(args.reports_dir, module_dir.name, requested,
+                              src_mtime, rel, ruleset, tag_map, e2e_cells=e2e_cells)
+        result = {"module": module_dir.name, "versions": requested,
+                  "newest_source": rel, "source_fingerprint": fingerprint,
+                  "mode": "per-version", "per_version": pv,
+                  **per_version_rollup(pv, e2e_cells)}
+    else:
+        plans = {}
+        for layer in LAYERS:
+            if layer == "e2e":
+                plans[layer] = canonical_e2e_layer(e2e_cells)
+                continue
+            path = Path(args.reports_dir) / f"{module_dir.name}-{layer}.json"
+            plans[layer] = plan_layer(path, requested, src_mtime, rel,
+                                      provenance=prov_for(layer, requested, ruleset, tag_map))
+        rerun = [l for l in LAYERS if l != "e2e" and not plans[l]["reuse"]]
+        if any(not c["reuse"] for row in e2e_cells.values() for c in row.values()):
+            rerun = sorted(rerun + ["e2e"], key=LAYERS.index)
+        result = {"module": module_dir.name, "versions": requested,
+                  "newest_source": rel, "source_fingerprint": fingerprint,
+                  "layers": plans, "rerun": rerun}
+
     if notes:
         result["e2e_scenario_notes"] = notes
     out = json.dumps(result, indent=2, ensure_ascii=False)

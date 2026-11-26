@@ -1,0 +1,21 @@
+{"round": 3, "critical_high": 24, "fixed": 21, "escalated": 3, "dropped": 1, "code_defects": 0,
+ "questions_for_budi": [
+  {"id": "20261125-180122.r3-q1", "finding": "Tes identical-findings membandingkan dengan run --sequential-browsers, tapi itu tak bisa sama: fail-fast di mode sekuensial membuat engine kedua not-run (fault gagal di semua engine), dan --sequential-browsers flag terlarang di passthrough. Pembanding sudah diubah di ronde 2, jadi ini balik lagi.", "options": ["Pembanding = satu run cold per engine (--cells V:chromium, lalu V:firefox)", "Tambah switch khusus tes yang mematikan fail-fast di mode sekuensial"], "recommended": "Pembanding = satu run cold per engine", "oscillation": true},
+  {"id": "20261125-180122.r3-q2", "finding": "Fallback sekuensial (slot kurang) menjalankan engine berurutan di DB yang sama tanpa reset dan tanpa konfirmasi, sedangkan mode paralel reset + konfirmasi. Vonis bisa beda tergantung slot kosong.", "options": ["Fallback ambil snapshot-db dan reset sebelum tiap engine berikutnya", "Biarkan seperti sekarang; klaim 'temuan identik' hanya untuk mode paralel"], "recommended": "Reset sebelum tiap engine berikutnya", "oscillation": false},
+  {"id": "20261125-180122.r3-q3", "finding": "Aggregate memakai semua versi terkonfigurasi, tapi ps-aggregate exit 2 bila versi target tak ada di hasil static-scan. Run yang dipersempit (mis. hanya 9.1) jadi gagal, bukan melapor sel lain belum terbukti.", "options": ["Versi terkonfigurasi yang tak ada di suatu lapis = belum terbukti, ready=false, tanpa exit 2", "Lapis 1 selalu memindai semua versi terkonfigurasi", "Hanya E2E pakai set terkonfigurasi, lapis lain pakai --versions (membalik fix ronde 2)"], "recommended": "Belum terbukti, ready=false, tanpa exit 2", "oscillation": false}
+ ],
+ "medium_low": [
+  {"location": "SPEC.md > CAP-5 / Phase 1", "issue": "adversarial-2: tiap iterasi tetap menjalankan ulang Layer 2/5 cold untuk versi host; laporan waktu tak menunjukkannya (Layers 2/5 di luar cakupan, Non-goals)."},
+  {"location": "cell-contract.md > Phase timings / not-run", "issue": "adversarial-4: progress log per versi dipakai bersama sesi lain pada modul+versi yang sama (keterbatasan yang sudah ada)."},
+  {"location": "SPEC.md > CAP-7 success", "issue": "adversarial-6: tes overlap lemah karena lock-wait di dalam fase browser; usulan switch otomatis ke sekuensial = perluasan cakupan."},
+  {"location": "cell-contract.md > Plan step 7", "issue": "adversarial-7: kegagalan warm akibat residu tanpa pemicu cold otomatis; usulan aturan baru = perluasan cakupan."},
+  {"location": "cell-contract.md > preamble live tests", "issue": "adversarial-8: tes live skip diam-diam tanpa Docker/browser; usulan status SKIPPED-NOT-PROVEN."},
+  {"location": "cell-contract.md > Fresh", "issue": "adversarial-9: fingerprint ikut menghitung file swap editor / Zone.Identifier; usulan daftar abaikan."},
+  {"location": "cell-contract.md > Newest / latest", "issue": "adversarial-10 + edge-case-10: urutan by started_at rentan lompatan jam WSL2; usulan urut posisi append."},
+  {"location": "cell-contract.md > Parallel-only failures", "issue": "edge-case-5: saat snapshot-db gagal, sel tanpa temuan dan tanpa BO fallback tersirat tetap memakai hasil paralel; bisa dipertegas."},
+  {"location": "cell-contract.md > Plan > Run scope", "issue": "edge-case-6: --versions/--browsers di luar set terkonfigurasi menjadi blocked-by-scope (tetap dilaporkan), bukan exit 2."},
+  {"location": "cell-contract.md > not-run progress log", "issue": "edge-case-9: versi antrean saat --stop-job tak di-truncate log progresnya."},
+  {"location": "cell-contract.md > Entry points merge-only view", "issue": "edge-case-11: bentuk view untuk sel tanpa record tak didefinisikan (view tidak dibaca sebagai bukti)."},
+  {"location": "cell-contract.md > Storage", "issue": "edge-case-12: histori append-only tanpa retensi/rotasi."},
+  {"location": "SPEC.md > Success signal", "issue": "adversarial-1 (bagian): usulan mencatat detik rerun-seq/snapshot-db terpisah; sudah tercakup per-phase seconds."}
+ ]}

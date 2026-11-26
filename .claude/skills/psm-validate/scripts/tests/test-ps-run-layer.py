@@ -37,6 +37,9 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 
 
+SESSION = "abcdefghij012345"
+
+
 def check(name, cond):
     print(f"  {'PASS' if cond else 'FAIL'}: {name}")
     return cond
@@ -84,22 +87,36 @@ class FakeChildren:
         return [c[c.index(flag) + 1] if flag in c else None for c in self.cmds]
 
 
-def _run_main(argv, fake):
-    """Jalankan main() dengan anak palsu. Return (exit_code, stderr).
+def _run_full(argv, fake, docker=True):
+    """Jalankan main() dengan anak palsu & Docker di-stub. Return (exit_code, stderr, stdout).
 
     stderr ikut dikembalikan karena beberapa gerbang menghasilkan exit code yang SAMA lewat
     jalur berbeda (lapis serial vs lapis tak dikenal; gerbang bentuk vs raise merge), jadi
-    exit code saja tak membuktikan gerbang yang dimaksud yang menyala.
+    exit code saja tak membuktikan gerbang yang dimaksud yang menyala. stdout memikul baris
+    output JSON Lapis 4.
     """
-    real = mod._spawn
+    fl = mod.flashlight()
+    real, real_docker = mod._spawn, fl.docker_available
     mod._spawn = fake
-    buf = io.StringIO()
+    fl.docker_available = lambda: docker
+    buf, out = io.StringIO(), io.StringIO()
     try:
-        with contextlib.redirect_stderr(buf):
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(out):
             rc = mod.main(argv)
     finally:
         mod._spawn = real
-    return rc, buf.getvalue()
+        fl.docker_available = real_docker
+    kept = re.search(r"DIPERTAHANKAN untuk diagnosis: (\S+)", buf.getvalue())
+    if kept and "/psm-layer-" in kept.group(1) and Path(kept.group(1)).is_dir() \
+            and any(a == "e2e" for a in argv):
+        import shutil as _sh
+        _sh.rmtree(kept.group(1), ignore_errors=True)  # test e2e: tak meninggalkan sampah /tmp
+    return rc, buf.getvalue(), out.getvalue()
+
+
+def _run_main(argv, fake):
+    rc, err, _out = _run_full(argv, fake)
+    return rc, err
 
 
 def _mod_dir(tmp, name="mymod"):
@@ -131,8 +148,21 @@ def test_pure():
                 mod.reserved_in_passthrough(["--outp=/tmp/x.json"]) == ["--output"])
     ok &= check("reserved: flag lapis biasa lolos",
                 mod.reserved_in_passthrough(
-                    ["--tag-map", "9.1=9.1.4-nginx", "--browsers", "chromium",
-                     "--orchestrator", "compose", "--headed"]) == [])
+                    ["--tag-map", "9.1=9.1.4-nginx", "--extra-tag-map", "8.1=8.1.7",
+                     "--orchestrator", "compose", "--headed", "--startup-timeout", "60",
+                     "--allow-image-pull", "--screenshot-dir", "/s", "--verbose"]) == [])
+    # Slice CAP-2: --config diteruskan skrip ini sendiri, engine tiap versi dipilih di sini.
+    ok &= check("reserved: --config/--browsers/--engines (juga bentuk =) tak boleh di passthrough",
+                mod.reserved_in_passthrough(["--config", "c.json"]) == ["--config"]
+                and mod.reserved_in_passthrough(["--browsers=chromium"]) == ["--browsers"]
+                and mod.reserved_in_passthrough(["--engines", "firefox"]) == ["--engines"])
+    ok &= check("reserved: singkatan awalan >= 4 karakter atas SELURUH tuple",
+                mod.reserved_in_passthrough(["--conf", "c"]) == ["--config"]
+                and mod.reserved_in_passthrough(["--brow=x"]) == ["--browsers"]
+                and mod.reserved_in_passthrough(["--eng", "x"]) == ["--engines"]
+                and mod.reserved_in_passthrough(["--clean"]) == ["--cleanup-orphans"]
+                and mod.reserved_in_passthrough(["--stop", "j"]) == ["--stop-job"]
+                and mod.reserved_in_passthrough(["--list"]) == ["--list-jobs"])
 
     rest, base = mod.split_screenshot_dir(["--a", "1", "--screenshot-dir", "/s", "--b", "2"])
     ok &= check("split_screenshot_dir bentuk terpisah", (rest, base) == (["--a", "1", "--b", "2"], "/s"))
@@ -242,14 +272,17 @@ def test_cli_gates():
         ok &= check("lapis tak dikenal -> exit 2 & pesannya beda dari lapis serial",
                     rc_u == 2 and "tak dikenal" in err_u)
 
-        rc_v, _ = _run_main(["--layer", "e2e", "--module", m, "--versions", " , ",
-                             "--reports-dir", rep], fake)
-        ok &= check("--versions kosong -> exit 2", rc_v == 2)
+        rc_v, err_v = _run_main(["--layer", "flashlight", "--module", m, "--versions", " , ",
+                                 "--reports-dir", rep], fake)
+        ok &= check("--versions kosong -> exit 2", rc_v == 2 and "kosong" in err_v)
+        rc_n, err_n = _run_main(["--layer", "flashlight", "--module", m, "--reports-dir", rep],
+                                fake)
+        ok &= check("--versions absen (lapis selain e2e) -> exit 2", rc_n == 2 and "kosong" in err_n)
         rc_j, _ = _run_main(["--layer", "e2e", "--module", m, "--versions", "9.1",
                              "--reports-dir", rep, "--jobs", "0"], fake)
         ok &= check("--jobs 0 -> exit 2", rc_j == 2)
 
-        rc_r, err_r = _run_main(["--layer", "e2e", "--module", m, "--versions", "9.1",
+        rc_r, err_r = _run_main(["--layer", "flashlight", "--module", m, "--versions", "9.1",
                                  "--reports-dir", rep, "--", "--versions", "8.1"], fake)
         ok &= check("--versions di passthrough -> exit 2", rc_r == 2 and "--versions" in err_r)
 
@@ -264,14 +297,16 @@ def test_cli_gates():
                     json.loads(korban.read_text())["pass"] is True)
         ok &= check("gerbang menyala SEBELUM anak di-spawn", fake.cmds == [])
 
-        rc_t, err_t = _run_main(["--layer", "e2e", "--module", m, "--versions", "9.1",
-                                 "--reports-dir", "{project-root}/rep"], fake)
-        ok &= check("token {project-root} di --reports-dir -> exit 2",
-                    rc_t == 2 and "belum diresolve" in err_t)
-        rc_t2, _ = _run_main(["--layer", "e2e", "--module", m, "--versions", "9.1",
-                              "--reports-dir", rep, "--", "--screenshot-dir",
-                              "{project-root}/shots"], fake)
-        ok &= check("token {project-root} di --screenshot-dir -> exit 2", rc_t2 == 2)
+        for layer, sess in (("flashlight", []), ("e2e", ["--session", SESSION])):
+            rc_t, err_t = _run_main(["--layer", layer, "--module", m, "--versions", "9.1",
+                                     "--reports-dir", "{project-root}/rep", *sess], fake)
+            ok &= check(f"{layer}: token {{project-root}} di --reports-dir -> exit 2",
+                        rc_t == 2 and "belum diresolve" in err_t)
+            rc_t2, err_t2 = _run_main(["--layer", layer, "--module", m, "--versions", "9.1",
+                                       "--reports-dir", rep, *sess, "--", "--screenshot-dir",
+                                       "{project-root}/shots"], fake)
+            ok &= check(f"{layer}: token {{project-root}} di --screenshot-dir -> exit 2",
+                        rc_t2 == 2 and "belum diresolve" in err_t2)
         ok &= check("tak satu pun gerbang di atas men-spawn anak", fake.cmds == [])
     return ok
 
@@ -284,13 +319,13 @@ def test_output_is_derived():
         Path(rep).mkdir()
         modA, modB = _mod_dir(tmp, "modA"), _mod_dir(tmp, "modB")
         fake = FakeChildren()
-        rc, _ = _run_main(["--layer", "e2e", "--module", modA, "--versions", "9.1",
+        rc, _ = _run_main(["--layer", "scenario", "--module", modA, "--versions", "9.1",
                            "--reports-dir", rep], fake)
         ok &= check("run modA -> exit 0", rc == 0)
-        ok &= check("bukti modA mendarat di modA-e2e.json",
-                    (Path(rep) / "modA-e2e.json").is_file())
+        ok &= check("bukti modA mendarat di modA-scenario.json",
+                    (Path(rep) / "modA-scenario.json").is_file())
         ok &= check("tak ada file lapis modB yang tersentuh",
-                    not (Path(rep) / "modB-e2e.json").exists())
+                    not (Path(rep) / "modB-scenario.json").exists())
         ok &= check("tak ada file lapis flashlight yang tersentuh",
                     not (Path(rep) / "modA-flashlight.json").exists())
 
@@ -299,7 +334,7 @@ def test_output_is_derived():
         ok &= check("run modB flashlight menulis file-nya sendiri",
                     rc2 == 0 and (Path(rep) / "modB-flashlight.json").is_file())
         ok &= check("file modA tetap utuh sesudahnya",
-                    json.loads((Path(rep) / "modA-e2e.json").read_text())["module"] == "m")
+                    json.loads((Path(rep) / "modA-scenario.json").read_text())["module"] == "m")
     return ok
 
 
@@ -310,10 +345,10 @@ def test_cli_happy_and_degrade():
         shots = str(Path(tmp) / "shots")
         fake = FakeChildren()
         started = time.time()
-        rc, _ = _run_main(["--layer", "e2e", "--module", m, "--versions", "9.1,8.1",
+        rc, _ = _run_main(["--layer", "scenario", "--module", m, "--versions", "9.1,8.1",
                            "--reports-dir", rep, "--jobs", "2",
                            "--", "--screenshot-dir", shots], fake)
-        out = Path(rep) / "mymod-e2e.json"
+        out = Path(rep) / "mymod-scenario.json"
         ok &= check("dua versi berbukti & lolos -> exit 0", rc == 0)
         ok &= check("file kanonik memuat kedua versi",
                     set(json.loads(out.read_text())["versions"]) == {"9.1", "8.1"})
@@ -561,7 +596,7 @@ def test_consumed_by_aggregate():
     ok = True
     with tempfile.TemporaryDirectory() as tmp:
         rep, m = tmp, _mod_dir(tmp)
-        rc, _ = _run_main(["--layer", "e2e", "--module", m, "--versions", "9.1,8.1",
+        rc, _ = _run_main(["--layer", "flashlight", "--module", m, "--versions", "9.1,8.1",
                            "--reports-dir", rep], FakeChildren())
         ok &= check("orkestrator menulis file kanonik (exit 0)", rc == 0)
         static = Path(rep) / "static.json"
@@ -572,7 +607,7 @@ def test_consumed_by_aggregate():
             encoding="utf-8")
         agg = subprocess.run(
             ["uv", "run", str(SCRIPTS / "ps-aggregate.py"), "--static", str(static),
-             "--e2e", str(Path(rep) / "mymod-e2e.json"), "--versions", "9.1,8.1"],
+             "--flashlight", str(Path(rep) / "mymod-flashlight.json")],
             capture_output=True, text=True)
         ok &= check("ps-aggregate menerima file kanonik (exit 0/1, bukan 2 salah-bentuk)",
                     agg.returncode in (0, 1))
@@ -596,15 +631,15 @@ def test_per_version_persist():
         rep, m = tmp, _mod_dir(tmp)
         fake = FakeChildren()
         started = time.time()
-        rc, _ = _run_main(["--layer", "e2e", "--module", m, "--versions", "9.1,8.1",
+        rc, _ = _run_main(["--layer", "scenario", "--module", m, "--versions", "9.1,8.1",
                            "--reports-dir", rep, "--per-version"], fake)
-        pv91 = Path(rep) / "mymod-e2e-9.1.json"
-        pv81 = Path(rep) / "mymod-e2e-8.1.json"
+        pv91 = Path(rep) / "mymod-scenario-9.1.json"
+        pv81 = Path(rep) / "mymod-scenario-8.1.json"
         ok &= check("per-version: semua versi berbukti -> exit 0", rc == 0)
         ok &= check("per-version: file per-versi DITULIS (nama diturunkan, segmen versi)",
                     pv91.is_file() and pv81.is_file())
         ok &= check("per-version: file KANONIK TAK ditulis (tak menimpa bukti versi lain)",
-                    not (Path(rep) / "mymod-e2e.json").exists())
+                    not (Path(rep) / "mymod-scenario.json").exists())
         ok &= check("per-version: tiap file memuat PERSIS versinya",
                     set(json.loads(pv91.read_text())["versions"]) == {"9.1"}
                     and set(json.loads(pv81.read_text())["versions"]) == {"8.1"})
@@ -714,22 +749,22 @@ def test_merge_only():
     # kebalikan dari kontrak yang berlaku.
     with tempfile.TemporaryDirectory() as tmp:
         rep, m = tmp, _mod_dir(tmp)
-        _write_pv(rep, "e2e", "8.1", 100, top={"ps_domain": "localhost:8000"})
-        _write_pv(rep, "e2e", "9.1", 200, top={"ps_domain": "shop.test:9000"})
-        rc, err = _run_main(["--layer", "e2e", "--module", m, "--versions", "8.1,9.1",
+        _write_pv(rep, "scenario", "8.1", 100, top={"ps_domain": "localhost:8000"})
+        _write_pv(rep, "scenario", "9.1", 200, top={"ps_domain": "shop.test:9000"})
+        rc, err = _run_main(["--layer", "scenario", "--module", m, "--versions", "8.1,9.1",
                              "--reports-dir", rep, "--merge-only"], FakeChildren())
         ok &= check("merge-only: skalar top-level bertentangan -> exit 2",
                     rc == 2 and "berbeda antar bukti" in err
-                    and not (Path(rep) / "mymod-e2e.json").exists())
+                    and not (Path(rep) / "mymod-scenario.json").exists())
 
     # Kontrol positif untuk kelas yang baru dibuka: stempel run berbeda LOLOS dan terkumpul.
     with tempfile.TemporaryDirectory() as tmp:
         rep, m = tmp, _mod_dir(tmp)
-        _write_pv(rep, "e2e", "8.1", 100, top={"screenshot_dir": "/shots/run-A"})
-        _write_pv(rep, "e2e", "9.1", 200, top={"screenshot_dir": "/shots/run-B"})
-        rc, err = _run_main(["--layer", "e2e", "--module", m, "--versions", "8.1,9.1",
+        _write_pv(rep, "scenario", "8.1", 100, top={"screenshot_dir": "/shots/run-A"})
+        _write_pv(rep, "scenario", "9.1", 200, top={"screenshot_dir": "/shots/run-B"})
+        rc, err = _run_main(["--layer", "scenario", "--module", m, "--versions", "8.1,9.1",
                              "--reports-dir", rep, "--merge-only"], FakeChildren())
-        canon = Path(rep) / "mymod-e2e.json"
+        canon = Path(rep) / "mymod-scenario.json"
         ok &= check("merge-only: stempel run berbeda -> exit 0 & kedua folder terkumpul",
                     rc == 0 and canon.exists()
                     and json.loads(canon.read_text())["screenshot_dir"]
@@ -769,16 +804,16 @@ def test_merge_only():
     # memakan file yang tak ditulisnya sendiri). Cermin guard stray di collect().
     with tempfile.TemporaryDirectory() as tmp:
         rep, m = tmp, _mod_dir(tmp)
-        _write_pv(rep, "e2e", "8.1", 100)
-        mis = Path(rep) / "mymod-e2e-9.1.json"
+        _write_pv(rep, "scenario", "8.1", 100)
+        mis = Path(rep) / "mymod-scenario-9.1.json"
         mis.write_text(json.dumps({"module": "m", "status": "ran", "pass": True,
                                    "versions": {"8.1": {"pass": True}}}), encoding="utf-8")
         os.utime(mis, (200, 200))
-        rc, err = _run_main(["--layer", "e2e", "--module", m, "--versions", "8.1,9.1",
+        rc, err = _run_main(["--layer", "scenario", "--module", m, "--versions", "8.1,9.1",
                              "--reports-dir", rep, "--merge-only"], FakeChildren())
         ok &= check("merge-only: file salah-label (isi versi lain) -> exit 2 (identitas ditegakkan)",
                     rc == 2 and "salah-label" in err
-                    and not (Path(rep) / "mymod-e2e.json").exists())
+                    and not (Path(rep) / "mymod-scenario.json").exists())
 
     # Review-C: kanonik ber-pass:false tanpa versi hilang -> exit 1 (dulu `1 if missing else 0`
     # MENGABAIKAN pass -> exit 0, gerbang CI terbaca hijau atas lapis yang gagal).
@@ -830,9 +865,719 @@ def test_modes_exclusive_and_passthrough():
     return ok
 
 
+# --- Lapis 4: histori per sel (spec-psm-e2e-cap2-cap6-cell-evidence) ---------------------
+# Kunci Fields kontrak (cell-contract.md > Evidence record > Fields) + boot_wall_clock & boot_log.
+CONTRACT_FIELDS = (
+    "version", "browser", "started_at", "finished_at", "boot", "boot_id", "session",
+    "browser_mode", "scenario_set", "scenarios_run", "source_fingerprint", "image_tag", "run_id",
+    "job_id", "tier", "state", "conclusive", "reason", "errors", "install", "launch_error",
+    "bo_authed", "findings", "inconclusive", "authored_assertions", "scenario_notes",
+    "browser_notes", "parallel_only", "console_errors", "screenshots", "scenario_spans",
+    "phase_durations", "boot_phases", "keeper_boot", "wall_clock")
+RECORD_FIELDS = set(CONTRACT_FIELDS) | {"boot_wall_clock", "boot_log"}
+PL = mod.plan_layers()
+
+
+def _iso(offset=0.0):
+    from datetime import datetime, timedelta, timezone
+    return (datetime(2026, 11, 26, 10, 0, 0, tzinfo=timezone.utc)
+            + timedelta(seconds=offset)).isoformat(timespec="microseconds")
+
+
+def _child_payload(ver, engines, *, kind="pass", available=None, tag=None):
+    """Output anak berbentuk ps-e2e-run (sel dari _new_cell milik anak asli)."""
+    e2e = mod.e2e_module()
+    vres = {"run_id": "c0ffee000001", "boot": "cold", "boot_id": "c0ffee000001",
+            "image_tag": tag or f"{ver}-img", "browser_mode": "sequential",
+            "boot_phases": {"pull": {"seconds": 1.0, "outcome": "ok"}},
+            "boot_wall_clock": 42.5, "boot_log": None, "errors": [],
+            "install": {"ok": True}, "scenario_notes": [], "cells": {}}
+    for i, e in enumerate(engines):
+        cell = e2e._new_cell()
+        if kind in ("install", "boot"):
+            pass  # engine tak pernah jalan: started_at/finished_at None, tanpa browser:<engine>
+        else:
+            cell.update({"started_at": _iso(10 * i), "finished_at": _iso(10 * i + 7.25),
+                         "scenarios_run": ["psm-universal-smoke", "a"],
+                         "findings": ([{"scenario": "a", "action": "expect_text", "step": 3}]
+                                      if kind == "fail" else []),
+                         "inconclusive": [], "authored_assertions": 2, "bo_authed": True,
+                         "console_errors": 0, "screenshots": [],
+                         "phase_durations": {f"browser:{e}": {"seconds": 7.2,
+                                                                "outcome": "ok"}}})
+        vres["cells"][e] = cell
+    if kind == "install":
+        vres["install"] = {"ok": False, "output": "boom"}
+        vres["errors"] = ["install gagal"]
+    if kind == "boot":
+        vres["install"] = None
+        vres["errors"] = ["wait-healthy: timeout"]
+        vres["boot_log"] = "db: crash"
+    return {"module": "mymod", "status": "ran", "e2e_available": True,
+            "browsers": list(engines),
+            "browsers_available": list(engines) if available is None else available,
+            "versions": {ver: vres}}
+
+
+class E2EChild:
+    """Anak ps-e2e-run palsu. `behave(ver, engines) -> (payload|None|str, rc)`; str = teks mentah.
+
+    Merekam perintah & urutan selesai; `delay` per versi mengatur urutan selesai.
+    """
+
+    def __init__(self, behave=None, delay=None, hook=None):
+        self.cmds, self.done = [], []
+        self.behave = behave or (lambda ver, engines: (_child_payload(ver, engines), 0))
+        self.delay = delay or {}
+        self.hook = hook
+
+    def __call__(self, cmd):
+        self.cmds.append(list(cmd))
+        ver = _ver_of(cmd)
+        engines = cmd[cmd.index("--engines") + 1].split(",")
+        time.sleep(self.delay.get(ver, 0))
+        if self.hook:
+            self.hook(ver)
+        payload, rc = self.behave(ver, engines)
+        if isinstance(payload, str):
+            Path(_out_of(cmd)).write_text(payload, encoding="utf-8")
+        elif payload is not None:
+            Path(_out_of(cmd)).write_text(json.dumps(payload), encoding="utf-8")
+        self.done.append(ver)
+        if isinstance(rc, BaseException):
+            raise rc
+        return rc
+
+    def arg(self, flag):
+        return [c[c.index(flag) + 1] if flag in c else None for c in self.cmds]
+
+
+def _cfg(tmp, versions="1.7.8,8.1,9.1", browsers="chromium,firefox", name="psm-config.json",
+         **more):
+    p = Path(tmp) / name
+    data = {"psm_target_versions": versions, "psm_e2e_browsers": browsers}
+    data.update(more)
+    p.write_text(json.dumps(data), encoding="utf-8")
+    return str(p)
+
+
+def _e2e_env(tmp):
+    rep = str(Path(tmp) / "reports")
+    Path(rep).mkdir(exist_ok=True)
+    m = _mod_dir(tmp)
+    Path(m, "mymod.php").write_text("<?php\n", encoding="utf-8")
+    return rep, m
+
+
+def _e2e(rep, m, cfg, *scope, extra=(), session=SESSION, more=()):
+    argv = ["--layer", "e2e", "--module", m, "--reports-dir", rep, *scope]
+    if cfg:
+        argv += ["--config", cfg]
+    if session:
+        argv += ["--session", session]
+    argv += list(more)
+    if extra:
+        argv += ["--", *extra]
+    return argv
+
+
+def _hist(rep, ver, browser):
+    return PL.read_history(PL.history_path(rep, "mymod", ver, browser), ver, browser)[0]
+
+
+def _line(out):
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    return json.loads(lines[-1]) if lines else None
+
+
+def _no_layer_files(rep):
+    return not list(Path(rep).glob("mymod-e2e*.json"))
+
+
+def test_e2e_input_errors():
+    """Tiap error input Lapis 4 -> exit 2 SEBELUM spawn, tanpa baris output."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        inside_shots = str(Path(m) / "shots")
+        cases = [
+            ("tanpa --cells/--versions", _e2e(rep, m, cfg)),
+            ("--cells DAN --versions", _e2e(rep, m, cfg, "--cells", "9.1:chromium",
+                                            "--versions", "9.1")),
+            ("--session absen", _e2e(rep, m, cfg, "--versions", "9.1", session=None)),
+            ("--session salah bentuk", _e2e(rep, m, cfg, "--versions", "9.1", session="ABC")),
+            ("--session 15 karakter", _e2e(rep, m, cfg, "--versions", "9.1",
+                                           session="abcdefghij01234")),
+            ("token --cells tanpa ':'", _e2e(rep, m, cfg, "--cells", "9.1")),
+            ("token --cells kosong", _e2e(rep, m, cfg, "--cells", "9.1:chromium,,8.1:firefox")),
+            ("token --cells koma di ujung", _e2e(rep, m, cfg, "--cells", "9.1:chromium,")),
+            ("browser kosong di sel", _e2e(rep, m, cfg, "--cells", "9.1:chromium+")),
+            ("browser berulang di satu sel", _e2e(rep, m, cfg, "--cells",
+                                                  "9.1:chromium+chromium")),
+            ("versi berulang di --cells", _e2e(rep, m, cfg, "--cells",
+                                               "9.1:chromium,9.1:firefox")),
+            ("versi --cells bukan string terkonfigurasi", _e2e(rep, m, cfg, "--cells",
+                                                               "9.1.0:chromium")),
+            ("browser di luar himpunan", _e2e(rep, m, cfg, "--cells", "9.1:webkit")),
+            ("versi di luar himpunan", _e2e(rep, m, cfg, "--cells", "7.0:chromium")),
+            ("--versions bukan string terkonfigurasi", _e2e(rep, m, cfg, "--versions", "9.1.0")),
+            ("--versions kosong", _e2e(rep, m, cfg, "--versions", " , ")),
+            ("--per-version", _e2e(rep, m, cfg, "--versions", "9.1", more=["--per-version"])),
+            ("reports dir = akar module", _e2e(m, m, cfg, "--versions", "9.1")),
+            ("--screenshot-dir di module, di luar reports", _e2e(
+                rep, m, cfg, "--versions", "9.1", extra=["--screenshot-dir", inside_shots])),
+            ("--browsers di passthrough", _e2e(rep, m, cfg, "--versions", "9.1",
+                                               extra=["--browsers", "chromium"])),
+            ("--engines di passthrough", _e2e(rep, m, cfg, "--versions", "9.1",
+                                              extra=["--engines=chromium"])),
+            ("--config di passthrough", _e2e(rep, m, cfg, "--versions", "9.1",
+                                             extra=["--config", cfg])),
+            ("singkatan --brow di passthrough", _e2e(rep, m, cfg, "--versions", "9.1",
+                                                     extra=["--brow", "chromium"])),
+            ("config tak terbaca", _e2e(rep, m, str(Path(tmp) / "absen.json"),
+                                        "--versions", "9.1")),
+            ("config engine webkitx", _e2e(rep, m, _cfg(tmp, browsers="chromium,webkitx",
+                                                     name="webkitx.json"),
+                                           "--versions", "9.1")),
+        ]
+        cfg_bad = {
+            "config 9.1 + 9.1.0": {"psm_target_versions": "9.1,9.1.0"},
+            "config list kosong": {"psm_target_versions": []},
+            "config versi tak bertitik": {"psm_target_versions": "9.x"},
+            "config bukan objek": [1, 2],
+            "config tag map bukan string": {"psm_flashlight_tag_map": {"9.1": "x"}},
+            "config startup timeout bukan bilangan": {"psm_flashlight_startup_timeout": "abc"},
+        }
+        for i, (name, data) in enumerate(cfg_bad.items()):
+            p = Path(tmp) / f"bad{i}.json"
+            p.write_text(json.dumps(data), encoding="utf-8")
+            cases.append((name, _e2e(rep, m, str(p), "--versions", "9.1")))
+        cases += [
+            ("--cells dgn lapis flashlight", ["--layer", "flashlight", "--module", m,
+                                               "--reports-dir", rep, "--versions", "9.1",
+                                               "--cells", "9.1:chromium"]),
+            ("--session dgn lapis scenario", ["--layer", "scenario", "--module", m,
+                                               "--reports-dir", rep, "--versions", "9.1",
+                                               "--session", SESSION]),
+        ]
+        for name, argv in cases:
+            fake = E2EChild()
+            rc, err, out = _run_full(argv, fake)
+            ok &= check(f"input error: {name} -> exit 2, tak spawn, tanpa baris output",
+                        rc == 2 and fake.cmds == [] and out.strip() == "" and "error" in err)
+        ok &= check("tak ada histori tertulis oleh error input",
+                    not list(Path(rep).glob("*.jsonl")))
+        # Kontrol positif: --screenshot-dir di dalam reports dir yang ada DI DALAM module sah.
+        rep_in = str(Path(m) / "reports")
+        Path(rep_in).mkdir()
+        fake = E2EChild()
+        rc, err, _out = _run_full(_e2e(rep_in, m, cfg, "--versions", "9.1",
+                                       extra=["--screenshot-dir", str(Path(rep_in) / "shots")]),
+                                  fake)
+        ok &= check("kontrol: reports & screenshot dir di dalam module (screenshot di reports) sah",
+                    rc == 0 and len(fake.cmds) == 1)
+        ok &= check("kontrol: --config 'startup timeout' bilangan string diterima",
+                    _run_full(_e2e(rep, m, _cfg(tmp, name="t60.json",
+                                        psm_flashlight_startup_timeout="60"),
+                                   "--versions", "9.1"), E2EChild())[0] == 0)
+    return ok
+
+
+def test_reserved_on_other_layers():
+    """Cek reserved (termasuk --config/--browsers/--engines & singkatannya) berlaku SEMUA lapis."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = tmp, _mod_dir(tmp)
+        for extra in (["--browsers", "chromium"], ["--config=x.json"], ["--engines", "firefox"],
+                      ["--conf", "x"], ["--engi", "x"]):
+            for layer in ("flashlight", "scenario"):
+                fake = FakeChildren()
+                rc, err = _run_main(["--layer", layer, "--module", m, "--versions", "9.1",
+                                     "--reports-dir", rep, "--", *extra], fake)
+                ok &= check(f"{layer}: passthrough {extra[0]} -> exit 2, tak spawn",
+                            rc == 2 and fake.cmds == [] and "passthrough" in err)
+        # --config diteruskan APA ADANYA ke tiap anak lapis lain, tak divalidasi (isi apa pun).
+        bogus = Path(tmp) / "cfg.json"
+        bogus.write_text('{"psm_e2e_browsers": "webkitx"}', encoding="utf-8")
+        fake = FakeChildren()
+        rc, _ = _run_main(["--layer", "flashlight", "--module", m, "--versions", "9.1,8.1",
+                           "--reports-dir", rep, "--config", str(bogus)], fake)
+        ok &= check("flashlight: --config diteruskan ke SETIAP anak, tanpa validasi",
+                    rc == 0 and fake.extra_of("--config") == [str(bogus)] * 2)
+    return ok
+
+
+def test_e2e_ac3():
+    """AC3: --versions 9.1 + anak sukses -> tepat satu rekaman per browser terkonfigurasi 9.1."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        fake = E2EChild()
+        rc, err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1"), fake)
+        line = _line(out)
+        ok &= check("AC3: exit 0", rc == 0)
+        ok &= check("AC3: satu anak, --versions 9.1, --engines = browser terkonfigurasi",
+                    len(fake.cmds) == 1 and _ver_of(fake.cmds[0]) == "9.1"
+                    and fake.arg("--engines") == ["chromium,firefox"])
+        ok &= check("AC3: anak menerima --config, tanpa --browsers",
+                    fake.arg("--config") == [cfg] and "--browsers" not in fake.cmds[0])
+        ok &= check("AC3: tepat satu rekaman per browser 9.1",
+                    len(_hist(rep, "9.1", "chromium")) == 1
+                    and len(_hist(rep, "9.1", "firefox")) == 1)
+        ok &= check("AC3: versi lain tak tersentuh",
+                    sorted(p.name for p in Path(rep).glob("*.jsonl"))
+                    == ["mymod-e2e-9.1-chromium.jsonl", "mymod-e2e-9.1-firefox.jsonl"])
+        ok &= check("AC3: tak ada <module>-e2e*.json", _no_layer_files(rep))
+        ok &= check("baris output: ran, appended, fingerprint = source_fingerprint sekarang",
+                    line == {"e2e_status": "ran", "reason": None,
+                             "appended": ["9.1:chromium", "9.1:firefox"],
+                             "source_fingerprint": PL.source_fingerprint(m, rep)})
+        ok &= check("baris output adalah satu-satunya isi stdout", len(out.strip().splitlines()) == 1)
+    return ok
+
+
+def test_e2e_record_fields():
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp, browsers="chromium,firefox",
+                   psm_flashlight_tag_map="1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx")
+        job = "mymod-e2e-1200-abcd"
+
+        def behave(ver, engines):
+            return _child_payload(ver, engines, tag="9.1.4-nginx"), 0
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:firefox",
+                                       more=["--job-id", job]), E2EChild(behave))
+        recs = _hist(rep, "9.1", "firefox")
+        r = recs[0] if recs else {}
+        ok &= check("rekaman: kunci PERSIS Fields + boot_wall_clock + boot_log",
+                    set(r) == RECORD_FIELDS and set(mod.RECORD_KEYS) == RECORD_FIELDS)
+        ok &= check("rekaman: field runner (session, fingerprint, job_id, tier/keeper_boot null)",
+                    r.get("session") == SESSION and r.get("job_id") == job
+                    and r.get("source_fingerprint") == _line(out)["source_fingerprint"]
+                    and r.get("tier") is None and r.get("keeper_boot") is None)
+        ok &= check("rekaman: state/conclusive/reason dari derive_state",
+                    (r.get("state"), r.get("conclusive"), r.get("reason")) == ("pass", True, None))
+        ok &= check("rekaman: field level-versi anak disalin apa adanya",
+                    r.get("boot") == "cold" and r.get("boot_id") == "c0ffee000001"
+                    and r.get("run_id") == "c0ffee000001" and r.get("image_tag") == "9.1.4-nginx"
+                    and r.get("browser_mode") == "sequential" and r.get("boot_wall_clock") == 42.5
+                    and r.get("boot_phases") == {"pull": {"seconds": 1.0, "outcome": "ok"}}
+                    and r.get("boot_log") is None and r.get("install") == {"ok": True}
+                    and r.get("errors") == [] and r.get("scenario_notes") == [])
+        ok &= check("rekaman: field sel anak (timestamp, phase_durations, scenario_set)",
+                    r.get("started_at") == _iso(0) and r.get("finished_at") == _iso(7.25)
+                    and r.get("phase_durations") == {"browser:firefox": {"seconds": 7.2,
+                                                                         "outcome": "ok"}}
+                    and r.get("scenario_set") == "full" and r.get("authored_assertions") == 2)
+        ok &= check("rekaman: wall_clock = finished_at - started_at", r.get("wall_clock") == 7.25)
+        ok &= check("rekaman: pembaca plan menilainya passing gate-grade",
+                    bool(recs) and PL.is_passing_gate_grade(
+                        r, PL.source_fingerprint(m, rep), "9.1.4-nginx"))
+        ok &= check("hanya sel yang diminta (9.1:firefox) yang di-append",
+                    rc == 0 and _hist(rep, "9.1", "chromium") == [])
+
+        # Rekaman crash punya kunci yang sama persis.
+        rc2, _e, _o = _run_full(_e2e(rep, m, cfg, "--cells", "8.1:chromium"),
+                                E2EChild(lambda v, e: (None, 1)))
+        c = (_hist(rep, "8.1", "chromium") or [{}])[0]
+        ok &= check("rekaman crash: kunci PERSIS sama", set(c) == RECORD_FIELDS and rc2 == 1)
+    return ok
+
+
+def test_e2e_crash_and_shape():
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        fl = mod.flashlight()
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1"),
+                                  E2EChild(lambda v, e: (None, 1)))
+        recs = _hist(rep, "9.1", "chromium") + _hist(rep, "9.1", "firefox")
+        ok &= check("crash: anak exit 1 tanpa output -> exit 1", rc == 1)
+        ok &= check("crash: satu rekaman inconclusive/crash per sel diadmisi",
+                    len(recs) == 2 and all((r["state"], r["conclusive"], r["reason"])
+                                           == ("inconclusive", False, "crash") for r in recs))
+        ok &= check("crash: run_id = RUN_ID ps-run-layer, image_tag = tag ter-resolve",
+                    all(r["run_id"] == fl.RUN_ID and r["image_tag"] == "9.1.4-nginx"
+                        for r in recs))
+        ok &= check("crash: field level-versi lain null, timestamp diisi (UTC valid)",
+                    all(r["boot"] is None and r["install"] is None and r["boot_log"] is None
+                        and PL.parse_utc(r["started_at"]) and PL.parse_utc(r["finished_at"])
+                        and r["wall_clock"] >= 0 for r in recs))
+        ok &= check("crash: baris output ran", _line(out)["e2e_status"] == "ran")
+
+        shapes = {
+            "JSON rusak": ("{bukan json", 1),
+            "versi nyasar": (lambda v, e: {**_child_payload(v, e),
+                                           "versions": {**_child_payload(v, e)["versions"],
+                                                        "7.0": {"cells": {}}}}, 3),
+            "cells bukan objek": (lambda v, e: {**_child_payload(v, e),
+                                                "versions": {v: {"cells": ["x"]}}}, 1),
+            "bukan objek": ("[1, 2]", 0),
+        }
+        for name, (payload, code) in shapes.items():
+            ver = "8.1"
+            before = len(_hist(rep, ver, "chromium"))
+
+            def behave(v, e, payload=payload, code=code):
+                return (payload(v, e) if callable(payload) else payload), code
+            rc_s, _e2, out_s = _run_full(_e2e(rep, m, cfg, "--cells", "8.1:chromium"),
+                                         E2EChild(behave))
+            new = _hist(rep, ver, "chromium")[before:]
+            ok &= check(f"bentuk salah ({name}) -> crash, bukan exit 2",
+                        rc_s == 1 and len(new) == 1 and new[0]["reason"] == "crash"
+                        and _line(out_s)["appended"] == ["8.1:chromium"])
+
+        # Sel di luar yang diadmisi tak di-append; engine diadmisi tanpa sel padahal tersedia -> crash.
+        def extra_cell(v, e):
+            p = _child_payload(v, ["chromium", "firefox"])
+            del p["versions"][v]["cells"]["chromium"]
+            p["browsers_available"] = ["chromium", "firefox"]
+            return p, 0
+        rc_x, err_x, _o = _run_full(_e2e(rep, m, cfg, "--cells", "1.7.8:chromium"),
+                                    E2EChild(extra_cell))
+        ok &= check("sel tak diadmisi (firefox) tak di-append & dicatat di stderr",
+                    _hist(rep, "1.7.8", "firefox") == [] and "firefox" in err_x)
+        ok &= check("engine diadmisi tersedia tapi tanpa sel -> crash",
+                    rc_x == 1 and [r["reason"] for r in _hist(rep, "1.7.8", "chromium")] == ["crash"])
+    return ok
+
+
+def test_e2e_install_boot_failure():
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        for kind, reason, ver in (("install", "install", "9.1"), ("boot", "errors", "8.1")):
+            rc, _err, _out = _run_full(_e2e(rep, m, cfg, "--versions", ver),
+                                       E2EChild(lambda v, e, k=kind: (_child_payload(v, e, kind=k), 1)))
+            recs = _hist(rep, ver, "chromium") + _hist(rep, ver, "firefox")
+            ok &= check(f"{kind} gagal -> satu rekaman per engine, reason {reason} (bukan crash)",
+                        rc == 1 and len(recs) == 2
+                        and all((r["state"], r["reason"]) == ("inconclusive", reason) for r in recs))
+            ok &= check(f"{kind} gagal: started_at/finished_at diisi ps-run-layer",
+                        all(PL.parse_utc(r["started_at"]) and PL.parse_utc(r["finished_at"])
+                            for r in recs))
+        boot = _hist(rep, "8.1", "chromium")[0]
+        ok &= check("boot gagal: install null, errors & boot_log dari anak",
+                    boot["install"] is None and boot["errors"] == ["wait-healthy: timeout"]
+                    and boot["boot_log"] == "db: crash")
+    return ok
+
+
+def test_e2e_probe_drop_and_fail():
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+
+        def drop(v, e):
+            p = _child_payload(v, ["chromium"], available=["chromium"])
+            return p, 0
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1"), E2EChild(drop))
+        ff = (_hist(rep, "9.1", "firefox") or [{}])[0]
+        ok &= check("probe drop: firefox -> browser-unavailable",
+                    (ff.get("state"), ff.get("reason")) == ("inconclusive", "browser-unavailable"))
+        ok &= check("probe drop: field level-versi anak ikut di rekaman browser-unavailable",
+                    ff.get("boot") == "cold" and ff.get("run_id") == "c0ffee000001"
+                    and ff.get("scenario_set") is None)
+        ok &= check("probe drop: chromium tetap pass; exit 1 (ada inconclusive)",
+                    _hist(rep, "9.1", "chromium")[0]["state"] == "pass" and rc == 1
+                    and _line(out)["appended"] == ["9.1:chromium", "9.1:firefox"])
+
+        rc3, _e, out3 = _run_full(_e2e(rep, m, cfg, "--cells", "8.1:chromium+firefox"),
+                                  E2EChild(lambda v, e: (_child_payload(v, e, kind="fail"), 3)))
+        ok &= check("sel fail -> rekaman fail, exit 3, baris output ran",
+                    rc3 == 3 and _hist(rep, "8.1", "firefox")[0]["state"] == "fail"
+                    and _line(out3)["e2e_status"] == "ran")
+    return ok
+
+
+def test_e2e_child_exit2():
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        fake = E2EChild(lambda v, e: (None, 2) if v == "1.7.8" else (_child_payload(v, e), 0))
+        rc, err, out = _run_full(_e2e(rep, m, cfg, "--cells",
+                                      "1.7.8:chromium,8.1:chromium,9.1:firefox",
+                                      more=["--jobs", "1"]), fake)
+        ok &= check("anak pertama exit 2 (--jobs 1) -> tak ada anak lain dimulai",
+                    [_ver_of(c) for c in fake.cmds] == ["1.7.8"])
+        ok &= check("anak exit 2 -> nihil di-append, exit 2",
+                    rc == 2 and not list(Path(rep).glob("*.jsonl")))
+        ok &= check("anak exit 2 -> baris output ran (pasca-spawn), appended kosong",
+                    _line(out) == {"e2e_status": "ran", "reason": None, "appended": [],
+                                   "source_fingerprint": PL.source_fingerprint(m, rep)})
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        # 8.1 cepat & exit 2; 9.1 sedang jalan (lambat) tetap selesai & di-append; 1.7.8 antre.
+        fake = E2EChild(lambda v, e: (None, 2) if v == "8.1" else (_child_payload(v, e), 0),
+                        delay={"9.1": 0.4})
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells",
+                                       "9.1:chromium,8.1:chromium,1.7.8:chromium",
+                                       more=["--jobs", "2"]), fake)
+        ok &= check("exit 2: anak yang sedang jalan selesai & rekamannya di-append",
+                    rc == 2 and len(_hist(rep, "9.1", "chromium")) == 1
+                    and _line(out)["appended"] == ["9.1:chromium"])
+        ok &= check("exit 2: versi antre tak dimulai, versi exit 2 tanpa rekaman",
+                    "1.7.8" not in [_ver_of(c) for c in fake.cmds]
+                    and _hist(rep, "8.1", "chromium") == [])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        # Exit 2 menang atas fail dan skipped.
+        def behave(v, e):
+            return {"9.1": (_child_payload(v, e, kind="fail"), 3),
+                    "8.1": ({"status": "skipped", "reason": "Playwright absen",
+                             "versions": {}}, 0),
+                    "1.7.8": (None, 2)}[v]
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells",
+                                       "9.1:chromium,8.1:chromium,1.7.8:chromium",
+                                       more=["--jobs", "3"]), E2EChild(behave))
+        ok &= check("exit 2 mengalahkan fail & skipped (ran, exit 2)",
+                    rc == 2 and _line(out)["e2e_status"] == "ran"
+                    and _line(out)["reason"] is None)
+    return ok
+
+
+def test_review_patches():
+    """Patch review: singkatan --screenshot-dir tertangkap; browser --cells case-insensitive."""
+    ok = True
+    ok &= check("singkatan --screen <dir> diangkat dari passthrough",
+                mod.split_screenshot_dir(["--screen", "/x", "--headed"]) == (["--headed"], "/x"))
+    ok &= check("singkatan --screenshot-d=<dir> diangkat dari passthrough",
+                mod.split_screenshot_dir(["--screenshot-d=/y"]) == ([], "/y"))
+    ok &= check("prefix < 4 karakter tak dianggap --screenshot-dir",
+                mod.split_screenshot_dir(["--s", "z"]) == (["--s", "z"], None))
+    ok &= check("--cells 9.1:Chromium+FIREFOX dinormalkan huruf kecil",
+                mod.parse_cells("9.1:Chromium+FIREFOX", ["9.1"], ["chromium", "firefox"])
+                == [("9.1", ["chromium", "firefox"])])
+    return ok
+
+
+def test_e2e_stopped():
+    ok = True
+    fl = mod.flashlight()
+    # SIGTERM ke SATU anak (bukan --stop-job pemanggil) = versi itu tak berbukti, saudaranya lanjut.
+    for label, code in (("rc 143", 143), ("rc -15", -15)):
+        with tempfile.TemporaryDirectory() as tmp:
+            rep, m = _e2e_env(tmp)
+            cfg = _cfg(tmp)
+            fake = E2EChild(lambda v, e, s=code: (None, s) if v == "9.1"
+                            else (_child_payload(v, e), 0))
+            rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells",
+                                           "8.1:chromium,9.1:chromium,1.7.8:chromium",
+                                           more=["--jobs", "1"]), fake)
+            ok &= check(f"anak di-SIGTERM ({label}): run lanjut, baris output ada, exit 1",
+                        rc == 1 and _line(out)["e2e_status"] == "ran"
+                        and sorted(_line(out)["appended"]) == ["1.7.8:chromium", "8.1:chromium"])
+            ok &= check(f"anak di-SIGTERM ({label}): tak ada crash utk versi itu, saudara di-append",
+                        _hist(rep, "9.1", "chromium") == []
+                        and len(_hist(rep, "1.7.8", "chromium")) == 1
+                        and [_ver_of(c) for c in fake.cmds] == ["8.1", "9.1", "1.7.8"])
+    for label, stop in (("JobStopped", fl.JobStopped()),):
+        with tempfile.TemporaryDirectory() as tmp:
+            rep, m = _e2e_env(tmp)
+            cfg = _cfg(tmp)
+            fake = E2EChild(lambda v, e, s=stop: (None, s) if v == "9.1"
+                            else (_child_payload(v, e), 0))
+            rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells",
+                                           "8.1:chromium,9.1:chromium,1.7.8:chromium",
+                                           more=["--jobs", "1"]), fake)
+            ok &= check(f"stop ({label}): exit 143, tanpa baris output",
+                        rc == 143 and out.strip() == "")
+            ok &= check(f"stop ({label}): rekaman anak yang sudah selesai tetap",
+                        len(_hist(rep, "8.1", "chromium")) == 1)
+            ok &= check(f"stop ({label}): tak ada crash utk yang dihentikan / belum mulai",
+                        _hist(rep, "9.1", "chromium") == [] and _hist(rep, "1.7.8", "chromium") == []
+                        and [_ver_of(c) for c in fake.cmds] == ["8.1", "9.1"])
+    return ok
+
+
+def test_e2e_skipped():
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        fake = E2EChild()
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1,8.1"), fake, docker=False)
+        line = _line(out)
+        ok &= check("Docker absen sebelum spawn -> skipped, exit 0, tak spawn",
+                    rc == 0 and fake.cmds == [] and line["e2e_status"] == "skipped"
+                    and line["appended"] == [] and "Docker" in (line["reason"] or ""))
+        ok &= check("Docker absen -> nihil di-append", not list(Path(rep).glob("*.jsonl")))
+
+        skip = {"module": "mymod", "e2e_available": False, "status": "skipped",
+                "reason": "Playwright tak terpasang", "versions": {}}
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1,8.1"),
+                                  E2EChild(lambda v, e: (skip, 0) if v == "9.1"
+                                           else (_child_payload(v, e, kind="boot"), 1)))
+        line = _line(out)
+        ok &= check("anak skipped (+ anak lain inconclusive) -> skipped, exit 0, alasan anak",
+                    rc == 0 and line["e2e_status"] == "skipped"
+                    and line["reason"] == "Playwright tak terpasang")
+        ok &= check("anak skipped: sel-nya tak di-append; rekaman anak lain tetap di-append",
+                    _hist(rep, "9.1", "chromium") == [] and len(_hist(rep, "8.1", "firefox")) == 1
+                    and line["appended"] == ["8.1:chromium", "8.1:firefox"])
+
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1,8.1"),
+                                  E2EChild(lambda v, e: (skip, 0) if v == "9.1"
+                                           else (_child_payload(v, e, kind="fail"), 3)))
+        ok &= check("anak skipped + rekaman fail -> ran, exit 3",
+                    rc == 3 and _line(out)["e2e_status"] == "ran" and _line(out)["reason"] is None)
+    return ok
+
+
+def test_e2e_completion_order():
+    """Rekaman di-append begitu anak di-reap, dalam URUTAN SELESAI (bukan urutan --cells)."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        seen = {}
+
+        def hook(ver):
+            if ver == "8.1":  # anak lambat: saat ia selesai, 9.1 (cepat) sudah harus ter-append
+                seen["9.1"] = len(_hist(rep, "9.1", "chromium"))
+        fake = E2EChild(delay={"8.1": 0.6}, hook=hook)
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells", "8.1:chromium,9.1:chromium",
+                                       more=["--jobs", "2"]), fake)
+        ok &= check("anak cepat di-append SEBELUM anak lambat selesai", seen.get("9.1") == 1)
+        ok &= check("appended mengikuti urutan selesai",
+                    rc == 0 and _line(out)["appended"] == ["9.1:chromium", "8.1:chromium"])
+    return ok
+
+
+def test_e2e_tag_resolution():
+    """image_tag rekaman tanpa output anak: --tag-map passthrough > psm_flashlight_tag_map >
+    default; --extra-tag-map menambah di atas keduanya."""
+    ok = True
+    cases = (
+        ("default skrip", {}, [], "9.1.4-nginx"),
+        ("config psm_flashlight_tag_map", {"psm_flashlight_tag_map": "9.1=9.1.9"}, [], "9.1.9"),
+        ("--tag-map passthrough mengalahkan config", {"psm_flashlight_tag_map": "9.1=9.1.9"},
+         ["--tag-map", "9.1=9.1.7"], "9.1.7"),
+        ("--tag-map= bentuk sama", {}, ["--tag-map=9.1=9.1.6"], "9.1.6"),
+        ("--extra-tag-map di atas config", {"psm_flashlight_tag_map": "9.1=9.1.9,8.1=8.1.1"},
+         ["--extra-tag-map", "9.1=9.1.8"], "9.1.8"),
+        ("--extra-tag-map tak menyentuh versi lain", {"psm_flashlight_tag_map": "9.1=9.1.9"},
+         ["--extra-tag-map", "8.1=8.1.8"], "9.1.9"),
+    )
+    for name, more_cfg, extra, want in cases:
+        with tempfile.TemporaryDirectory() as tmp:
+            rep, m = _e2e_env(tmp)
+            cfg = _cfg(tmp, **more_cfg)
+            fake = E2EChild(lambda v, e: (None, 1))
+            _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium", extra=extra), fake)
+            got = [r["image_tag"] for r in _hist(rep, "9.1", "chromium")]
+            ok &= check(f"tag: {name} -> {want}", got == [want])
+            ok &= check(f"tag: {name}: passthrough tag diteruskan ke anak apa adanya",
+                        all(x in fake.cmds[0] for x in extra))
+    return ok
+
+
+def test_e2e_screenshots_line():
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        shots = str(Path(rep) / "e2e-shots")
+        fake = E2EChild()
+        rc, err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1,8.1",
+                                      extra=["--screenshot-dir", shots]), fake)
+        got = fake.arg("--screenshot-dir")
+        stamped = re.search(r"^screenshots: (\S+)$", err, re.M)
+        ok &= check("stderr: 'screenshots: <folder run berstempel>'",
+                    rc == 0 and bool(stamped) and stamped.group(1) == got[0]
+                    and Path(got[0]).parent == Path(shots))
+        ok &= check("semua anak menerima folder berstempel yang SAMA", len(set(got)) == 1)
+        ok &= check("baris output tetap berbentuk kontrak",
+                    set(_line(out)) == {"e2e_status", "reason", "appended", "source_fingerprint"})
+    return ok
+
+
+def test_e2e_append_error():
+    """Error OS saat append -> exit 2 menyebut path, SESUDAH anak yang sedang jalan selesai."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        blocker = PL.history_path(rep, "mymod", "9.1", "chromium")
+        Path(blocker).mkdir()  # path histori berupa folder -> open() gagal
+        fake = E2EChild(delay={"8.1": 0.3})
+        rc, err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1,8.1",
+                                      more=["--jobs", "2"]), fake)
+        ok &= check("append gagal -> exit 2 menyebut path", rc == 2 and str(blocker) in err)
+        ok &= check("append gagal: sel lain & anak yang sedang jalan tetap di-append",
+                    len(_hist(rep, "9.1", "firefox")) == 1 and len(_hist(rep, "8.1", "chromium")) == 1
+                    and len(_hist(rep, "8.1", "firefox")) == 1)
+        ok &= check("append gagal: TANPA baris output (galat lingkungan, bukan exit 2 anak "
+                    "yang mengakhiri loop E2E)", out.strip() == "")
+    return ok
+
+
+def test_e2e_merge_only_view():
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp, versions="8.1,9.1", browsers="chromium,firefox")
+        hp = PL.history_path(rep, "mymod", "9.1", "chromium")
+        old = {"version": "9.1", "browser": "chromium", "started_at": _iso(0), "state": "fail"}
+        new = {"version": "9.1", "browser": "chromium", "started_at": _iso(-60), "state": "pass"}
+        PL.append_record(hp, old)
+        PL.append_record(hp, new)
+        with open(hp, "a", encoding="utf-8") as f:
+            f.write("{rusak\n")
+        legacy = Path(rep) / "mymod-e2e.json"
+        legacy.write_text('{"module": "mymod", "pass": true, "versions": {}}', encoding="utf-8")
+        fake = E2EChild()
+        rc, err, out = _run_full(["--layer", "e2e", "--module", m, "--reports-dir", rep,
+                                  "--config", cfg, "--merge-only", "--jobs", "7"], fake)
+        view = json.loads(legacy.read_text()) if legacy.is_file() else {}
+        ok &= check("merge-only e2e: exit 0, tak spawn, --jobs diabaikan",
+                    rc == 0 and fake.cmds == [] and out.strip() == "")
+        ok &= check("merge-only e2e: tampilan menimpa file legacy dgn {module, view, cells}",
+                    set(view) == {"module", "view", "cells"} and view["view"] is True
+                    and view["module"] == "mymod")
+        ok &= check("merge-only e2e: tiap sel terkonfigurasi ada; tanpa rekaman valid = null",
+                    set(view.get("cells", {})) == {"8.1", "9.1"}
+                    and view["cells"]["8.1"] == {"chromium": None, "firefox": None}
+                    and view["cells"]["9.1"]["firefox"] is None)
+        ok &= check("merge-only e2e: sel = rekaman valid TERBARU (urutan append, bukan started_at)",
+                    view.get("cells", {}).get("9.1", {}).get("chromium") == new)
+        ok &= check("merge-only e2e: tak menulis histori", len(list(Path(rep).glob("*.jsonl"))) == 1)
+        for name, more in (("--versions", ["--versions", "9.1"]),
+                           ("--cells", ["--cells", "9.1:chromium"]),
+                           ("--session", ["--session", SESSION]),
+                           ("passthrough", ["--", "--tag-map", "x"])):
+            rc2, err2, _o = _run_full(["--layer", "e2e", "--module", m, "--reports-dir", rep,
+                                       "--config", cfg, "--merge-only", *more], E2EChild())
+            ok &= check(f"merge-only e2e + {name} -> exit 2", rc2 == 2 and "merge-only" in err2)
+        rc3, _e, _o = _run_full(["--layer", "e2e", "--module", m, "--reports-dir", rep,
+                                 "--config", cfg, "--merge-only", "--per-version"], E2EChild())
+        ok &= check("merge-only e2e + --per-version -> exit 2", rc3 == 2)
+        bad = _cfg(tmp, browsers="webkitx", name="bad.json")
+        rc4, _e, _o = _run_full(["--layer", "e2e", "--module", m, "--reports-dir", rep,
+                                 "--config", bad, "--merge-only"], E2EChild())
+        ok &= check("merge-only e2e: config tak sah -> exit 2", rc4 == 2)
+        rc5, _e, _o = _run_full(["--layer", "e2e", "--module", m, "--reports-dir",
+                                 str(Path(tmp) / "tak-ada"), "--config", cfg, "--merge-only"],
+                                E2EChild())
+        ok &= check("merge-only e2e: tulis gagal -> exit 2", rc5 == 2)
+    return ok
+
+
 def main():
     ok = True
     for name, fn in (("test_pure", test_pure),
+                     ("test_review_patches", test_review_patches),
                      ("test_execute_and_collect", test_execute_and_collect),
                      ("test_cli_gates", test_cli_gates),
                      ("test_output_is_derived", test_output_is_derived),
@@ -846,6 +1591,21 @@ def main():
                      ("test_merge_only", test_merge_only),
                      ("test_modes_exclusive_and_passthrough", test_modes_exclusive_and_passthrough),
                      ("test_consumed_by_aggregate", test_consumed_by_aggregate),
+                     ("test_e2e_input_errors", test_e2e_input_errors),
+                     ("test_reserved_on_other_layers", test_reserved_on_other_layers),
+                     ("test_e2e_ac3", test_e2e_ac3),
+                     ("test_e2e_record_fields", test_e2e_record_fields),
+                     ("test_e2e_crash_and_shape", test_e2e_crash_and_shape),
+                     ("test_e2e_install_boot_failure", test_e2e_install_boot_failure),
+                     ("test_e2e_probe_drop_and_fail", test_e2e_probe_drop_and_fail),
+                     ("test_e2e_child_exit2", test_e2e_child_exit2),
+                     ("test_e2e_stopped", test_e2e_stopped),
+                     ("test_e2e_skipped", test_e2e_skipped),
+                     ("test_e2e_completion_order", test_e2e_completion_order),
+                     ("test_e2e_tag_resolution", test_e2e_tag_resolution),
+                     ("test_e2e_screenshots_line", test_e2e_screenshots_line),
+                     ("test_e2e_append_error", test_e2e_append_error),
+                     ("test_e2e_merge_only_view", test_e2e_merge_only_view),
                      ("test_help_prints_docstring", test_help_prints_docstring)):
         print(f"{name}:")
         ok &= fn()

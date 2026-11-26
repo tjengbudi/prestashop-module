@@ -1,0 +1,95 @@
+{
+ "round": 1,
+ "critical_high": 34,
+ "fixed": 30,
+ "escalated": 4,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261125-180122.r1-q1",
+   "finding": "Konfirmasi sekuensial CAP-7 (rerun-seq) cuma jalankan failed set + requires + smoke dan cuma restore DB. Modul tanpa `requires` kehilangan setup spec sebelumnya, file/var/cache/opcache sisa pass paralel tak direset. Kegagalan asli bisa pindah ke parallel_only, ready jadi true (langgar hukum kejujuran). Membalik fix round 3.",
+   "options": [
+    "Set penuh engine + reset penuh (DB, file, var/cache, opcache)",
+    "Tetap failed set, tapi yang tak terulang jadi inconclusive",
+    "Biarkan"
+   ],
+   "recommended": "Set penuh engine + reset penuh (DB, file, var/cache, opcache)",
+   "oscillation": true
+  },
+  {
+   "id": "20261125-180122.r1-q2",
+   "finding": "Failed-only (CAP-4) pada spec tanpa `requires` (semua modul sekarang, termasuk checkout-with-bank bankwire yang dipakai live test) jalan tanpa setup, gagal palsu. Edit spec bankwire masuk scope atau tidak?",
+   "options": [
+    "Tambah `requires` ke spec bankwire (edit fixture)",
+    "Fallback: spec gagal tanpa `requires` ikut jalankan semua spec sebelumnya",
+    "Keduanya"
+   ],
+   "recommended": "Keduanya",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-180122.r1-q3",
+   "finding": "Tujuan kerja ini memangkas waktu tunggu, tapi tak ada kriteria sukses yang mengukur wall-clock (masih Open Question).",
+   "options": [
+    "Tetapkan angka target sekarang",
+    "Sukses struktural + wajib laporan before/after CAP-6 di bankwire, angka nanti",
+    "Biarkan terbuka"
+   ],
+   "recommended": "Sukses struktural + wajib laporan before/after CAP-6 di bankwire, angka nanti",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-180122.r1-q4",
+   "finding": "`--cleanup-orphans` otomatis sebelum wait-slots bentrok dengan aturan headless.md: job yang bukan dimulai run ini tak pernah disentuh.",
+   "options": [
+    "Boleh di semua mode (hanya owner terbukti mati), update headless.md",
+    "Hanya interaktif; headless cuma menghitung"
+   ],
+   "recommended": "Boleh di semua mode (hanya owner terbukti mati), update headless.md",
+   "oscillation": false
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "cell-contract.md > Parallel-only failures",
+   "issue": "adversarial-6: inconclusive steps from parallel contention are not rechecked sequentially; may cause blocked-infra"
+  },
+  {
+   "location": "cell-contract.md > Fresh",
+   "issue": "adversarial-8: (path,size,mtime) fingerprint misses same-size same-mtime content changes"
+  },
+  {
+   "location": "SPEC.md frontmatter companions / banner",
+   "issue": "adversarial-9: adopted SKILL.md/run-phases.md listed as contract while cell-contract says they are superseded"
+  },
+  {
+   "location": "cell-contract.md > Storage; Headless config copy",
+   "issue": "adversarial-11: no retention for histories; headless config copies never deleted"
+  },
+  {
+   "location": "cell-contract.md > Docs to update",
+   "issue": "adversarial-12: sibling callers' SKILL.md (not reached rule) and quickstart exit 3 not listed"
+  },
+  {
+   "location": "cell-contract.md > Storage",
+   "issue": "adversarial-14: SIGKILL of ps-run-layer loses child results"
+  },
+  {
+   "location": "cell-contract.md > Fields session",
+   "issue": "adversarial-15/implementer-25: --session mandatory on every plan call incl. non-E2E"
+  },
+  {
+   "location": "cell-contract.md > Newest",
+   "issue": "edge-case-5: started_at ordering vulnerable to clock jumps; run_id tie-break arbitrary"
+  },
+  {
+   "location": "cell-contract.md > Failed-only rerun",
+   "issue": "edge-case-9: selection equal to full set still marked partial"
+  },
+  {
+   "location": "SPEC.md frontmatter sources / Assumptions",
+   "issue": "implementer-21: chat request not in sources; Chrome->chromium and newest-target drift not flagged"
+  }
+ ]
+}

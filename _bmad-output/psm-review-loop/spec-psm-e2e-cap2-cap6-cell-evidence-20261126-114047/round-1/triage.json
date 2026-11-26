@@ -1,0 +1,68 @@
+{
+ "round": 1,
+ "critical_high": 60,
+ "fixed": 55,
+ "escalated": 5,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261126-114047.r1-q1",
+   "finding": "Salinan config headless ditunda, padahal set sel kini hanya dari --config. Pemanggil headless yang mempersempit (mis. cuma 9.1) akan selalu dapat ready=false — melanggar Constraints SPEC.md (vonis per versi headless).",
+   "options": [
+    "Tarik salinan config minimal (versi/browser dari argumen pemanggil) ke slice ini",
+    "Tetap ditunda; dokumentasikan ready=false untuk sel yang tak diminta"
+   ],
+   "recommended": "Tarik salinan config minimal ke slice ini",
+   "oscillation": false
+  },
+  {
+   "id": "20261126-114047.r1-q2",
+   "finding": "Spec membuat --session opsional di panggilan plan; cell-contract.md > Fields mewajibkannya (exit 2 bila hilang/rusak).",
+   "options": [
+    "Wajibkan --session di plan sekarang (dokumen mencetak token)",
+    "Biarkan opsional sebagai deviasi sementara sampai CAP-1/CAP-5"
+   ],
+   "recommended": "Wajibkan --session di plan sekarang",
+   "oscillation": false
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "Tasks > ps-e2e-run.py",
+   "issue": "adversarial-12: producer fields already covered by 'Producers as written'; named in task anyway"
+  },
+  {
+   "location": "Design Notes > Record",
+   "issue": "adversarial-15: child vs runner image_tag mismatch (bug-only); child value kept"
+  },
+  {
+   "location": "Frontmatter context",
+   "issue": "adversarial-17: tier-matrix.md not needed, tiers deferred"
+  },
+  {
+   "location": "Runner",
+   "issue": "edge-12: history append failure handling unspecified"
+  },
+  {
+   "location": "Design Notes > Record",
+   "issue": "edge-18: image_tag mismatch, same as adversarial-15"
+  },
+  {
+   "location": "Code Map",
+   "issue": "implementer-19: run_steps step index covered by Producers; Code Map names run_steps"
+  },
+  {
+   "location": "Fresh",
+   "issue": "implementer-25: symlink/dir entries, reports-dir default, plan/aggregate root check"
+  },
+  {
+   "location": "ps-flashlight-run.py task",
+   "issue": "implementer-29: drift test owner of defaults (noted in task)"
+  },
+  {
+   "location": "Frontmatter context",
+   "issue": "implementer-32: tier-matrix.md, same as adversarial-17"
+  }
+ ]
+}
