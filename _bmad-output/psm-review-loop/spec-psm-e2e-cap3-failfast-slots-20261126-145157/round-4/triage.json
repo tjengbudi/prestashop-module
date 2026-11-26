@@ -1,0 +1,47 @@
+{
+ "round": 4,
+ "critical_high": 8,
+ "fixed": 8,
+ "escalated": 0,
+ "dropped": 1,
+ "code_defects": 0,
+ "questions_for_budi": [],
+ "medium_low": [
+  {
+   "location": "Always > Fail-fast (trigger)",
+   "issue": "adversarial-1: trigger reads stored `fail` (derive_state) while plan/aggregate read record_state, which turns a fail with a null INCOMPLETE_KEYS field into inconclusive/incomplete-record; edge case, trigger wording matches contract and binding r1-q1"
+  },
+  {
+   "location": "Always > Fail-fast (child exit 2); Tasks > docs",
+   "issue": "adversarial-2/implementer-3: uv run's own exit 2 now also writes `input-error after <ver>` not-run records for queued cells; known deferred-work defect (needs contract change), docs could note it"
+  },
+  {
+   "location": "Design Notes > Admission (heartbeat)",
+   "issue": "adversarial-3: background heartbeat keeps ALIVE wait-slots flowing even if the admission loop wedges; could carry last-pass age"
+  },
+  {
+   "location": "Design Notes > Admission (label parsing)",
+   "issue": "adversarial-5: no upper clamp on psm.slots cost; psm.job/host label values not sanitised before tab-separated parsing and log output"
+  },
+  {
+   "location": "Design Notes > Interim cost/mode",
+   "issue": "adversarial-7: always --sequential-browsers under ps-run-layer means a Chromium fail leaves Firefox not-run even on an idle daemon; trade-off not weighed until CAP-7"
+  },
+  {
+   "location": "Design Notes > Admission (no-slots clock)",
+   "issue": "adversarial-8: clock source unspecified; time.monotonic recommended so host sleep/WSL clock jumps do not exhaust the limit"
+  },
+  {
+   "location": "Design Notes > Admission (ALIVE detail)",
+   "issue": "adversarial-9: ALIVE wait-slots detail does not show own-queue vs bounded no-slots wait or remaining budget"
+  },
+  {
+   "location": "Tasks > docs (headless.md)",
+   "issue": "adversarial-10: headless return cannot tell no-slots (daemon busy) from missing Docker; tied to deferred CAP-1 Headless bullet"
+  },
+  {
+   "location": "Design Notes > Records (wait-slots merge)",
+   "issue": "edge-case-3: merging wait-slots into a child not-run cell whose phase_durations is null must create the dict"
+  }
+ ]
+}

@@ -50,6 +50,9 @@ PSM_DEFAULTS = {
     # memakai ulang HOST psm_flashlight_ps_domain (port dipilih dinamis). Selaras DEFAULT_BROWSERS.
     "psm_e2e_enabled": "true",                    # gerbang Lapis 4; "false" utk melewati
     "psm_e2e_browsers": "chromium,firefox",       # engine Playwright dipisah koma
+    # Cap slot Lapis 4 SEDAEMON (ps-run-layer.py --slots): jumlah label psm.slots semua
+    # container E2E yang jalan di daemon Docker, lintas run/sesi. Bilangan bulat >= 1.
+    "psm_e2e_slots": "6",
     "psm_modules_dir": "{project-root}/modules",
     "psm_reports_dir": "{project-root}/_bmad-output/psm-validate",
 }

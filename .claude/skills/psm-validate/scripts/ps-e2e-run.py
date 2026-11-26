@@ -47,6 +47,18 @@ OUTPUT PER SEL & EXIT CODE (cell-contract.md > Evidence record, Runner):
   - exit 0 = E2E skipped, atau tiap sel yang dipancarkan `pass`; 3 = ada sel `fail`;
     1 = selain itu (infra / sel inconclusive / versi tanpa sel); 2 = input error.
 
+FLAG ANAK (diset ps-run-layer, cell-contract.md > Runner > Child flags; CAP-3):
+  - `--run-id <hex12>` = RUN_ID klaim slot yang sudah dibuat ps-run-layer; dipasang sebagai
+    RUN_ID proses SEBELUM log kemajuan, registry job, maupun label (`psm.run`). Bukan
+    `[0-9a-f]{12}` = exit 2.
+  - `--slot-cost <n>` (int >= 1, default 1) dicap apa adanya sebagai label `psm.slots=<n>` di
+    container PS SAJA — juga pada run langsung, jadi run langsung ikut terhitung di slot
+    seluruh daemon (tapi melewati admisi). Bukan int >= 1 = exit 2.
+  - `--progress-append` = log kemajuan TIDAK dikosongkan (baris `wait-slots` milik ps-run-layer).
+  - `--sequential-browsers` = engine di-drive berurutan dgn fail-fast antar-engine: sesudah
+    `fail` satu engine, engine berikutnya tak dimulai dan selnya `state: not-run`,
+    `reason: fail-fast after <ver>:<engine>`. Tanpa flag ini (run langsung) semua engine jalan.
+
 Format spec skenario authored (`<module>/tests/e2e/*.json`):
   {"name": "configure-save",
    "steps": [
@@ -91,6 +103,7 @@ fl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fl)
 
 DEFAULT_BROWSERS = "chromium,firefox"
+RUN_ID_RE = re.compile(r"^[0-9a-f]{12}$")  # bentuk fl.RUN_ID (uuid4 hex 12)
 SUPPORTED_ENGINES = fl.SUPPORTED_ENGINES  # pemilik tunggal: ps-flashlight-run (normalizer sel)
 SUPPORTED_ACTIONS = ("goto", "expect_no_fatal", "expect_visible", "expect_text",
                      "expect_no_console_error", "click", "click_optional", "fill", "select",
@@ -891,6 +904,18 @@ def _new_cell():
             "phase_durations": {}, "scenario_spans": None, "parallel_only": None}
 
 
+def _not_run_cell(reason):
+    """Sel engine yang TAK PERNAH dimulai karena fail-fast antar-engine (--sequential-browsers).
+
+    Semua kunci _new_cell null (scenario_set/browser_notes/phase_durations termasuk) +
+    `state: not-run`, `conclusive: false`, `reason`. ps-run-layer mempertahankan state ini
+    (tanpa derive_state) dan mengisi sisanya seperti sel yang tak pernah di-drive.
+    """
+    cell = dict.fromkeys(_new_cell())
+    cell.update(state="not-run", conclusive=False, reason=reason)
+    return cell
+
+
 def _fill_cell(cell, eng, full_ver, scenarios):
     """Isi sel dari hasil drive SATU engine — helper yang sama dgn rollup versi, satu engine."""
     findings, inconclusive = assemble_findings(full_ver, [eng])
@@ -930,6 +955,8 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
     res["boot_wall_clock"] = round(wall, 3)
     res["scenario_notes"] = list(scenario_notes)
     for engine, cell in res["cells"].items():
+        if cell.get("state") == "not-run":
+            continue  # engine tak pernah dimulai: phase_durations tetap null
         cell["phase_durations"] = timing["phase_durations"].get(engine, {})
     return res
 
@@ -937,7 +964,8 @@ def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
 def _run_one_version_inner(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
                            requested_browsers=None, orchestrator, db_image, ps_domain, admin_path,
                            admin_email, admin_password, startup_timeout, op_timeout, nav_timeout,
-                           allow_pull, headed=False, screenshot_dir=None):
+                           allow_pull, headed=False, screenshot_dir=None, slot_cost=1,
+                           sequential_browsers=False):
     """Bangun flashlight (port publish) utk satu versi, install module, drive tiap browser.
 
     `browsers` = engine yang benar-benar akan di-drive (binary terpasang); `requested_browsers`
@@ -1020,10 +1048,11 @@ def _run_one_version_inner(module_dir, mod_name, full_ver, tag, browsers, scenar
         publish = f"{host_port}:{CONTAINER_HTTP_PORT}"
         if mode == "compose":
             session, err = fl._bring_up_compose(module_dir, full_ver, image_ref, db_image,
-                                                ps_domain_eff, op_timeout, publish)
+                                                ps_domain_eff, op_timeout, publish,
+                                                slot_cost=slot_cost)
         else:
             session, err = fl._bring_up_manual(module_dir, image_ref, db_image, ps_domain_eff,
-                                               startup_timeout, publish)
+                                               startup_timeout, publish, slot_cost=slot_cost)
         if err and _is_port_conflict(err) and attempt == 0:
             fl._teardown(session)  # port disambar sesi lain di jendela race → coba port lain
             continue
@@ -1090,7 +1119,7 @@ def _run_one_version_inner(module_dir, mod_name, full_ver, tag, browsers, scenar
                "admin_email": admin_email, "admin_password": admin_password, "bo_authed": False,
                "screenshot_dir": ver_shot_dir}
         driven = []
-        for engine in browsers:
+        for idx, engine in enumerate(browsers):
             cell = res["cells"][engine]
             cell["started_at"] = utc_now()
             with fl.phase(f"browser:{engine}", None, f"{len(scenarios)} skenario"):
@@ -1106,6 +1135,13 @@ def _run_one_version_inner(module_dir, mod_name, full_ver, tag, browsers, scenar
                 continue
             res["browsers"].append(engine)
             driven.append(eng)
+            if sequential_browsers and _engine_failed(res, engine):
+                # Fail-fast antar-engine (cell-contract.md > Runner > Fail-fast): engine
+                # berikutnya tak dimulai; selnya not-run dgn sel penyebab.
+                why = f"fail-fast after {full_ver}:{engine}"
+                for rest in browsers[idx + 1:]:
+                    res["cells"][rest] = _not_run_cell(why)
+                break
 
         if not res["browsers"]:
             # Semua engine yang diprobe lolos ternyata gagal luncur -> tak ada yg teruji.
@@ -1158,10 +1194,24 @@ def _plan_layers():
 
 def cell_state(vres, engine):
     """State-rule satu sel yang dipancarkan, dgn field level-versi (`errors`, `install`)
-    digabung seperti ps-run-layer menggabungkannya ke rekaman. Return {state, conclusive, reason}."""
+    digabung seperti ps-run-layer menggabungkannya ke rekaman. Return {state, conclusive, reason}.
+    Sel `not-run` (fail-fast antar-engine) mempertahankan state-nya, seperti di ps-run-layer."""
+    cell = vres.get("cells", {}).get(engine) or {}
+    if cell.get("state") == "not-run":
+        return {"state": "not-run", "conclusive": False, "reason": cell.get("reason")}
     merged = {"errors": vres.get("errors"), "install": vres.get("install")}
-    merged.update(vres.get("cells", {}).get(engine) or {})
+    merged.update(cell)
     return _plan_layers().derive_state(merged, engine)
+
+
+def _engine_failed(vres, engine):
+    """`fail` engine ini SEKARANG, di tengah loop engine. Sink durasi baru disalin ke sel
+    sesudah _run_one_version_inner kembali, jadi tanpa salinan ini tiap sel terbaca
+    `not-driven`: salin dulu `browser:<engine>` dari sink aktif, baru nilai dgn cell_state."""
+    sink = fl.timing_current()
+    if sink is not None:
+        vres["cells"][engine]["phase_durations"] = dict(sink.phase_durations.get(engine, {}))
+    return cell_state(vres, engine)["state"] == "fail"
 
 
 def exit_code(result):
@@ -1229,9 +1279,31 @@ def main():
                                              "folder ini (artefak visual '<ver>/<engine>-<scenario>-...png').")
     ap.add_argument("--timeout", type=int, default=600, help="Timeout operasi per versi (detik): pull/up/exec")
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
+    ap.add_argument("--run-id", help="Diset ps-run-layer: RUN_ID klaim slot [0-9a-f]{12} — dipakai "
+                                     "untuk label psm.run, registry job & log kemajuan")
+    ap.add_argument("--slot-cost", default="1",
+                    help="Biaya slot yang dicap sbg label psm.slots di container PS (int >= 1, "
+                         "default 1; juga run langsung)")
+    ap.add_argument("--progress-append", action="store_true",
+                    help="Diset ps-run-layer: jangan kosongkan --progress-file (baris wait-slots)")
+    ap.add_argument("--sequential-browsers", action="store_true",
+                    help="Diset ps-run-layer: drive engine berurutan; sesudah engine `fail`, "
+                         "engine sisanya tak dimulai (sel not-run)")
     fl.add_progress_args(ap)
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
+    # --run-id dipasang SEBELUM apa pun memakai RUN_ID (log kemajuan, registry, label).
+    if args.run_id is not None:
+        if not RUN_ID_RE.fullmatch(args.run_id):
+            print(f"error: --run-id tak valid: {args.run_id!r} — harus [0-9a-f]{{12}}",
+                  file=sys.stderr)
+            return 2
+        fl.RUN_ID = args.run_id
+    slot_cost = fl.slot_cost_value(args.slot_cost)
+    if slot_cost is None:
+        print(f"error: --slot-cost tak valid: {args.slot_cost!r} — harus bilangan bulat >= 1",
+              file=sys.stderr)
+        return 2
     if args.config:
         fl.apply_config_file(args, ap, args.config)
     # --engines di luar CONFIG_KEY_TO_DEST: --config tak pernah menyentuhnya, jadi bila diset
@@ -1248,7 +1320,7 @@ def main():
         print(f"error: bukan folder: {module_dir}", file=sys.stderr)
         return 2
     mod_name = module_dir.name
-    fl.progress_init(args.progress_file, args.slow_after)
+    fl.progress_init(args.progress_file, args.slow_after, truncate=not args.progress_append)
     if not fl.job_start(args, mod_name, "e2e"):
         return 2
 
@@ -1267,6 +1339,12 @@ def main():
 
     # Probe binary browser SEKALI di muka — versi mewarisi daftar yang benar-benar terpasang.
     usable = [e for e in requested if browser_available(e)]
+    if args.sequential_browsers and len(usable) > 1:
+        # Admisi interim cost 1 (CAP-3, sampai CAP-7) — BUKAN kekurangan slot; sekali saja,
+        # tak pernah ke browser_notes/errors (bukan celah cakupan).
+        print(f"mode browser sekuensial: {', '.join(usable)} di-drive berurutan dalam satu boot "
+              "(admisi interim cost 1); sesudah engine `fail`, engine berikutnya not-run",
+              file=sys.stderr)
     authored, notes = discover_scenarios(module_dir)
     scenarios = [universal_smoke()] + authored
 
@@ -1290,7 +1368,8 @@ def main():
                             admin_email=args.admin_email, admin_password=args.admin_password,
                             startup_timeout=args.startup_timeout, op_timeout=args.timeout,
                             nav_timeout=args.nav_timeout * 1000, allow_pull=args.allow_image_pull,
-                            headed=args.headed, screenshot_dir=shot_dir, scenario_notes=notes)
+                            headed=args.headed, screenshot_dir=shot_dir, scenario_notes=notes,
+                            slot_cost=slot_cost, sequential_browsers=args.sequential_browsers)
         result["versions"][full_ver] = r
         overall_pass = overall_pass and r["pass"]
     result["pass"] = overall_pass  # field lama run langsung; exit code memakai State per sel

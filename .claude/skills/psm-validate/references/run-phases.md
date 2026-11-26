@@ -43,16 +43,26 @@ File dikosongkan tiap run baru.
 | --- | --- | --- |
 | `START` / `END` | fase mulai / selesai (`ok`, `timeout`, `gagal`, …) | lanjut memantau |
 | `ALIVE` | fase masih jalan (denyut tiap 15 dtk, `durasi/batas`) | normal |
-| `SLOW` | fase melewati ambang (180 dtk; `pull` 900 dtk; `--slow-after`) | **diduga macet** — laporkan |
-| `DONE` | proses selesai (`rc=<kode>` / `rc=crash`) | baca file lapis |
+| `SLOW` | fase melewati ambang (180 dtk; `pull` 900 dtk; `--slow-after`) — tak pernah untuk `wait-slots` | **diduga macet** — laporkan |
+| `DONE` | proses selesai: `rc=<kode>`, `rc=crash`, `rc=stopped`, `rc=not-run <reason>` (sel versi itu tak satu pun dimulai — fail-fast), `rc=no-slots` (cap slot penuh sampai batas) | baca file lapis / output run |
 
-Fase: `pull`, `bring-up`, `wait-healthy`, `install+phpstan` (Lapis 2), `install`, `wait-http`,
-`warmup-bo`, `browser:<engine>` (Lapis 4), `snapshot-db`, `scenario` (Lapis 5), `teardown`.
+Fase: `wait-slots` (Lapis 4, lihat di bawah), `pull`, `bring-up`, `wait-healthy`, `install+phpstan`
+(Lapis 2), `install`, `wait-http`, `warmup-bo`, `browser:<engine>` (Lapis 4), `snapshot-db`,
+`scenario` (Lapis 5), `teardown`.
+
+**`wait-slots`** (Lapis 4, ditulis `ps-run-layer.py`): dibuka di log tiap versi yang diantre
+begitu run mulai (log dikosongkan dulu), berakhir saat versi itu diadmisi (`END wait-slots ok`,
+lalu anak menulis fasenya sendiri ke log yang sama), atau `no-slots`/`cancelled`. Denyut
+`ALIVE` menyebut isi cap: container terhitung `<psm.job>@<host>=<cost>`, klaim
+`claim:<job>/<run>=<cost>`, lalu `own queue` (menunggu anak run ini sendiri — tanpa batas) atau
+`budget <n>s left`, dan `last pass <n>s ago`; sebelum hitungan pertama `cleanup-orphans
+running` / `first count pending`. Tak pernah `SLOW`: lamanya = lamanya fase yang ditunggu,
+yang punya batasnya sendiri. Versi yang di-fail-fast: log = satu baris `DONE rc=not-run …`.
 
 **Ritme:** jalankan di latar (mis. Claude Code: Bash `run_in_background`, lalu baca ekor log
 tiap 30–60 dtk), dan beri Budi satu baris per cek — versi, fase, durasi. Harness tanpa
-eksekusi latar: jalankan satu versi per panggilan (`--versions V` / `--cells V:…`, `--jobs 1`) supaya tiap
-panggilan pendek, dan baca log-nya di antara panggilan.
+eksekusi latar: jalankan satu versi per panggilan (Lapis 2/5 `--versions V --jobs 1`; Lapis 4 satu
+versi per panggilan `--cells V:…`) supaya tiap panggilan pendek, dan baca log-nya di antara panggilan.
 
 **Diduga macet** bila (a) baris terakhir `SLOW`, atau (b) mtime log tak berubah ±3 menit dan
 belum ada `DONE` — artinya proses menggantung di luar fase berlog atau sudah mati. Laporkan
@@ -60,8 +70,9 @@ ke Budi: job, versi, fase, durasi. Tawarkan pilihan: tunggu sampai batas waktu f
 lalu degrade jujur sendiri), atau hentikan job itu (`--stop-job`, di bawah). **Jangan
 menghentikan sendiri tanpa persetujuan** — run sesi lain bisa sedang berbagi daemon yang
 sama, dan `SLOW` saat banyak sesi jalan sering berarti lambat, bukan mati. Macet berulang di
-`wait-healthy`/`bring-up` saat banyak sesi paralel biasanya tanda RAM/daemon penuh: turunkan
-`--jobs`.
+`wait-healthy`/`bring-up` saat banyak sesi paralel biasanya tanda RAM/daemon penuh: Lapis 2/5
+turunkan `--jobs`; Lapis 4 turunkan `psm_e2e_slots` (cap sedaemon — container Lapis 2/5 tak
+pernah dihitung di dalamnya) atau satu versi per panggilan `--cells`.
 
 ## Job ID — menghentikan secara terarah
 
@@ -93,6 +104,13 @@ run yang prosesnya sudah mati: `--cleanup-orphans`.
 Semua perintah docker pendek (run/network/inspect/rm/down) berbatas waktu 120 dtk; bongkar yang
 timeout meninggalkan artefak berlabel yang dibereskan `--cleanup-orphans` setelah proses keluar.
 
+**`--cleanup-orphans` otomatis (Lapis 4).** Tiap run `ps-run-layer.py --layer e2e` menjalankan
+rutin `--cleanup-orphans` sendiri, **sekali per run**, di dalam `wait-slots` sebelum hitungan
+slot pertama, interaktif maupun headless; ringkasannya di stderr, galatnya tak pernah
+menggagalkan run. Ia hanya menghapus container/network yang pemiliknya **terbukti mati** di
+host ini — yatim milik host lain tetap terhitung sampai dibersihkan dari host pemiliknya
+(`ALIVE wait-slots` / `errors` `no-slots` menyebut `psm.job` & host-nya).
+
 ## Istilah E2E (interim, sampai CAP-1)
 
 - **Cakupan run** = versi × browser pilihan On Activation langkah 2 (headless: semua sel
@@ -118,18 +136,42 @@ timeout meninggalkan artefak berlabel yang dibereskan `--cleanup-orphans` setela
 - **Hasil run** dibaca dari panggilan plan berikutnya, **tak pernah** dari histori: entri
   tercakup V ber-`reason` `fail` = kegagalan untuk dipatch; tanpa `fail` tapi ada
   `inconclusive`/`inconclusive-steps`/`browser-notes` = run meninggalkan alasan infra (sebabnya,
-  mis. image hilang atau `browser-unavailable`, ada di stderr dan log kemajuan).
+  mis. image hilang, `browser-unavailable` atau `no-slots`, ada di stderr dan log kemajuan);
+  `not-run` = bukan kegagalan maupun alasan infra (lihat `not-run` di bawah).
 - **Infra retry** (interaktif saja): laporkan sebabnya, minta Budi memperbaiki lingkungan
-  (mis. `--allow-image-pull`, `playwright install`) atau menolak. Diperbaiki → infra retry V
+  (mis. `--allow-image-pull`, `playwright install`; untuk `no-slots`: bebaskan slot atau tunggu,
+  atau perbaiki Docker bila `docker count failed` — bukan install) atau menolak. Diperbaiki → infra retry V
   tertunda sampai run E2E V berikutnya (perintah sama, di Fase 1 atau pass Fase 2 berikutnya);
   ditolak → loop E2E berakhir. Headless tanpa retry: langkah V tak jatuh tempo, selnya tetap
   tak terbukti.
 
+- **`not-run`** (rekaman, `conclusive: false`): sel yang tak pernah dimulai karena fail-fast —
+  `fail-fast after <ver>:<browser>` (anak lain meng-append `fail`) atau `input-error after <ver>`
+  (anak lain exit 2). Bukan kegagalan dan bukan alasan infra (plan: reason `not-run`); tak
+  pernah lulus, tak pernah gate-grade. `fail-fast after …` jatuh tempo lagi begitu source
+  berubah (patch `fail`-nya); `input-error after …` begitu input yang ditolak diperbaiki —
+  tapi anak exit 2 tetap mengakhiri loop E2E untuk sesi ini. Fail-fast hanya menghemat waktu
+  untuk sel yang **masih antre**: anak yang sudah jalan selesai dan di-append.
+- **`no-slots`** (rekaman `inconclusive`, reason `no-slots`; plan: `inconclusive`): cap slot
+  sedaemon penuh selama batas startup (`--startup-timeout` passthrough, else
+  `psm_flashlight_startup_timeout`, else 180 dtk; dihitung hanya saat tak ada anak run ini yang
+  jalan). Alasan infra; `errors` menyebut isi cap. Diperbaiki dengan membebaskan slot (job lain
+  selesai/dihentikan atas izin Budi, yatim dibersihkan) atau menunggu, atau — bila `errors`
+  berkata `docker count failed` — memperbaiki Docker; **tak pernah** dengan install
+  (`--allow-image-pull`, `playwright install`).
+- **Slot sedaemon**: N = `psm_e2e_slots` dari `<cfg>` (`--slots` hanya override manual; jangan
+  diberikan). Terpakai = jumlah label `psm.slots` semua container E2E yang jalan di daemon (run
+  dan sesi lain, juga `ps-e2e-run.py` langsung — yang ikut terhitung tapi melewati admisi) +
+  klaim run lain yang container-nya belum jalan, dibandingkan dengan N **run ini**:
+  `psm_e2e_slots` yang sama di semua sesi = satu langit-langit bersama. Klaim dari folder temp
+  lain baru terlihat begitu container-nya jalan. Container Lapis 2/5 tak dihitung (mereka tetap
+  `--jobs`).
+
 Baris terakhir stdout run E2E: `{"e2e_status": "ran"|"skipped", "reason", "appended":
 ["<ver>:<browser>", …], "source_fingerprint"}`. Exit 0 = semua pass atau `skipped`; 1 = ada
-inconclusive; 3 = ada `fail`; 2 = error input pra-spawn (tanpa baris) atau anak exit 2 (baris
-`ran`); 143 = dihentikan `--stop-job` (tanpa baris). `--jobs` tetap mengatur berapa versi boot
-serentak (default 3; tiap job satu container PS + DB — turunkan di mesin kecil).
+inconclusive/`not-run`/`no-slots`; 3 = ada `fail`; 2 = error input pra-spawn (tanpa baris) atau
+anak exit 2 (baris `ran`); 143 = dihentikan `--stop-job` (tanpa baris). `--jobs` dengan lapis
+e2e = exit 2 (konkurensi E2E = slot, di atas).
 
 ## Fase 1 — konvergensi per versi
 
@@ -181,7 +223,7 @@ boot Docker 1×, bukan 3×.
    ```bash
    uv run scripts/ps-run-layer.py --layer e2e --module <module-path> \
      --reports-dir <psm_reports_dir> --cells <ver>:<b>[+<b>],… \
-     --session <t> --config <cfg> --jobs <N> -- --screenshot-dir <psm_reports_dir>/e2e-shots
+     --session <t> --config <cfg> -- --screenshot-dir <psm_reports_dir>/e2e-shots
    ```
 
 4. `fail` yang ter-append → masuk lagi ke Fase 1 versi itu (interaktif; iterasi pertamanya mulai

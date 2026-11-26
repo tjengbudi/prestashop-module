@@ -1,0 +1,197 @@
+{
+ "run_id": "20261126-145157",
+ "round": 5,
+ "complete": true,
+ "lenses": {
+  "adversarial": {
+   "reported": 10,
+   "valid": true,
+   "count": 10
+  },
+  "edge-case": {
+   "reported": 6,
+   "valid": true,
+   "count": 6
+  },
+  "implementer": {
+   "reported": 5,
+   "valid": true,
+   "count": 5
+  }
+ },
+ "invalid": [],
+ "missing": [],
+ "unexpected": [],
+ "findings": [
+  {
+   "id": "adversarial-1",
+   "lens": "adversarial",
+   "location": "Intent > Approach (authority) vs SPEC.md > Constraints (cleanup sentence)",
+   "issue": "The decided cleanup placement was written back to cell-contract.md only (Config keys > psm_e2e_slots: 'Inside wait-slots, before its first count'; Docs to update: 'in wait-slots'). SPEC.md > Constraints still says ps-run-layer runs --cleanup-orphans 'automatically before waiting for slots in every mode'. SPEC.md calls itself the canonical, preservation-validated contract, so the two authoritative files now give opposite orders, and this slice spec cites only cell-contract.md.",
+   "implementation_impact": "A reviewer or a later bmad-spec validation that reads the kernel will flag the implemented order (wait-slots opens first, then cleanup) as nonconforming. The CAP-1 slice, whose docs are built on this one, may copy the stale wording into SKILL.md or headless.md.",
+   "suggestion": "Amend SPEC.md > Constraints to match cell-contract.md ('runs automatically inside wait-slots, before its first slot count, in every mode'). Name SPEC.md in this spec's write-back note so both files change in the same commit."
+  },
+  {
+   "id": "adversarial-2",
+   "lens": "adversarial",
+   "location": "Design Notes > Admission ('Before the first pass ps-run-layer truncates every queued version's progress log ...') vs Runner > Output (docker_available() skip)",
+   "issue": "The spec orders truncation, then wait-slots START, then cleanup, then the first count. It never places the existing docker_available() skip check in that sequence. The contract only says the skip happens 'before slot counting', and wait-slots now opens before slot counting. If truncation and the wait-slots START happen first, a Docker-absent run wipes every version's previous progress log. It also leaves a wait-slots phase whose outcome is none of ok/no-slots/cancelled/stopped. The DONE rule then writes 'DONE rc=0' (the run exit code) into logs of versions that never ran.",
+   "implementation_impact": "Either order passes the listed tests, because no I/O row covers Docker being absent. One choice destroys the last useful logs on every skipped run and writes misleading DONE lines. It also needs a wait-slots outcome the spec does not define.",
+   "suggestion": "State that the docker_available() skip check runs before any progress log is truncated, before any wait-slots opens and before cleanup, so a skipped run touches no progress log. Add an I/O row: docker absent → 'skipped', exit 0, nothing appended, existing logs unchanged."
+  },
+  {
+   "id": "adversarial-3",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Child ('--sequential-browsers ... every _new_cell key null ...') + Design Notes > Records",
+   "issue": "A child not-run cell has started_at/finished_at null, so build_record fills started_at with ps-run-layer's admission time and finished_at with the record write time. For a Firefox cell left not-run after Chromium failed, wall_clock therefore covers pull, bring-up, install, the whole Chromium drive and teardown. The decision not to start the engine was made by the child, mid-run, not at admission. The contract field rule ('when ps-run-layer admitted it or decided not to start it') does not fit this case.",
+   "implementation_impact": "Each e2e_cells entry for a not-run engine shows a wall_clock of many minutes for a cell that never ran. That data feeds the CAP-6 boot-vs-browser analysis and the SPEC's before/after timing report, and it tells the operator the wrong thing about where time went.",
+   "suggestion": "Have the child set started_at = finished_at = utc_now() at the moment it decides not to start the engine (an exception to 'every _new_cell key null'), so wall_clock is about 0. As an alternative, ps-run-layer can set both fields to the write time for a child not-run cell. Add the case to the Sequential child test."
+  },
+  {
+   "id": "adversarial-4",
+   "lens": "adversarial",
+   "location": "Tasks > docs (file list) vs references/e2e-quickstart.md and SKILL.md Lapis 4 direct runs",
+   "issue": "A direct ps-e2e-run.py run now always stamps psm.slots=1 and so uses one slot of the shared daemon-wide cap. It never goes through admission, though: it does not wait in wait-slots and does not respect psm_e2e_slots. The quickstart TDD loop (e2e-quickstart.md lines 43, 72, 149, 160) runs exactly this. The docs task updates SKILL.md, run-phases.md, headless.md, the interim companion and README, but not e2e-quickstart.md, and none of them warns about this.",
+   "implementation_impact": "An operator running the quickstart loop while another session runs a ps-run-layer gate can fill the cap without knowing it. The other session's queued cells then hit no-slots after the startup timeout (inconclusive, infra retry), and nothing in the docs explains why. The cap can also be overshot, because direct runs never check it.",
+   "suggestion": "Add references/e2e-quickstart.md (and the direct-run sentence in SKILL.md Lapis 4) to the docs task. Say that direct runs are counted against psm_e2e_slots but bypass admission, so they can push other sessions into no-slots, and recommend ps-run-layer --cells when the daemon is shared."
+  },
+  {
+   "id": "adversarial-5",
+   "lens": "adversarial",
+   "location": "Design Notes > Admission ('ALIVE detail first count pending until the first count') + Records ('every record of a spawned version gets that entry merged')",
+   "issue": "The cleanup routine runs inside the open wait-slots phases, so every version's wait-slots duration includes cleanup time. That is up to 60 s for each of the two listings plus up to 60 s per orphan removed. A run that never waited for a slot still records a large wait-slots value in every cell's phase_durations. During cleanup the ALIVE detail reads 'first count pending', which tells the operator nothing about the cleanup.",
+   "implementation_impact": "CAP-6 timings and the SPEC's mandatory before/after report count orphan cleanup as slot contention, so an operator can lower psm_e2e_slots or blame other sessions when the time actually went to removing dead containers. During a long cleanup the progress log cannot be told apart from a stuck first count.",
+   "suggestion": "Keep the decided placement, and make the time visible. Set the ALIVE detail to 'cleanup-orphans running' while the routine runs and to 'first count pending' only after it ends. Include the cleanup seconds in its stderr summary. State in run-phases.md that wait-slots includes the automatic cleanup."
+  },
+  {
+   "id": "adversarial-6",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Child ('The child judges an engine's fail with cell_state ...') vs ps-e2e-run.py _plan_layers()/cell_state",
+   "issue": "cell_state loads ps-plan-layers lazily (_plan_layers). Today that load happens only in exit_code(), after output is written. Engine fail-fast moves it into the engine loop, after bring-up, install and the first engine's drive. ps-plan-layers itself loads ps-static-scan and a second copy of ps-flashlight-run, calling sys.exit(2) on failure, and _plan_layers raises ImportError. A broken or partial scripts/ copy then kills the child mid-version.",
+   "implementation_impact": "An environment fault becomes an input error. The child exits 2 after a real boot and drive, ps-run-layer appends nothing for that version, and queued versions get 'input-error after <ver>'. The run exits 2 and the E2E loop ends for the session. With ImportError, the version is recorded as crash, and a real Chromium fail may be lost.",
+   "suggestion": "Require the child to load _plan_layers() eagerly in main(), before progress_init and job registration, when --sequential-browsers is given (or always in history mode). A broken sibling then becomes a true pre-run exit 2 with no boot. Add a test that patches the loader to fail and asserts no bring-up phase."
+  },
+  {
+   "id": "adversarial-7",
+   "lens": "adversarial",
+   "location": "Boundaries > Always (Fail-fast / Slots) + I/O & Edge-Case Matrix (no skipped-child row)",
+   "issue": "The spec defines which reaped children stop admission (an appended fail, exit 2, an append error), but it says nothing about a child that reports status: skipped (Playwright absent). Today such a child does not stop admission. Under slots, the remaining queued versions keep waiting and spawn children that will skip too, or they time out into no-slots. The contract output rule then prints 'skipped' with the skipped child's reason and exits 0, so any no-slots records appended in the same run never show in the output line.",
+   "implementation_impact": "Implementers can reasonably choose either 'keep admitting' or 'stop like fail-fast', and the tests will not detect the difference. In the first case the operator is told 'Playwright absent', while the history silently gains no-slots records that the next plan reports as inconclusive. That can start a misdirected infra retry.",
+   "suggestion": "State explicitly that a skipped child does not stop admission (unchanged from today) and that no not-run record follows it. Add an I/O row for 'first child skipped, second blocked by foreign slots until timeout' with the expected output line (skipped, exit 0), the appended list and the records, so the behaviour is pinned."
+  },
+  {
+   "id": "adversarial-8",
+   "lens": "adversarial",
+   "location": "Tasks > docs (interim-orchestration step 3 / run-phases Fase 1/2 commands) vs Design Notes > Admission ('the queue is --cells/--versions written order')",
+   "issue": "Which versions fail-fast skips, and so whether it saves any time, now depends on the order of the --cells tokens. The docs task changes the orchestrator's E2E command (drops --jobs) but never says what order the orchestrator should write the due versions in. The interim step 3 only says 'group the scoped e2e entries'.",
+   "implementation_impact": "The orchestrator can put 1.7.8 first (configured or numeric ascending order), while the newest version, which SPEC names as the cheapest predictor (canary 9.1 × Chromium), runs last. When slots are short, fail-fast then skips the most informative cells, and run-to-run results depend on an unspecified ordering.",
+   "suggestion": "In the interim step 3 and run-phases.md, fix the --cells order: newest version first (numeric order, descending), matching the SPEC's canary default. Alternatively, ps-run-layer can document and apply that order itself in --versions mode."
+  },
+  {
+   "id": "adversarial-9",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Child ('with more than one engine the child logs the fallback once on stderr')",
+   "issue": "In the contract, the sequential-fallback log line reports a condition: too few slots for parallel browsers (Parallel browsers > Slots). This slice passes --sequential-browsers to every child unconditionally (Design Notes > Interim cost/mode). So every multi-browser version of every run logs a 'fallback' even on an idle daemon with all 6 slots free, and the spec does not set the message text.",
+   "implementation_impact": "Operators reading stderr are told on every run that slots were short. They may lower other sessions' work or raise psm_e2e_slots for no reason, and they lose the meaning of the message once CAP-7 makes it conditional again.",
+   "suggestion": "Specify the CAP-3 wording so it does not claim slot shortage, for example 'browsers driven one after another (parallel browsers not implemented yet; engine fail-fast applies)'. Reserve the slot-shortage wording for CAP-7. Alternatively, log the reason that applies: 'interim: always sequential'."
+  },
+  {
+   "id": "adversarial-10",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Child ('--run-id ... set as fl.RUN_ID before progress, job registration or labels') vs ps-plan-layers' separate ps-flashlight-run copy",
+   "issue": "ps-e2e-run loads ps-flashlight-run as its own module object (fl). ps-plan-layers, which the child loads for cell_state, calls load_sibling and so execs a second, independent copy with its own random RUN_ID, _JOB, _PROGRESS and _TIMING. The spec sets --run-id only on the child's fl, and it does not say that nothing reachable through the second copy may emit progress lines or labels, or consult RUN_ID.",
+   "implementation_impact": "Today derive_state touches no fl state, so this is latent. Any future helper reached through the plan-layers copy (a progress line, a label, a timing record) would carry a RUN_ID that matches no claim and no psm.run label. Claim suppression, cleanup ownership and the run_id/boot_id stamping would then silently disagree.",
+   "suggestion": "State that the child uses exactly one ps-flashlight-run instance. Either make ps-e2e-run reuse plan-layers' fl (as ps-run-layer does through plan_layers().fl), or copy RUN_ID into the second instance right after loading. Add a test asserting that every flashlight module object in the child process has RUN_ID equal to --run-id."
+  },
+  {
+   "id": "edge-case-1",
+   "lens": "edge-case",
+   "location": "Boundaries > Always (Fail-fast bullet: 'not-run records are appended at the trigger' / 'An append error stops admission as today: no not-run/no-slots record follows')",
+   "issue": "One reaped child appends its fail record, then a sibling cell's append fails. The spec does not say whether the trigger or the append error decides what queued versions get.",
+   "implementation_impact": "If the trigger wins, queued versions get not-run records and logs reduced to one 'DONE rc=not-run' line. If the append error wins, they get no record, 'END wait-slots cancelled', and 'DONE rc=2' with no output line. Two implementations can both claim to follow the spec and still differ in history and logs.",
+   "suggestion": "State the precedence explicitly, for example: 'once any append in the run has failed, a later or same-child trigger appends no not-run record; queued versions end cancelled under the append-error rule'. Add a test where one child has a fail record plus a failing sibling append."
+  },
+  {
+   "id": "edge-case-2",
+   "lens": "edge-case",
+   "location": "Design Notes > Admission ('The no-slots clock ... advances only while a version waits and no own child is in flight ... checked after each pass's admissions')",
+   "issue": "The clock can reach the limit in the same pass in which a freed slot admits the head. The spec does not say whether the versions still queued then get no-slots, even though an own child is now in flight.",
+   "implementation_impact": "Because the check runs after admissions, the versions behind a just-admitted version may get no-slots. The contract says a cell queued behind its own run's cells waits without limit. Whether the second version runs or is recorded inconclusive depends on how the implementer reads this.",
+   "suggestion": "Specify the check exactly, for example: 'after admissions, no-slots fires only if the accumulator >= limit AND no own child is in flight'. Alternatively, check before admissions. Add a test: the foreign holder frees at limit minus epsilon, the head is admitted, and the second version must wait."
+  },
+  {
+   "id": "edge-case-3",
+   "lens": "edge-case",
+   "location": "Design Notes > Admission ('its limit is the contract's startup timeout, and a passthrough --startup-timeout that is not an integer is exit 2 before spawn')",
+   "issue": "Only a non-integer value is rejected. A zero or negative startup timeout is not covered, from either the passthrough --startup-timeout or the config psm_flashlight_startup_timeout. read_e2e_config also accepts any int.",
+   "implementation_impact": "With a value of 0 or less, the first pass that cannot admit while no own child is in flight turns every queued cell into no-slots at once. Children also receive the same value, which they may reject or misuse. The result depends on the implementation and is untested.",
+   "suggestion": "Add: 'a startup timeout (passthrough or psm_flashlight_startup_timeout) that is not an integer >= 1 is exit 2 before spawn'. Validate it in _e2e_input/read_e2e_config, and add it to the Bad input row."
+  },
+  {
+   "id": "edge-case-4",
+   "lens": "edge-case",
+   "location": "Boundaries > Always (Slots: 'Admission per contract ... slots.lock') / Tasks > ps-flashlight-run.py (LOCK_DIR '<tmp>/psm-locks')",
+   "issue": "No path covers a failure to create LOCK_DIR or to open or flock slots.lock (OSError, for example a read-only or full tmp, or a permission problem). Registry write failures warn and a failed docker count means full, but lock failures have no rule.",
+   "implementation_impact": "An implementer might raise, which per Design Notes > Records gives rc=crash with every wait cancelled. They might admit without the lock, which breaks count-then-claim atomicity across runs. Or they might treat it as full, which ends in no-slots. Each choice gives a different outcome.",
+   "suggestion": "Add one rule, for example: 'a slots.lock open/flock OSError counts as cap full for that pass (errors token \"slots lock failed: <reason>\"), so it ends in no-slots after the timeout'. Add a test with LOCK_DIR pointed at an unwritable path."
+  },
+  {
+   "id": "edge-case-5",
+   "lens": "edge-case",
+   "location": "Design Notes > Records ('Every queued version goes through wait-slots, so it is recorded like any phase ... every record of a spawned version gets that entry merged')",
+   "issue": "Two kinds of admitted version legitimately leave no record: a child that reports status skipped, and a child reaped with STOPPED_CODES (a SIGTERM to that child alone). The spec does not say what happens to their wait-slots measurement or to admission after a skipped child.",
+   "implementation_impact": "The statement that wait-slots is always recorded cannot hold for these versions, and an implementer might create a record just to carry wait-slots. A skipped child (Playwright absent) also does not stop admission, so every later queued version is admitted, spawned and skipped in turn. Nothing says whether the queue should stop.",
+   "suggestion": "State that versions whose child leaves no record by contract (skipped, STOPPED_CODES, exit 2) have their wait-slots measurement dropped, and that no record is created for it. State whether a skipped child stops admission, which is unchanged from today: admission continues."
+  },
+  {
+   "id": "edge-case-6",
+   "lens": "edge-case",
+   "location": "Design Notes > Admission ('Before the first pass ps-run-layer truncates every queued version's progress log and right after it opens wait-slots') vs cell-contract.md > Runner > Output (docker_available() false -> skipped before slot counting)",
+   "issue": "The spec does not place the docker_available() check relative to log truncation and the opening of wait-slots. The outcome list for wait-slots (ok, no-slots, cancelled, stopped) also has no entry for the skipped path when Docker is absent.",
+   "implementation_impact": "If truncation and 'START wait-slots' come before the Docker check, a run with Docker absent leaves every log with an open wait-slots phase that has no defined END outcome and ends 'DONE rc=0'. If they come after, the logs from the previous run remain. Tests and docs could pin either behaviour.",
+   "suggestion": "Add: 'docker_available() is checked before any log is truncated or wait-slots is opened. When it is false, no log is touched, and the run prints skipped and exits 0 as today.'"
+  },
+  {
+   "id": "implementer-1",
+   "lens": "implementer",
+   "location": "Tasks > Execution > ps-flashlight-run.py ('daemon_slot_usage() -> (used, counted [{job, host, run, cost}], ok) from one docker ps') vs Design Notes > Admission ('errors holds ... or `docker count failed: <stderr tail>` (last 200 chars, whitespace collapsed to one space)') and I/O row 'Count error'",
+   "issue": "The helper's return value has no field for the failure text. `ok` is presumably a bool, so ps-run-layer gets `(used, counted, False)` and has no stderr from which to build `docker count failed: <stderr tail>` for the `no-slots` record and the `ALIVE wait-slots` detail. The spec also gives no text for the case with no stderr at all: `subprocess.TimeoutExpired` after DOCKER_CMD_TIMEOUT, or an OSError such as a missing `docker` binary.",
+   "implementation_impact": "The implementer must invent the interface. Options include turning `ok` into an error string, adding a fourth element, or logging inside fl and losing the text. The harness stub for the 'Count error' row has to match whatever shape is chosen, and a test cannot assert the `errors` content the Design Notes require.",
+   "suggestion": "Define the return as `(used, counted, error)`: `error` is `None` on success, else the formatted tail (stderr, last 200 chars, whitespace collapsed), or a fixed text for timeout/OSError such as `timeout after 120s`. ps-run-layer prefixes `docker count failed: `. The harness stub returns the same shape."
+  },
+  {
+   "id": "implementer-2",
+   "lens": "implementer",
+   "location": "Design Notes > Admission ('spawning each admitted version at once ... a spawn that raises is reaped at once as rc `None`'; 'The loop wakes on a child exit ... or after `SLOT_POLL`') vs Tasks > tests (`_run_full`/`E2EChild` harness) and ps-run-layer.py `_spawn`/`run_children`",
+   "issue": "The spec does not say what the injected spawn seam becomes. Today `_spawn(cmd) -> returncode` is a blocking runner that `run_children` runs on a ThreadPoolExecutor worker. The tests inject `E2EChild`, a blocking callable that returns an rc. test_e2e_stopped simulates `--stop-job` by making the fake raise `JobStopped`, a BaseException that reaches the main thread through `fut.result()`. 'A spawn that raises is reaped at once' only makes sense for a non-blocking start (Popen) with a separate wait. Under that model E2EChild and the stop test stop working, and the spec does not say whether a BaseException from spawn means rc `None`/crash or a stop.",
+   "implementation_impact": "Choosing Popen-style start/wait forces a rewrite of the harness and the stop test, which the Tasks do not list. Keeping the thread model leaves 'at once' and 'a spawn that raises' without a clear meaning. Either way, how a JobStopped raised by the runner is handled (stop vs crash) is a guess that changes exit 143 behaviour in existing tests.",
+   "suggestion": "Say: `_spawn(cmd) -> returncode` stays blocking and is submitted to a worker thread at admission. The loop waits with `wait(running, timeout=SLOT_POLL, return_when=FIRST_COMPLETED)`. A worker that raises an `Exception` is reaped as rc `None` (claim removed, `crash`, no fail-fast). A `BaseException` such as `JobStopped` still propagates as a stop. E2EChild stays as it is."
+  },
+  {
+   "id": "implementer-3",
+   "lens": "implementer",
+   "location": "Design Notes > Admission ('Each pass first reaps every finished child (no pass after a trigger), then holds `slots.lock`, reads claims, counts once, and admits')",
+   "issue": "Read literally, 'no pass after a trigger' stops all passes. Passes are also where finished children are reaped, their records appended and their claims removed under `slots.lock`. Always > Fail-fast requires in-flight children to finish, be reaped and be appended after the trigger. The parenthetical contradicts that unless 'pass' means only the lock/count/admit part.",
+   "implementation_impact": "An implementer could end the loop at the trigger, abandoning in-flight children: no records, threads left running, claims never removed. Or they could keep taking `slots.lock` and running docker counts after the trigger, where the spec intends no admission. The 'Fail in flight' row (8.1 appended after 9.1's fail) only catches the first mistake.",
+   "suggestion": "Reword: 'after a trigger the loop only reaps: it waits for each in-flight child, appends its records and removes its claim under `slots.lock`; it takes no count and admits nothing.'"
+  },
+  {
+   "id": "implementer-4",
+   "lens": "implementer",
+   "location": "Acceptance Criteria #2 (pre-seeded `alive` registry entry, admitted 'once that claim is removed') + Tasks > tests ('points `JOB_REGISTRY`/`fl.LOCK_DIR` at a fresh temp dir per `_run_full` call')",
+   "issue": "AC2 needs an entry seeded in the registry that the run reads before `main` starts, and its claim removed while `main` is running. The harness as specified creates the fresh registry dir inside `_run_full`, and `mod.main` runs synchronously on the test thread. The test therefore has no way to write the entry first, and no defined way to change it mid-run after the `ALIVE wait-slots ... claim:<job>/<run>=1` lines have appeared.",
+   "implementation_impact": "The implementer has to design a harness extension, such as a registry-dir parameter, a pre-run hook, a background thread, or a hook in the `daemon_slot_usage` stub. Whether 'removed' means editing the seeded file, deleting it, or killing the subprocess changes what the test proves.",
+   "suggestion": "Specify the seam: `_run_full(..., registry=<dir>)` uses a caller-supplied (pre-seeded) dir. The claim is removed by rewriting the seeded entry with `slot_claims: []` from the stubbed `daemon_slot_usage` once the queued log holds at least one `ALIVE wait-slots` line naming the claim. The test then asserts the child was spawned and the record's `wait-slots` outcome is `ok`."
+  },
+  {
+   "id": "implementer-5",
+   "lens": "implementer",
+   "location": "Always > Slots / Design Notes > Admission (truncate every queued log, open `wait-slots`, cleanup, first count) vs cell-contract.md > Runner > Output ('reports `skipped` and exits 0 when `docker_available()` is false before slot counting (nothing appended)')",
+   "issue": "The spec never places the Docker-availability check relative to job registration, progress-log truncation, `START wait-slots` and the cleanup routine. The contract only says 'before slot counting', which allows the check after the waits are open. In that case the open waits need an outcome that is not in the list (`ok`/`no-slots`/`cancelled`/`stopped`). The DONE rule also gives `rc=0`, an empty-looking result, for a skipped run, and the previous run's progress logs are wiped by a run that appends nothing.",
+   "implementation_impact": "A literal reading of the contract lets the implementer move the check after truncation, for example next to cleanup, because `cleanup_orphans()` also calls `docker_available()`. That leaves undefined wait outcomes and DONE lines, and a test such as test_e2e_skipped ('Docker absent -> nothing appended') cannot pin which logs may be touched.",
+   "suggestion": "State that `fl.docker_available()` stays where it is today: before `job_register`, truncation and any `wait-slots`. A false result opens no wait, truncates no log, skips cleanup, and prints the `skipped` line with exit 0."
+  }
+ ],
+ "duplicates_removed": [],
+ "clusters": []
+}

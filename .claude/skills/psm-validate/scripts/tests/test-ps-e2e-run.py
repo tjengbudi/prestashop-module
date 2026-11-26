@@ -568,6 +568,230 @@ def test_main_engines_and_exit():
     return ok
 
 
+def test_sequential_browsers():
+    """I/O 'Sequential child': --sequential-browsers + chromium fail -> firefox not-run, tak
+    pernah di-drive, anak exit 3. Tanpa flag (run langsung) semua engine tetap jalan."""
+    ok = True
+    print("\n[--sequential-browsers: fail-fast antar-engine]")
+    fatal = "<html><body>Fatal error: boom</body></html>"
+
+    def tracked(pages):
+        base = _page_drive(pages)
+        seen = []
+
+        def drive(engine, scenarios, ctx, headed=False):
+            seen.append(engine)
+            return base(engine, scenarios, ctx, headed)
+        return drive, seen
+
+    drive, seen = tracked({"chromium": FakePage(raw_body=fatal)})
+    with _infra(mod_over={"drive_engine": drive}):
+        r = _rov(["chromium", "firefox"], sequential_browsers=True)
+    ff, ch = r["cells"]["firefox"], r["cells"]["chromium"]
+    ok &= check("sekuensial: chromium fail -> firefox TAK pernah di-drive", seen == ["chromium"])
+    ok &= check("sekuensial: sel firefox state not-run, conclusive false, reason fail-fast after 9.1:chromium",
+                (ff.get("state"), ff.get("conclusive"), ff.get("reason"))
+                == ("not-run", False, "fail-fast after 9.1:chromium"))
+    ok &= check("sekuensial: semua kunci _new_cell sel not-run null (scenario_set/browser_notes/"
+                "phase_durations termasuk)",
+                set(mod._new_cell()) <= set(ff) and all(ff[k] is None for k in mod._new_cell()))
+    ok &= check("sekuensial: sel chromium tetap punya browser:chromium & state fail",
+                set(ch["phase_durations"]) == {"browser:chromium"}
+                and mod.cell_state(r, "chromium")["state"] == "fail")
+    ok &= check("sekuensial: cell_state mempertahankan not-run; exit anak 3",
+                mod.cell_state(r, "firefox")["state"] == "not-run"
+                and mod.exit_code({"versions": {"9.1": r}}) == 3)
+    ok &= check("sekuensial: fallback tak menyentuh browser_notes/errors",
+                r["browser_notes"] == [] and r["errors"] == [])
+
+    drive, seen = tracked({})
+    with _infra(mod_over={"drive_engine": drive}):
+        rp = _rov(["chromium", "firefox"], sequential_browsers=True)
+    ok &= check("sekuensial: chromium pass -> firefox tetap di-drive (keduanya pass)",
+                seen == ["chromium", "firefox"]
+                and all(mod.cell_state(rp, e)["state"] == "pass" for e in ("chromium", "firefox")))
+    drive, seen = tracked({"chromium": FakePage(raw_body=fatal)})
+    with _infra(mod_over={"drive_engine": drive}):
+        rd = _rov(["chromium", "firefox"])
+    ok &= check("tanpa --sequential-browsers (run langsung): engine lain tetap jalan",
+                seen == ["chromium", "firefox"] and "state" not in rd["cells"]["firefox"])
+
+    # main: fallback dicatat SEKALI di stderr bila > 1 engine; tidak bila 1 engine.
+    def run_main(extra, engines):
+        plan = _write_cells({"9.1": {e: "pass" for e in engines}})
+        err = io.StringIO()
+        saved = (mod.playwright_available, mod.fl.docker_available, mod.browser_available,
+                 mod.run_one_version, mod.fl.job_start)
+        seen_kw = {}
+
+        def fake_rov(*a, **kw):
+            seen_kw.update(kw)
+            return plan["9.1"]
+        with tempfile.TemporaryDirectory() as td:
+            mdir = Path(td) / "m"
+            mdir.mkdir()
+            argv = [str(MOD_PATH), str(mdir), "--versions", "9.1", "--engines", ",".join(engines),
+                    "-o", str(Path(td) / "o.json"), *extra]
+            try:
+                mod.playwright_available = lambda: True
+                mod.fl.docker_available = lambda: True
+                mod.browser_available = lambda e: True
+                mod.run_one_version = fake_rov
+                mod.fl.job_start = lambda *a, **k: True
+                with mock.patch.object(sys, "argv", argv), contextlib.redirect_stderr(err):
+                    rc = mod.main()
+            finally:
+                (mod.playwright_available, mod.fl.docker_available, mod.browser_available,
+                 mod.run_one_version, mod.fl.job_start) = saved
+        return rc, err.getvalue(), seen_kw
+    rc, err, kw = run_main(["--sequential-browsers"], ["chromium", "firefox"])
+    ok &= check("main --sequential-browsers (2 engine): fallback dicatat sekali di stderr, "
+                "diteruskan ke run_one_version",
+                rc == 0 and err.count("mode browser sekuensial") == 1
+                and kw.get("sequential_browsers") is True and kw.get("slot_cost") == 1)
+    rc, err, kw = run_main(["--sequential-browsers"], ["chromium"])
+    ok &= check("main --sequential-browsers (1 engine): tanpa catatan fallback",
+                rc == 0 and "mode browser sekuensial" not in err)
+    rc, err, kw = run_main([], ["chromium", "firefox"])
+    ok &= check("main tanpa flag: sequential_browsers False, tanpa catatan",
+                kw.get("sequential_browsers") is False and "mode browser sekuensial" not in err)
+    return ok
+
+
+def test_child_flags():
+    """--run-id (bentuk, RUN_ID sebelum log/registry/label), --slot-cost, --progress-append."""
+    ok = True
+    print("\n[flag anak: --run-id / --slot-cost / --progress-append]")
+    for label, argv in (("--run-id XYZ", ["--run-id", "XYZ"]),
+                        ("--run-id huruf besar", ["--run-id", "0123456789AB"]),
+                        ("--run-id 11 karakter", ["--run-id", "0123456789a"]),
+                        ("--run-id newline", ["--run-id", "0123456789ab\n"]),
+                        ("--slot-cost 0", ["--slot-cost", "0"]),
+                        ("--slot-cost x", ["--slot-cost", "x"])):
+        rc, data, seen = _main(["--versions", "9.1"] + argv,
+                               plan=_write_cells({"9.1": {"chromium": "pass"}}))
+        ok &= check(f"exit 2: {label} (tak ada versi dijalankan)",
+                    rc == 2 and not seen and data is None)
+
+    fl = mod.fl
+    saved = (fl.RUN_ID, fl.JOB_REGISTRY, dict(fl._JOB), dict(fl._PROGRESS),
+             mod.playwright_available, fl.docker_available, mod.browser_available,
+             mod.run_one_version)
+    rid = "0123456789ab"
+    captured = {}
+
+    def fake_rov(*a, **kw):
+        captured["label_run"] = fl.owner_labels()[fl.LABEL_RUN]
+        captured["slot_cost"] = kw.get("slot_cost")
+        fl.progress("START", "probe")
+        return _write_cells({"9.1": {"chromium": "pass"}})["9.1"]
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            fl.JOB_REGISTRY = Path(td) / "reg"
+            mdir = Path(td) / "mymod"
+            mdir.mkdir()
+            log = Path(td) / "mymod-e2e-9.1.progress.log"
+            for append in (True, False):
+                log.write_text("2026-11-26T10:00:00 job=j pid=1 run=x v=9.1 START wait-slots\n",
+                               encoding="utf-8")
+                argv = [str(MOD_PATH), str(mdir), "--versions", "9.1", "--engines", "chromium",
+                        "--run-id", rid, "--job-id", "mymod-e2e-1200-abcd",
+                        "--progress-file", str(log), "-o", str(Path(td) / "o.json")]
+                if append:
+                    argv.append("--progress-append")
+                mod.playwright_available = lambda: True
+                fl.docker_available = lambda: True
+                mod.browser_available = lambda e: True
+                mod.run_one_version = fake_rov
+                with mock.patch.object(sys, "argv", argv), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    rc = mod.main()
+                lines = log.read_text(encoding="utf-8").splitlines()
+                if append:
+                    entry = fl.JOB_REGISTRY / "mymod-e2e-1200-abcd" / f"{fl.OWNER_PID}.json"
+                    reg = json.loads(entry.read_text()) if entry.is_file() else {}
+                    out = json.loads((Path(td) / "o.json").read_text())
+                    ok &= check("--run-id: dipasang sbg RUN_ID -> label psm.run",
+                                rc == 0 and captured.get("label_run") == rid and fl.RUN_ID == rid)
+                    ok &= check("--run-id: masuk entri registry job & baris log kemajuan",
+                                reg.get("run") == rid and f" run={rid} " in lines[-1])
+                    ok &= check("--slot-cost absen -> 1 diteruskan ke boot",
+                                captured.get("slot_cost") == 1)
+                    ok &= check("--progress-append: baris wait-slots pemanggil dipertahankan",
+                                "START wait-slots" in lines[0] and "START probe" in lines[-1])
+                    ok &= check("output tetap dipancarkan (versi 9.1)", "9.1" in out["versions"])
+                    fl._job_unregister()
+                else:
+                    ok &= check("tanpa --progress-append: log dikosongkan (perilaku lama)",
+                                len(lines) == 1 and "START probe" in lines[0])
+    finally:
+        (fl.RUN_ID, fl.JOB_REGISTRY) = saved[0], saved[1]
+        fl._JOB.clear()
+        fl._JOB.update(saved[2])
+        fl._PROGRESS.clear()
+        fl._PROGRESS.update(saved[3])
+        (mod.playwright_available, fl.docker_available, mod.browser_available,
+         mod.run_one_version) = saved[4:]
+        import signal as _sig
+        _sig.signal(_sig.SIGTERM, _sig.SIG_DFL)
+    return ok
+
+
+def test_slot_labels():
+    """I/O 'Labels': boot ps-e2e-run --slot-cost 2 (compose / manual) = jumlah psm.slots 2;
+    tanpa --slot-cost = 1 / 1. Label dibaca dari teks compose ter-render & argv `docker run`."""
+    ok = True
+    print("\n[label psm.slots ps-e2e-run]")
+    fl = mod.fl
+
+    def boot(orch, extra):
+        compose, runs = [], []
+
+        def fake_run(cmd, **kw):
+            if cmd[:2] == ["docker", "compose"] and "up" in cmd:
+                compose.append(Path(cmd[cmd.index("-f") + 1]).read_text(encoding="utf-8"))
+            if cmd[:2] == ["docker", "run"]:
+                runs.append(list(cmd))
+            out = "cid0\n" if ("ps" in cmd and "-q" in cmd) else ""
+            return subprocess.CompletedProcess(cmd, 0, out, "")
+        saved = (mod.playwright_available, fl.docker_available, mod.browser_available,
+                 fl.job_start)
+        with tempfile.TemporaryDirectory() as td:
+            mdir = Path(td) / "m"
+            mdir.mkdir()
+            argv = [str(MOD_PATH), str(mdir), "--versions", "9.1", "--engines", "chromium",
+                    "--orchestrator", orch, "-o", str(Path(td) / "o.json"), *extra]
+            try:
+                mod.playwright_available = lambda: True
+                fl.docker_available = lambda: True
+                mod.browser_available = lambda e: True
+                fl.job_start = lambda *a, **k: True
+                with _infra(fl_over={"_bring_up_compose": fl.__dict__["_bring_up_compose"],
+                                     "wait_healthy": lambda c, t, poll=3.0: (True, "healthy"),
+                                     "_teardown": lambda s: None}), \
+                        mock.patch.object(fl.subprocess, "run", fake_run), \
+                        mock.patch.object(sys, "argv", argv), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    rc = mod.main()
+            finally:
+                (mod.playwright_available, fl.docker_available, mod.browser_available,
+                 fl.job_start) = saved
+        total = sum(int(n) for t in compose for n in re.findall(r'psm\.slots: "(\d+)"', t))
+        for r in runs:
+            for i, a in enumerate(r):
+                if a == "--label" and r[i + 1].startswith("psm.slots="):
+                    total += int(r[i + 1].split("=", 1)[1])
+        booted = bool(compose) if orch == "compose" else any(
+            r[-1].startswith(f"{fl.IMAGE}:") for r in runs)
+        return rc, total, booted
+    for extra, want in ((["--slot-cost", "2"], 2), ([], 1)):
+        for orch in ("compose", "manual"):
+            rc, total, booted = boot(orch, extra)
+            ok &= check(f"boot {orch} {' '.join(extra) or 'tanpa --slot-cost'}: psm.slots = {want}",
+                        rc == 0 and booted and total == want)
+    return ok
+
+
 def main():
     ok = True
 
@@ -1137,7 +1361,7 @@ def main():
         # (kelas "jalur tanpa cakupan"). Tangkap ps_domain yang diteruskan ke bring-up (host
         # dari config, port dinamis) — dan res["ps_domain"] yang dilihat base_urls Playwright.
         seen_domain = {}
-        mod.fl._bring_up_compose = lambda md, fv, ir, db, dom, ot, pub=None: (
+        mod.fl._bring_up_compose = lambda md, fv, ir, db, dom, ot, pub=None, **_k: (
             seen_domain.update(dom=dom) or ({"ps_container": "x", "mode": "compose"}, None))
         rh = mod.run_one_version(Path("/tmp"), "m", "9.1", "9.1.4-nginx", ["chromium"],
                                  [mod.universal_smoke()], requested_browsers=["chromium"],
@@ -1357,6 +1581,9 @@ def main():
 
     ok &= test_cells_and_timing()
     ok &= test_main_engines_and_exit()
+    ok &= test_sequential_browsers()
+    ok &= test_child_flags()
+    ok &= test_slot_labels()
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

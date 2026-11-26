@@ -1,0 +1,44 @@
+[
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:79 (Design Notes > Admission: 'Before the first pass ps-run-layer truncates every queued version's progress log') + :25 (fail-fast log truncated to one DONE line)",
+  "issue": "The progress log path is `<reports>/<module>-e2e-<ver>.progress.log` (`progress_file` in ps-run-layer.py:365). It carries no Job ID. With `wait-slots`, two `--layer e2e` runs of the same module and version now overlap routinely: run B queues behind run A on the shared daemon. The spec does not say what run B does to a log that run A's in-flight child, or run A's own wait-slots heartbeat, is still writing.",
+  "implementation_impact": "Run B's pre-pass truncation wipes run A's live child log. Run B's fail-fast rewrite to a single `DONE rc=not-run` line does the same. Both runs' ALIVE/END/DONE lines can then interleave in one file. Stall monitoring and the `DONE` rule misread the run that is actually alive.",
+  "suggestion": "Either key the E2E progress log by Job ID (`<module>-e2e-<ver>.<job>.progress.log`, and update the docs that point at the log), or state that the queue is truncated and written only while no live registry entry of another job holds the same module and version, and otherwise define which run owns the file."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:81 (Design Notes > Records: DONE written by ps-run-layer, 'rc=crash after a reaped child') vs :25 (child exit 2)",
+  "issue": "A child that exits 2 before `progress_init` writes no `DONE`: bad `--run-id`, argparse rejecting a passthrough flag, `--engines` normalizer errors, or a missing module dir. Examples are ps-e2e-run.py:1234-1251 and run_main_with_progress with `_PROGRESS` unset. ps-run-layer then applies its rule to that truncated log, and the only matching branch is `rc=crash`. The spec gives no DONE value for an exit-2 version.",
+  "implementation_impact": "The exit-2 version's log reads `DONE rc=crash`, while the run reports `input-error after <ver>` and exits 2. The operator is told the child crashed when the real cause is input they must fix.",
+  "suggestion": "Add a branch to the DONE rule: a reaped child with rc 2 gets `DONE rc=2` (or `rc=input-error`). Keep `rc=crash` for a reaped child with no rc or an unparseable result."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:79 (Design Notes > Admission: wait outcomes ok/no-slots/cancelled/stopped; only the cancelled path says 'heartbeat joined')",
+  "issue": "The heartbeat thread is joined before the next log write only on the `cancelled` path. The spec does not say it is stopped and joined before `END wait-slots ok` (admission, then spawn), before `END wait-slots no-slots` + `DONE rc=no-slots`, on a stop, or when the loop thread raises an unexpected exception or KeyboardInterrupt (ps-run-layer handles only JobStopped).",
+  "implementation_impact": "A late `ALIVE wait-slots` line can land after `END ... ok`, among the child's appended lines, or after `DONE`. Readers then see a wait still running on a finished version. If the thread is not a daemon thread, an exception or Ctrl-C leaves the process alive and writing heartbeats.",
+  "suggestion": "State that the wait-phase helper stops and joins its heartbeat before writing END, on every outcome. Make it a context manager that closes on any exception, with outcome `stopped` for JobStopped/KeyboardInterrupt and `cancelled` otherwise. Run the DONE rule in a `finally`."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:79 (Design Notes > Admission: `docker count failed: <stderr tail>` in `errors` and joined into `ALIVE` details)",
+  "issue": "The count-failure token embeds a raw stderr tail, which can span several lines (for example a daemon error followed by a hint). The token goes verbatim into the single-line `ALIVE wait-slots` progress format. The spec gives no rule for newlines or for the tail's length.",
+  "implementation_impact": "One heartbeat becomes several log lines, and the extra lines carry no timestamp, token or job. Log parsers and the stall/`DONE` readers misparse the version's log. The `no-slots` record's `errors` also carries an unbounded string.",
+  "suggestion": "Specify the tail as the last N (for example 200) characters with whitespace runs, newlines included, collapsed to one space, applied alike in `errors` and the `ALIVE` detail (as `_job_artifacts` does with `[-200:]`)."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:79 (Design Notes > Admission: 'The loop wakes on a child exit (reaping stays in completion order) or after SLOT_POLL... Each pass ...admits the head while it fits')",
+  "issue": "The spec does not require every already-finished child to be reaped, and its fail-fast decision made, before an admission pass runs in the same wake. A child can finish while the loop sleeps on `SLOT_POLL`, runs cleanup, or holds `slots.lock` for a count. A pass that runs before its future is reaped can admit a further version.",
+  "implementation_impact": "A version can be spawned after a child has already exited with a `fail` that is merely unreaped. That version then boots for evidence the failure made moot, which is exactly what CAP-3 exists to prevent. The behavior also varies with timing, so the I/O rows can flake.",
+  "suggestion": "State: at the start of each wake, and again right before each pass, reap every completed child (batch in plan order) and apply fail-fast/exit-2. A pass runs only when no trigger has fired."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:80 (Design Notes > Claims: 'A failed registry write warns on stderr and never fails the run; other runs then see its claims only once its containers run')",
+  "issue": "The rule covers only a failed write when a claim is added. It does not cover a failed rewrite when a claim is removed at reap, after earlier writes succeeded (ENOSPC, EACCES, or `os.replace` failing). The on-disk entry still lists the claim, the entry stays `alive` while ps-run-layer lives, and no container carries that `psm.run` any more.",
+  "implementation_impact": "Other runs count a phantom slot for the rest of this run, possibly hours of fail-fast drain or a long queue. Their `no-slots` clock advances against a cap that is not really full. Their `no-slots` records name a `claim:` that holds nothing.",
+  "suggestion": "Specify that on a failed claim-removal write ps-run-layer retries on the next pass. If the retry also fails, it deletes its own registry file (or rewrites it with `slot_claims: []`) and warns, so a stale claim never outlives its child."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:73 (Acceptance Criteria 2: 'a pre-seeded registry entry of a live test subprocess holding one claim')",
+  "issue": "A claim counts only when `entry_state` is `alive`. That needs the entry's `host`, `boot` and `ns` to equal the caller's and its `script` to appear in `/proc/<pid>/cmdline` (ps-flashlight-run.py:563-584). The AC does not say the seeded entry must carry these fields, nor which script name the test subprocess must show.",
+  "implementation_impact": "A seeded entry without a matching `script`/`host` reads `dead`/`foreign`, so its claim is ignored and the run is admitted at once. The AC test then fails, or is rewritten to pass vacuously, without exercising cross-run claim counting.",
+  "suggestion": "Add to AC 2 that the seeded entry is built from `fl.OWNER_HOST`/`OWNER_BOOT`/`OWNER_NS`, the subprocess PID, and a `script` value its command line contains. Also add a negative check: the same entry with a dead PID is not counted."
+ }
+]

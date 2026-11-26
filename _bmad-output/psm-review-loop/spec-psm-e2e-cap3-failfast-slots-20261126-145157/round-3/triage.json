@@ -1,0 +1,63 @@
+{
+ "round": 3,
+ "critical_high": 12,
+ "fixed": 11,
+ "escalated": 1,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261126-145157.r3-q1",
+   "finding": "Log kemajuan versi yang antre dikosongkan sebelum pass pertama, tetapi baru dapat baris pada `START wait-slots` setelah hitung docker pertama (≤120 dtk) dan `--cleanup-orphans` (listing 60 dtk + `docker rm` per orphan). Di daemon lambat jeda ini bisa >3 menit, sehingga aturan 'log diam ±3 menit tanpa DONE' memicu `--stop-job` di headless atau laporan 'diduga macet' di interaktif. Memperbaikinya membalik urutan ronde 2 (cleanup sebelum START wait-slots) dan menyentuh kalimat kontrak 'before entering wait-slots'.",
+   "options": [
+    "Buka wait-slots (START+heartbeat) di pass pertama yang tak bisa admit, cleanup jalan di dalamnya (amandemen kontrak)",
+    "Urutan tetap; docs: log tanpa baris selama ps-run-layer meng-admit bukan macet",
+    "Terima sebagai batasan yang diketahui"
+   ],
+   "recommended": "Buka wait-slots di pass pertama yang tak bisa admit, cleanup jalan di dalamnya (amandemen kontrak)",
+   "oscillation": true
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "Design Notes > Admission/Claims",
+   "issue": "adversarial-1: no cross-run fairness; a run with a long queue can starve another run into no-slots (FIFO would expand scope)"
+  },
+  {
+   "location": "Tasks > tests",
+   "issue": "adversarial-6: no child-side test that --run-id lands in psm.run/registry/progress and --progress-append keeps the log"
+  },
+  {
+   "location": "Tasks > tests",
+   "issue": "adversarial-7: no ps-run-layer test that a child not-run cell is kept without derive_state"
+  },
+  {
+   "location": "Always > RESERVED_PASSTHROUGH",
+   "issue": "adversarial-9: --slot-cost makes the --slo abbreviation of --slow-after exit 2; undocumented"
+  },
+  {
+   "location": "Always > Slots",
+   "issue": "adversarial-10/implementer-8: psm_e2e_slots validated only where read_e2e_config runs; merge-only and Layers 2/5 ignore it (scope not stated)"
+  },
+  {
+   "location": "Intent / Design Notes",
+   "issue": "adversarial-12: with default 6 slots and 3 versions cross-version fail-fast saves nothing; docs could say gain needs queueing"
+  },
+  {
+   "location": "Design Notes > Admission (progress log path)",
+   "issue": "edge-case-1: two runs of the same module+version share one progress log (pre-existing; keying by job is scope expansion)"
+  },
+  {
+   "location": "Design Notes > Admission (wait outcomes)",
+   "issue": "edge-case-3: heartbeat stop/join before END not stated for every outcome or on unexpected exceptions"
+  },
+  {
+   "location": "Design Notes > Claims",
+   "issue": "edge-case-6: a failed claim-removal write leaves a phantom claim for the rest of the run"
+  },
+  {
+   "location": "Code Map",
+   "issue": "implementer-10: omits run_one_version, _new_cell/note, exit_code, ps-scenario-run.py and its test; cost parameter should be keyword-only for positional callers/stubs"
+  }
+ ]
+}

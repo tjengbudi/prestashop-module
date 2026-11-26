@@ -1,0 +1,134 @@
+[
+  {
+    "location": "Boundaries > Always (Fail-fast bullet) + Design Notes > Trigger vs cell-contract.md > Runner (Fail-fast bullet)",
+    "issue": "The spec says fail-fast fires when a reaped child has appended a `fail` record. The contract says it fires on 'the first child that exits 3'. Design Notes adds that an exit-3 child whose output crashed does not trigger. That changes a contract rule, but the Approach paragraph says the contract is authoritative for 'Runner > fail-fast', and Ask First requires asking before 'changing a contract rule rather than deferring it'. No approval is recorded.",
+    "implementation_impact": "Two rules give different results when a child exits 3 with unparseable output (all its cells `crash`). The spec says the queue keeps running; the contract says the queue stops. A test for that case passes under one reading and fails under the other, and the implementer cannot ask which one wins.",
+    "suggestion": "Either record the trigger change as an approved interim decision (and update cell-contract.md Runner > Fail-fast to 'first appended `fail` record'), or revert to 'first child that exits 3'. Add an I/O row: exit-3 child with crashed output -> fail-fast or not, stated explicitly."
+  },
+  {
+    "location": "Design Notes > Records without a child ('`wait-slots` is recorded only when the first admission attempt failed'; 'a `no-slots` version's log ends `END wait-slots no-slots`') + Always (Slots bullet)",
+    "issue": "The spec never says which queued versions attempt admission and when. Option 1: only the queue head attempts (FIFO), so later versions have no wait-slots phase yet. Option 2: every queued version attempts at start and enters wait-slots at once. The two notes need different options. Under FIFO, the versions behind the head never START wait-slots, yet on timeout they get `no-slots` and their log must end `END wait-slots no-slots`, and their `phase_durations` must be either `{wait-slots}` or `null`.",
+    "implementation_impact": "The implementer must guess the queue model. The guess decides each queued version's progress log content, whether its `phase_durations.wait-slots` exists and how long it is, and how many ALIVE heartbeats run at once. The no-slots I/O rows cannot be asserted exactly.",
+    "suggestion": "State the model, e.g. 'every queued version enters `wait-slots` (START line + heartbeat) at the first admission pass when it cannot be admitted; admission order is queue order (the `--cells` written order)'. Alternatively, say what a never-attempted version gets in its log and its `phase_durations` on no-slots and on not-run."
+  },
+  {
+    "location": "Always (Slots bullet: 'startup-timeout clock counts only while none of this run's own children is in flight; timeout -> `no-slots` ... for every still-queued cell') vs cell-contract.md > Config keys (`psm_e2e_slots` sub-bullet: 'the cell waits ... for at most the startup timeout')",
+    "issue": "The clock is not fully defined. (a) Is it one per run or one per cell? The contract wording is per cell; the spec implies one run-wide clock. (b) When an own child finishes, does the clock resume from its accumulated value or reset to 0? (c) Is time spent before any own child was admitted counted? (d) How often does ps-run-layer re-count while waiting? The poll interval is not given.",
+    "implementation_impact": "Example: `--slots 2`, a foreign run uses 1 slot, own version A runs, B and C wait. After A finishes, B may time out immediately or get a fresh 180 s, depending on the reading. 'Own queue' and 'Foreign full' cover only the extremes, so the in-between behaviour is guessed and untested.",
+    "suggestion": "Define it: 'one run-wide accumulator that advances only while no own child is in flight and the cap is full; it never resets; when it reaches the timeout, every still-queued cell gets `no-slots`'. Give the recount interval as a named constant tests can patch. Add an I/O row for a run that waits, admits, then waits again."
+  },
+  {
+    "location": "Always (child `--progress-append`) + cell-contract.md > Phase timings ('ps-run-layer truncates the version's progress log before [wait-slots]') + docs task (run-phases.md 'Diduga macet', headless.md 'Log diam ±3 menit tanpa DONE')",
+    "issue": "Every child now gets `--progress-append` and never truncates. The spec never says when ps-run-layer truncates the log of a version that is admitted without waiting: at run start, or at admission? Separately, a queued version that has not started waiting (FIFO), or that waits behind its own run's cells for hours, may have an empty or stale log with no `DONE`. The current monitoring rules ('mtime unchanged ±3 min and no DONE = suspected hang'; headless: '--stop-job and return `blocked`') would then stop a correctly queued run. The docs task does not update those rules.",
+    "implementation_impact": "Without truncation, a version admitted on the first try keeps lines from an earlier run. Headless callers would kill healthy runs that are queued under `--slots`, which is exactly the 'Own queue' scenario.",
+    "suggestion": "Specify: 'ps-run-layer truncates every version's log once before the first admission pass'. Require that every unadmitted version emits ALIVE lines at least every PROGRESS_HEARTBEAT, or write a `QUEUED` token. Add to the docs task: update the silent-log hang rules in run-phases.md, SKILL.md 'Pantau run Docker' and headless.md for `wait-slots` and queued versions."
+  },
+  {
+    "location": "Tasks > ps-flashlight-run.py (progress helper) + docs task ('`wait-slots` ... never `SLOW`') vs ps-flashlight-run.py `phase` class / `PROGRESS_SLOW_AFTER_PHASE` / `_PROGRESS`",
+    "issue": "`fl.phase` writes through the global `_PROGRESS` path and version, runs its heartbeat thread with the global `progress()`, records into the global timing sink, and marks SLOW after 180 s, because `PROGRESS_SLOW_AFTER_PHASE` has no entry for `wait-slots` and `_PROGRESS['slow_after']` overrides it anyway. The code tasks add only a path+version `progress` helper. Nothing provides a per-version heartbeat, the SLOW exemption the contract names ('`PROGRESS_SLOW_AFTER_PHASE` exempts them'), or the `{seconds, outcome}` timing for a phase run inside ps-run-layer. The `outcome` value for a wait cancelled by fail-fast (or ended by exit 2 or a stop) is also undefined. Only 'no-slots' is implied, and 'ok' presumably for an admitted version.",
+    "implementation_impact": "Reusing `fl.phase` writes ALIVE lines to the wrong log (or to none, since ps-run-layer never calls `progress_init`), emits SLOW after 3 minutes, and breaks when several versions wait at once. The implementer must design a new heartbeat or phase API without guidance and invent outcome strings.",
+    "suggestion": "Add a flashlight task item: a path+version-aware wait-phase helper (START/ALIVE/END, never SLOW, returns `{seconds, outcome}`). Add the exemption to `PROGRESS_SLOW_AFTER_PHASE` (or an explicit never-slow set) that the `slow_after` override cannot defeat. Enumerate the outcomes, e.g. `ok`, `no-slots`, `fail-fast`, `input-error`, `stopped`."
+  },
+  {
+    "location": "Acceptance Criteria #2 ('`ALIVE wait-slots` lines naming the claim') + Always ('counted containers (`psm.job`@host=cost) in `errors`') vs cell-contract.md > Config keys (lines and record 'list the counted containers by `psm.job` and owner host')",
+    "issue": "The contract has ALIVE lines and the `no-slots` record name counted containers. The acceptance criterion requires the lines to name a claim, which is not a container. No format is given for a claim: run id, job id, pid, or cost? Also undefined: what `errors` holds when the cap is full only because of claims (no containers), and when the docker count failed ('Count error' row: counted list empty).",
+    "implementation_impact": "The AC2 assertion cannot be written without inventing a format. A `no-slots` record caused by another run's claims, or by a docker failure, would carry an empty `errors` list. That record explains nothing, yet `errors` drives the reason/inconclusive classification elsewhere.",
+    "suggestion": "Define one line/record vocabulary, e.g. containers `psm.job@host=cost` and claims `claim:<job>/<run>=cost`, plus a fixed string such as `docker-count-failed: <stderr tail>` for a failed count. State that `errors` lists both kinds."
+  },
+  {
+    "location": "Tasks > ps-flashlight-run.py `daemon_slot_usage() -> (used, counted list, ok)` + Design Notes > Claims ('counted while no running container carries that `psm.run`')",
+    "issue": "To decide whether a claim still counts, the runner needs the `psm.run` of each running slot-labelled container. The return shape does not say the counted list carries `psm.run`. `owner_labels()` also stamps `psm.run` on the DB container and the network. A check against 'any running container carrying `psm.run`' would therefore drop the claim as soon as the DB starts, while the PS container is still being created behind `depends_on: service_healthy`. The cap would be over-admitted for the whole DB health wait. Also unspecified: a `psm.slots` label value that is not a positive integer (foreign or corrupt).",
+    "implementation_impact": "An implementer who queries `docker ps --filter label=psm.run=<id>` reintroduces the over-admission the claims exist to prevent. The result is a silent race on the shared daemon that no stubbed test catches.",
+    "suggestion": "Specify the counted-list entry as `{job, host, run, cost}`. State that a claim is released only by a counted entry (a running container labelled `psm.slots`) with the same `run`. Define how invalid `psm.slots` values are handled: count as 1, or treat the cap as full."
+  },
+  {
+    "location": "Tasks > ps-flashlight-run.py `job_update(**fields)` + Design Notes > Claims ('removed when its child is reaped') vs `job_register`/`_registry_entries` in ps-flashlight-run.py",
+    "issue": "`job_register` writes the entry with a non-atomic `write_text`, and `_registry_entries` silently skips an unparseable file. The spec does not require `job_update` to replace the file atomically, nor that removing a claim after a reap happens under `slots.lock`. It also never says how admission recognises 'a live ps-run-layer registry entry'. Children register under the same job directory with `layer: e2e`, and `script` is `Path(sys.argv[0]).name`, which in the in-process harness is the test file, not `ps-run-layer.py`.",
+    "implementation_impact": "Another run that reads during a rewrite sees a torn file, skips it, and does not count its claims, so two runs over-admit. Choosing the 'ps-run-layer entry' marker by script name fails in tests; choosing by presence of `slot_claims` is a guess.",
+    "suggestion": "Require tmp-file + `os.replace` for `job_update`, and require claim add/remove while holding `slots.lock`. State that any live entry with a `slot_claims` list counts, whatever its script."
+  },
+  {
+    "location": "Tasks > ps-e2e-run.py (`--sequential-browsers` engine fail-fast) + Code Map (`_run_one_version_inner` engine loop, `cell_state`)",
+    "issue": "Inside `_run_one_version_inner`, `cell['phase_durations']` stays `{}` until `run_one_version` copies the timing sink after the inner function returns. `derive_state` (via `cell_state`) treats a cell without `browser:<engine>` in `phase_durations` as `not-driven`. So `cell_state` called mid-loop always returns `inconclusive` and never `fail`.",
+    "implementation_impact": "If engine fail-fast follows the Code Map literally, it never fires. The 'Sequential child' row fails, or the implementer quietly invents another fail test that may diverge from the State rule.",
+    "suggestion": "State how the per-engine `fail` is decided mid-loop: e.g. copy the sink's `browser:<engine>` entry into the cell right after each engine, before calling `cell_state`. Or decide `fail` from `findings` non-empty plus no launch_error, errors or install failure, and say this must equal `derive_state`."
+  },
+  {
+    "location": "Always (Child bullet: 'ps-run-layer copies a child-emitted `not-run` cell into the record as is') vs ps-run-layer.py `build_record` / `CELL_KEYS` / `RECORD_KEYS` and ps-e2e-run.py `_new_cell`",
+    "issue": "`build_record` takes only `CELL_KEYS`, which excludes `state`, `conclusive` and `reason`, and always recomputes state with `derive_state`, which would give `inconclusive`/`not-driven`. The spec says neither which fields 'as is' covers nor whether the child sets `conclusive: false`; the contract requires it. `_new_cell` defaults (`scenario_set: 'full'`, `browser_notes: []`, `phase_durations: {}`) would land in a cell that never ran, while the contract says fields no engine produced are `null`. Also unclear: whether the version's `wait-slots` entry is merged into a child not-run cell, and which version-level `boot_phases` and `install` it carries.",
+    "implementation_impact": "Different readings produce records that differ in state or reason, in `scenario_set`, and in `phase_durations`. The aggregate and plan read these, and a `scenario_set: full` not-run cell is misleading.",
+    "suggestion": "Spell it out. The child emits `state: not-run`, `conclusive: false`, `reason`, and `null` for every per-cell field, and `scenario_set` must be null. ps-run-layer takes `state`, `conclusive` and `reason` from such a cell without `derive_state`, copies version-level fields as for other cells, and merges `wait-slots` into its `phase_durations`."
+  },
+  {
+    "location": "Design Notes > Records without a child (`run_id` = ps-run-layer's own) vs cell-contract.md > Evidence record > Fields ('`run_id` = RUN_ID of the version process') and ps-run-layer.py `build_record` (crash path uses `ctx['run_id']`)",
+    "issue": "A child now runs under the claim's pre-generated id (`--run-id`). When it crashes or produces unparseable output, a child did run, so by the contract the record's `run_id` should be the claim id. Today's code writes ps-run-layer's RUN_ID, and the spec only defines `run_id` for 'records without a child' (not-run and no-slots).",
+    "implementation_impact": "Crash and browser-unavailable records will point at the wrong process unless the implementer infers the change. Correlating a crash record with the child's progress log (`run=` field) and container labels becomes impossible.",
+    "suggestion": "Add: 'for an admitted version whose child left no usable output, `run_id` = that version's claim id'."
+  },
+  {
+    "location": "Always (Child bullet `--slot-cost n`) + SPEC.md Constraints ('counted over every running E2E container ... from every client of the daemon')",
+    "issue": "A container is counted only when its process got `--slot-cost`. The spec gives no default for direct `ps-e2e-run.py` runs (SKILL.md Lapis 4, quickstart TDD loop) or for older callers, so their PS containers are unlabelled and invisible to the cap. It also does not say how `--slot-cost` is validated (0, negative, non-integer), or whether it is reserved for ps-run-layer callers only.",
+    "implementation_impact": "Direct E2E runs saturate the daemon while ps-run-layer believes slots are free, contradicting the SPEC's 'every running E2E container' constraint. Input validation for the new flag is guessed.",
+    "suggestion": "Decide: either direct runs stamp `psm.slots=1` by default (then say so and test it), or record the exemption explicitly as an interim gap. Add an input-error rule: `--slot-cost` must be an integer >= 1, else exit 2."
+  },
+  {
+    "location": "I/O row 'Labels' ('`--slot-cost 2` compose / manual; Layer 2 boot: `psm.slots` sums 2 / 2 / 0') + Tasks > ps-flashlight-run.py ('slot-cost label on the PS container only')",
+    "issue": "`_compose_file_text`, `_compose_labels_yaml` and `_bring_up_manual_inner` are shared with Layer 2, and their signatures carry no cost. The spec does not say how the value gets from ps-e2e-run `main` to them: a module global like `_JOB`, or a new parameter. With `daemon_slot_usage` stubbed and no Docker in the harness, 'sums 2/2/0' has no defined measurement: generated compose text, captured `docker run` argv, or a mocked `docker ps` parse.",
+    "implementation_impact": "The done-criterion for this row is not mechanically testable as written. The plumbing choice affects whether Layer 2 can ever accidentally inherit a cost.",
+    "suggestion": "Specify the plumbing, e.g. `fl.SLOT_COST = None` set by ps-e2e-run only, and the test method: parse the generated compose YAML and the captured manual `docker run` argv, then sum `psm.slots` across the PS, DB and network artefacts."
+  },
+  {
+    "location": "Always (Slots bullet: '`--jobs` with layer `e2e` = exit 2 naming `--slots`') vs ps-run-layer.py `main` (`--jobs` default=DEFAULT_JOBS=3; `args.jobs < 1` check runs first)",
+    "issue": "With argparse defaulting `--jobs` to 3, an explicit `--jobs` cannot be told apart from the default. The spec does not say to change the default to None. Also undefined: `--jobs`/`--slots` with `--merge-only --layer e2e` (the previous slice said `--jobs` is ignored there), and which message wins for `--jobs 0 --layer e2e`.",
+    "implementation_impact": "A literal implementation either rejects every e2e run or never rejects one. Edge-case handling for the merge-only view is guessed.",
+    "suggestion": "State: `--jobs` default None (Layers 2/5 fall back to DEFAULT_JOBS); for layer e2e (run and `--merge-only`) any `--jobs` is exit 2 naming `--slots`; `--slots` with `--merge-only` is exit 2."
+  },
+  {
+    "location": "Always (Slots bullet: '`--cleanup-orphans` once before the first admission, every mode') vs SPEC.md Constraints / cell-contract.md > Config keys ('Before entering `wait-slots`') and the docs task ('automatic `--cleanup-orphans` before `wait-slots`')",
+    "issue": "The spec says before the first admission. The contract, the SPEC and the spec's own docs task say before entering wait-slots, which happens only when the cap is full. The spec also does not say what ps-run-layer does with the `cleanup_orphans()` result: log removed and skipped artefacts, treat `status: partial`/errors, or only log to stderr.",
+    "implementation_impact": "The implementer must pick one timing; tests that assert cleanup was or was not called on an uncontended run depend on the pick. Removed orphans may go unreported to the operator.",
+    "suggestion": "Pick one wording everywhere, e.g. 'once per run, after the Docker check and before the first slot count'. Specify a stderr summary line, and say that errors never fail the run."
+  },
+  {
+    "location": "Acceptance Criteria #2 (two ps-run-layer runs sharing one registry, `--slots 1`)",
+    "issue": "The harness runs `main()` in-process. Two concurrent runs in one process share `_JOB`, `_PROGRESS`, the SIGTERM handler, `OWNER_PID` and the RUN_ID global, so the AC cannot be exercised that way. The second run is blocked only by another run's claim, so per the Slots bullet its startup-timeout clock runs, and it gets `no-slots` unless the first child is reaped before the timeout; the AC sets no timeout. ALIVE lines appear every 15 s (PROGRESS_HEARTBEAT). 'Lock dir' has no existing constant that the harness could point at a temp dir.",
+    "implementation_impact": "The AC is not testable as written. Depending on timing it contradicts the 'Foreign full' rule, and a naive test would take more than 15 s or flake.",
+    "suggestion": "Rewrite the AC. Simulate the first run with a hand-written registry entry holding a live PID (e.g. a sleeping subprocess whose cmdline matches) and a `slot_claims` entry; remove it within the startup timeout (`--startup-timeout` large); patch PROGRESS_HEARTBEAT. Name the new lock-dir constant (e.g. `fl.LOCK_DIR`)."
+  },
+  {
+    "location": "Always (Honesty law bullet: 'run exit 3 if any `fail`, else 1 if any record not `pass`') vs cell-contract.md > Runner > Output and the existing `run_e2e` exit logic",
+    "issue": "The exit rule leaves out three cases. (1) A child exit 2 forces exit 2 even when a `fail` exists. (2) A child reporting `status: skipped` gives `skipped` and exit 0 when no record is `fail`, even if not-run or no-slots records were appended. (3) A child stopped individually forces exit 1. Also undefined: a run with a skipped child plus `no-slots` cells. Is that exit 0 'skipped', which ends the E2E loop, or exit 1?",
+    "implementation_impact": "Implementing the bullet literally regresses exit-2 precedence and the skipped path. Implementing the existing logic leaves the skipped + no-slots combination to a guess.",
+    "suggestion": "Replace the bullet with the full precedence list: stop 143 > append error 2 (no line) > child exit 2 > any `fail` 3 > skipped 0 > any non-pass or stopped child 1 > 0. State explicitly how no-slots and not-run combine with skipped."
+  },
+  {
+    "location": "Tasks > docs (SKILL.md, run-phases.md, headless.md) vs run-phases.md 'Istilah E2E' > Hasil run / Infra retry and spec-psm-e2e-cap2-cap6-cell-evidence.interim-orchestration.md (Fase 2 step 3 '`--jobs` as today')",
+    "issue": "The interim orchestration classifies run outcomes only by plan reasons `fail`, `inconclusive`, `inconclusive-steps` and `browser-notes`. A `no-slots` cell (plan reason `inconclusive`) triggers an 'infra retry' that asks Budi to fix the environment with examples (`--allow-image-pull`, `playwright install`), none of which fixes no-slots. A `not-run` cell (plan reason `not-run`) is not classified at all. The frozen interim companion still says '`--jobs` as today', and the docs task does not mention any of this.",
+    "implementation_impact": "Following the docs, the orchestrator mis-handles `no-slots` (asks for a useless fix; a decline ends the E2E loop) and has no rule for `not-run` cells. The implementer must invent orchestration text in a slice whose Never list excludes CAP-1.",
+    "suggestion": "Add to the docs task: in 'Hasil run', `not-run` means waiting on the triggering cell's fix (not due until the fingerprint changes); `no-slots` is an infra reason whose remedy is to wait, lower load, or `--cleanup-orphans`. Update the interim companion's `--jobs` mention, or state that the docs supersede it."
+  },
+  {
+    "location": "Design Notes / resolve-psm-config task ('`DEFAULT_E2E_SLOTS = 6` in ps-run-layer with a drift check') vs tests/test-ps-flashlight-run.py drift block",
+    "issue": "The existing drift block lives in test-ps-flashlight-run.py, loads ps-flashlight-run as `mod`, and auto-enumerates only `psm_flashlight_*` keys. The spec names neither the file that hosts the new check nor how it reads a constant from ps-run-layer (`_literal_const` via ast, as for DEFAULT_BROWSERS?). It is also unclear whether `psm_e2e_slots` from `--config` is still validated (exit 2 on 'x') when an explicit `--slots` is given.",
+    "implementation_impact": "Minor guesses that decide test placement and an input-error edge case.",
+    "suggestion": "Name the test file and method (e.g. add a `_literal_const(ps-run-layer.py, 'DEFAULT_E2E_SLOTS')` check in test-ps-flashlight-run.py and a default assertion in test-resolve-psm-config.py). State whether `psm_e2e_slots` is validated when `--slots` is explicit."
+  },
+  {
+    "location": "Always (child exit 2 bullet) + Tasks > ps-e2e-run.py (`--run-id` validated before progress)",
+    "issue": "The exit-2 version's log was truncated by ps-run-layer and may hold only wait-slots lines. A child that rejects `--run-id` exits 2 before `progress_init`, so no `DONE` is ever written. The same holds for queued versions when the run is stopped (`--stop-job`) during `wait-slots`. The spec defines DONE only for not-run and no-slots versions.",
+    "implementation_impact": "These logs end without `DONE` and look hung under the monitoring rules. The implementer must decide whether ps-run-layer writes e.g. `DONE rc=2` or `DONE rc=stopped` for them.",
+    "suggestion": "Specify the final line ps-run-layer writes for an exit-2 version whose log lacks DONE, and for unadmitted versions on stop."
+  },
+  {
+    "location": "I/O row 'AC fail-fast' (`--cells 9.1:chromium,8.1:chromium,1.7.8:chromium`, '9.1 child fails ... 8.1 and 1.7.8 never spawned')",
+    "issue": "The row assumes 9.1 is admitted first. The spec never says whether the admission queue follows the `--cells` written order (as `parse_cells` keeps it) or the numeric version order.",
+    "implementation_impact": "If admission is sorted numerically, 1.7.8 runs first and the AC as written fails.",
+    "suggestion": "State: 'cells are queued in `--cells` written order (`--versions`: written order)'."
+  },
+  {
+    "location": "Tasks > docs (SKILL.md/run-phases.md) vs run-phases.md 'Job ID' section ('Sisa run yang prosesnya sudah mati: `--cleanup-orphans`') and SKILL.md 'Hentikan hanya secara terarah'",
+    "issue": "Only headless.md is slated to document the automatic cleanup. The interactive docs still describe `--cleanup-orphans` as a manual operator step, and they say other sessions' artefacts are never touched without approval. Automatic removal of dead owners' containers before slot counting also happens interactively.",
+    "implementation_impact": "The interactive docs would contradict script behaviour. Operators would see orphans vanish without a documented reason.",
+    "suggestion": "Add to the SKILL.md/run-phases.md docs items: ps-run-layer `--layer e2e` runs the `--cleanup-orphans` routine automatically (provably dead owners only) before slot counting."
+  }
+]

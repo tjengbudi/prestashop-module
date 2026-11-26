@@ -1,0 +1,38 @@
+[
+  {
+    "location": "Boundaries > Always (Fail-fast bullet: 'not-run records are appended at the trigger' / 'An append error stops admission as today: no not-run/no-slots record follows')",
+    "issue": "One reaped child appends its fail record, then a sibling cell's append fails. The spec does not say whether the trigger or the append error decides what queued versions get.",
+    "implementation_impact": "If the trigger wins, queued versions get not-run records and logs reduced to one 'DONE rc=not-run' line. If the append error wins, they get no record, 'END wait-slots cancelled', and 'DONE rc=2' with no output line. Two implementations can both claim to follow the spec and still differ in history and logs.",
+    "suggestion": "State the precedence explicitly, for example: 'once any append in the run has failed, a later or same-child trigger appends no not-run record; queued versions end cancelled under the append-error rule'. Add a test where one child has a fail record plus a failing sibling append."
+  },
+  {
+    "location": "Design Notes > Admission ('The no-slots clock ... advances only while a version waits and no own child is in flight ... checked after each pass's admissions')",
+    "issue": "The clock can reach the limit in the same pass in which a freed slot admits the head. The spec does not say whether the versions still queued then get no-slots, even though an own child is now in flight.",
+    "implementation_impact": "Because the check runs after admissions, the versions behind a just-admitted version may get no-slots. The contract says a cell queued behind its own run's cells waits without limit. Whether the second version runs or is recorded inconclusive depends on how the implementer reads this.",
+    "suggestion": "Specify the check exactly, for example: 'after admissions, no-slots fires only if the accumulator >= limit AND no own child is in flight'. Alternatively, check before admissions. Add a test: the foreign holder frees at limit minus epsilon, the head is admitted, and the second version must wait."
+  },
+  {
+    "location": "Design Notes > Admission ('its limit is the contract's startup timeout, and a passthrough --startup-timeout that is not an integer is exit 2 before spawn')",
+    "issue": "Only a non-integer value is rejected. A zero or negative startup timeout is not covered, from either the passthrough --startup-timeout or the config psm_flashlight_startup_timeout. read_e2e_config also accepts any int.",
+    "implementation_impact": "With a value of 0 or less, the first pass that cannot admit while no own child is in flight turns every queued cell into no-slots at once. Children also receive the same value, which they may reject or misuse. The result depends on the implementation and is untested.",
+    "suggestion": "Add: 'a startup timeout (passthrough or psm_flashlight_startup_timeout) that is not an integer >= 1 is exit 2 before spawn'. Validate it in _e2e_input/read_e2e_config, and add it to the Bad input row."
+  },
+  {
+    "location": "Boundaries > Always (Slots: 'Admission per contract ... slots.lock') / Tasks > ps-flashlight-run.py (LOCK_DIR '<tmp>/psm-locks')",
+    "issue": "No path covers a failure to create LOCK_DIR or to open or flock slots.lock (OSError, for example a read-only or full tmp, or a permission problem). Registry write failures warn and a failed docker count means full, but lock failures have no rule.",
+    "implementation_impact": "An implementer might raise, which per Design Notes > Records gives rc=crash with every wait cancelled. They might admit without the lock, which breaks count-then-claim atomicity across runs. Or they might treat it as full, which ends in no-slots. Each choice gives a different outcome.",
+    "suggestion": "Add one rule, for example: 'a slots.lock open/flock OSError counts as cap full for that pass (errors token \"slots lock failed: <reason>\"), so it ends in no-slots after the timeout'. Add a test with LOCK_DIR pointed at an unwritable path."
+  },
+  {
+    "location": "Design Notes > Records ('Every queued version goes through wait-slots, so it is recorded like any phase ... every record of a spawned version gets that entry merged')",
+    "issue": "Two kinds of admitted version legitimately leave no record: a child that reports status skipped, and a child reaped with STOPPED_CODES (a SIGTERM to that child alone). The spec does not say what happens to their wait-slots measurement or to admission after a skipped child.",
+    "implementation_impact": "The statement that wait-slots is always recorded cannot hold for these versions, and an implementer might create a record just to carry wait-slots. A skipped child (Playwright absent) also does not stop admission, so every later queued version is admitted, spawned and skipped in turn. Nothing says whether the queue should stop.",
+    "suggestion": "State that versions whose child leaves no record by contract (skipped, STOPPED_CODES, exit 2) have their wait-slots measurement dropped, and that no record is created for it. State whether a skipped child stops admission, which is unchanged from today: admission continues."
+  },
+  {
+    "location": "Design Notes > Admission ('Before the first pass ps-run-layer truncates every queued version's progress log and right after it opens wait-slots') vs cell-contract.md > Runner > Output (docker_available() false -> skipped before slot counting)",
+    "issue": "The spec does not place the docker_available() check relative to log truncation and the opening of wait-slots. The outcome list for wait-slots (ok, no-slots, cancelled, stopped) also has no entry for the skipped path when Docker is absent.",
+    "implementation_impact": "If truncation and 'START wait-slots' come before the Docker check, a run with Docker absent leaves every log with an open wait-slots phase that has no defined END outcome and ends 'DONE rc=0'. If they come after, the logs from the previous run remain. Tests and docs could pin either behaviour.",
+    "suggestion": "Add: 'docker_available() is checked before any log is truncated or wait-slots is opened. When it is false, no log is touched, and the run prints skipped and exits 0 as today.'"
+  }
+]

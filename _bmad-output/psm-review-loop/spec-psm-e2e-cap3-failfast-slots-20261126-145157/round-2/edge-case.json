@@ -1,0 +1,62 @@
+[
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:26 (Slots: `--cleanup-orphans` once before the first `wait-slots`) + Design Notes > Admission (line 79)",
+  "issue": "The spec does not say how the one-time cleanup fits into an admission pass. Open points: whether it runs while `slots.lock` is held; whether the pass recounts after the cleanup before the version enters `wait-slots`; whether cleanup time counts on the `no-slots` clock.",
+  "implementation_impact": "Run under the lock, cleanup can take minutes (several docker list/rm calls, each up to DOCKER_CMD_TIMEOUT) and blocks every other run's admission and claim removal on the host. Without a recount, a version enters `wait-slots` (START line, `wait-slots` timing entry) even though the cleanup just freed the slot it needed.",
+  "suggestion": "State the order: a pass finds the cap full, releases `slots.lock`, runs cleanup outside the lock (its time is not counted on the clock), then recounts at once. The version enters `wait-slots` only if that recount still does not fit."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:26 (cleanup 'once per run')",
+  "issue": "Cleanup runs once per run. A container leaked later in the same run is never removed during that run, for example when an own child dies (SIGKILL/OOM) or its teardown fails after the cleanup has already run. The labelled container keeps counting.",
+  "implementation_impact": "With `--slots 1`, the leaked slot is never freed. When no own child is in flight the clock advances, so every remaining queued version ends `no-slots` (the AC 'Own queue' row then fails). The orphan's owner is provably dead, and a second cleanup would remove it.",
+  "suggestion": "Also run the cleanup routine once more after reaping a child whose container is still counted (its `psm.run` is among the counted containers), or every time the run is about to start the `no-slots` clock. Otherwise state that this case ends `no-slots` and document it."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:79-80 (Design Notes > Admission/Claims: 'holds `slots.lock`')",
+  "issue": "No acquire timeout or fallback is given for `flock` on `slots.lock`. Another process may hold it forever: for example a run suspended with Ctrl-Z/SIGSTOP inside its pass, or a pass stuck in a hung non-docker call.",
+  "implementation_impact": "Every ps-run-layer on the host blocks in admission indefinitely. The `no-slots` clock is 'checked after each count', so it never fires. A blocked run cannot even reap claims, because claim removal also needs the lock. The result is a silent hang with no `ALIVE wait-slots` detail saying why.",
+  "suggestion": "Acquire the lock with a bounded non-blocking retry (`LOCK_NB` every SLOT_POLL). Time spent waiting for the lock counts on the `no-slots` clock, and the ALIVE detail names `slots.lock held` (holder pid if recorded in the lock file)."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:64 (`job_update` / `job_register`), Design Notes > Claims (line 80)",
+  "issue": "Admission counts own claims only through the registry ('live registry claims, its own included'). Today `job_register` swallows an OSError and leaves `entry_path` None. The spec gives no path for a failed register or a failed `job_update`.",
+  "implementation_impact": "When the write fails, the run's own claims for children still pulling or booting become invisible, both to itself and to other runs. With `--slots 1` the next pass counts 0 and admits a second version, so the cap is broken host-wide until the containers run.",
+  "suggestion": "Count the run's own claims from memory, not from the registry. Treat a failed registry write or update at admission as cap full for other runs (stop admitting, or stop with exit 2 and a 'registry not writable' error), and specify which."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:64 (`job_update` temp file + `os.replace`)",
+  "issue": "The temp file's name and location are not specified. `_registry_entries` globs `<job>/*.json`. A temp file named `*.json`, or one left behind when SIGTERM/JobStopped lands between write and replace, is read as a second registry entry.",
+  "implementation_impact": "A phantom entry with the same pid stays `alive` while the run lives. Its `slot_claims` are counted twice, so admission is delayed. A leftover temp file also stops `_job_unregister` from removing the job directory.",
+  "suggestion": "Require a temp name that does not match `*.json` (e.g. `.<pid>.json.tmp` in the same dir). Unlink it in a `finally`/atexit, and have `_registry_entries` ignore dot-files."
+ },
+ {
+  "location": "Design Notes > Claims (line 80) / cell-contract.md Config keys (`psm.slots` label sum)",
+  "issue": "No rule covers malformed slot data. A counted container's `psm.slots` label may be non-integer, 0 or negative, or lack `psm.job`/owner host. A live registry entry's `slot_claims` may not be a list, or may hold a claim without an integer `cost` ≥ 1 or a `run`.",
+  "implementation_impact": "`int()` on the label raises and crashes the run, or the value is silently skipped (under-count) or summed as negative (over-admission). The `<psm.job>@<host>=<cost>` detail format has no form for a missing label. Different implementers will diverge.",
+  "suggestion": "Specify that an unparseable or below-1 `psm.slots` counts as 1 and is named `<job or ?>@<host or ?>=invalid`. Specify that a malformed claim list or claim counts as 1 slot per entry (or treat the entry as unreadable = cap full), never as a crash."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:25 ('An append error stops admission as today and writes no further record') + Design Notes > Admission `wait-slots` outcomes (line 79)",
+  "issue": "Two cases are left open after an append error. (1) In-flight children reaped later: the sentence says no further record, but today's `on_reaped` still appends their records. (2) The outcome of `wait-slots` phases still open: the listed outcomes `ok`/`no-slots`/`cancelled`/`stopped` do not cover an append-error stop.",
+  "implementation_impact": "One implementer keeps appending in-flight results, which are valid evidence. Another drops them, and those cells must be rerun. Open wait-slots phases get an arbitrary END status or none. Their logs then end `DONE rc=2` with no END line.",
+  "suggestion": "State: after an append error, in-flight children are still reaped and their records attempted (or explicitly not). Open `wait-slots` phases end with outcome `cancelled` (or a new `append-error`), and queued versions get no record."
+ },
+ {
+  "location": "Design Notes > Records (line 81: 'A log ps-run-layer truncated that lacks `DONE` when it exits gets `DONE rc=<run exit code>`')",
+  "issue": "On its own `--stop-job` (JobStopped), ps-run-layer exits without waiting for in-flight children: `run_children` uses `shutdown(wait=False)`. Those children are still tearing down and will write their own `DONE rc=stopped` later. The rule does not exclude logs of unreaped children.",
+  "implementation_impact": "An in-flight version's log gets `DONE rc=143` from ps-run-layer and later the child's `DONE rc=stopped` plus teardown lines after it. That gives two DONE lines and lines after DONE. Watchers that treat the first DONE as final (headless 'log diam tanpa DONE' checks) misread the run.",
+  "suggestion": "Limit the rule to versions whose child was never spawned or has been reaped. On stop, either wait (bounded by JOB_STOP_GRACE) for in-flight children before writing, or skip DONE for them."
+ },
+ {
+  "location": "Design Notes > Claims (line 80: claim counts 'until its ps-run-layer has reaped that child')",
+  "issue": "Claims live only in ps-run-layer's registry entry. If ps-run-layer dies (SIGKILL, closed terminal) while a child still pulls or boots, `entry_state` turns `dead` and the claim stops counting. The orphaned child goes on and starts its container later.",
+  "implementation_impact": "During that window other runs see a free slot and admit work. When the orphan's PS container starts, the daemon is over the cap, and the over-commit shows up as `wait-healthy` stalls, the exact saturation CAP-3 is meant to prevent.",
+  "suggestion": "Also mirror the claim into the child's own registry entry (the child knows its `--run-id` and `--slot-cost`), so the claim counts while either process is alive. Or document the window as accepted."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:27 (child `not-run` cells kept as-is) + Design Notes > Records (line 81: `run_id` = claim id)",
+  "issue": "ps-run-layer trusts what the child emits but has no consistency rule for it. A child may emit `state: not-run` for an engine when no sibling cell of that version is `fail`, with a reason that does not match `fail-fast after <ver>:<engine>`. Its `vres.run_id` may also differ from the claim id it was given (an older child script, or `--run-id` ignored).",
+  "implementation_impact": "A non-gate-grade `not-run` record with a wrong or unrelated reason is appended as authoritative. Or a record's `run_id` disagrees with the container `psm.run` and the claim. `build_record` copies `vres.run_id` from VERSION_KEYS, so the 'claim id for every record' rule is broken silently.",
+  "suggestion": "Accept a child `not-run` cell only when the same version has an engine that ps-run-layer derives as `fail` and the reason matches. Otherwise derive the cell like a crash (`crash`/`not-driven`). Always write `run_id` = claim id, and log a mismatch with `vres.run_id`."
+ }
+]
