@@ -20,7 +20,9 @@ bukti ke himpunan bukti module lain, dan agregat mengkreditkan vonisnya ke sana.
 `<cfg>` = `<psm_reports_dir>/psm-config.json` (headless: salinan config, `headless.md`).
 Teruskan `--config <cfg>` ke Lapis 1, plan, agregat, dan `ps-run-layer.py` sebagai flag-nya
 sendiri untuk tiap lapis — **bukan** sesudah `--` (`--config`/`--browsers`/`--engines` di
-passthrough = exit 2). `--session <t>` (SKILL.md > On Activation) wajib di **tiap** panggilan
+passthrough = exit 2). Plan, run E2E, dan agregat **menolak (exit 2)** bila `<psm_reports_dir>/psm-config.json`
+ada tapi `--config` tak diberikan — tanpanya himpunan sel wajib jatuh ke default skrip dan
+menyempit diam-diam. `--session <t>` (SKILL.md > On Activation) wajib di **tiap** panggilan
 plan dan tiap run E2E (tidak di `--merge-only`). `--tag-map`/`--extra-tag-map` bila dipakai:
 identik ke tiap plan, `ps-run-layer.py` (sesudah `--`) dan agregat; `--extra-rules` yang sama
 ke Lapis 1 dan plan — plan yang tak melihat tag yang berlaku membaca bukti dari image lain

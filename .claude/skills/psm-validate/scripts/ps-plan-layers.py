@@ -843,6 +843,7 @@ def main(argv=None):
     # Himpunan sel WAJIB dibaca langsung dari --config (bukan dari args.versions yang diisi
     # apply_config_file): --versions cuma cakupan run, tak pernah menyusutkan himpunan ini.
     try:
+        fl.require_config(args.config, args.reports_dir)
         cfg_versions, cfg_browsers = fl.configured_cells(args.config)
     except fl.CellConfigError as e:
         print(f"error: himpunan sel terkonfigurasi tak sah: {e}", file=sys.stderr)

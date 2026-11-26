@@ -1158,6 +1158,19 @@ def main():
             {"module": "mymod", "status": "ran", "pass": True,
              "versions": {"9.1": {"pass": True, "install": {"ok": True}}}}), encoding="utf-8")
 
+        # psm-config.json ada di reports tapi --config absen -> exit 2 (tak menyempit diam-diam
+        # ke default skrip); kontrol: dgn --config jalan.
+        pc = rep / "psm-config.json"
+        had = pc.exists()
+        if not had:
+            pc.write_text('{"psm_target_versions": "1.7.6,9.1"}', encoding="utf-8")
+        rc_nc, err_nc = _run_main(["--reports-dir", str(rep), "--module", str(modir),
+                                   "-o", str(rep / "onc.json")])
+        ok &= check("aggregate: psm-config.json di reports tanpa --config -> exit 2 menyebut --config",
+                    rc_nc == 2 and "--config" in err_nc)
+        if not had:
+            pc.unlink()
+
         # File E2E LAMA (<module>-e2e.json / -e2e-<ver>.json) DIABAIKAN — bukan bukti, dan
         # tak bisa memicu gerbang apa pun: setelah upgrade tiap sel `missing` sampai dibuktikan ulang.
         claim = {"module": "modul-lain", "status": "ran", "e2e_available": True, "pass": True,

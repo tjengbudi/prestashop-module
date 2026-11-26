@@ -451,6 +451,25 @@ def test_e2e_cells():
     return ok
 
 
+def test_require_config_cli():
+    """<reports>/psm-config.json ada tapi --config absen -> exit 2 (tak menyempit diam-diam)."""
+    ok = True
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        m = _module(root)
+        reports = root / "reports"
+        reports.mkdir()
+        cfg = _cfg(reports, versions="1.7.6,1.7.8,8.1,9.1")
+        r, _out = _plan(m, reports, "--versions", "9.1", "--per-version")
+        ok &= check("plan: psm-config.json di reports tanpa --config -> exit 2 menyebut --config",
+                    r.returncode == 2 and "--config" in r.stderr)
+        r2, out2 = _plan(m, reports, "--versions", "9.1", "--per-version", "--config", str(cfg))
+        ok &= check("plan: dgn --config -> 1.7.6 ikut diwajibkan",
+                    r2.returncode == 0 and any(e["layer"] == "e2e" and e["version"] == "1.7.6"
+                                               for e in out2["rerun_matrix"]))
+    return ok
+
+
 def test_session_cli():
     """--new-session (token, eksklusif) & --session wajib berbentuk [a-z0-9]{16}."""
     ok = True
@@ -881,6 +900,7 @@ def main():
 
     ok &= test_e2e_cells()
     ok &= test_session_cli()
+    ok &= test_require_config_cli()
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
 

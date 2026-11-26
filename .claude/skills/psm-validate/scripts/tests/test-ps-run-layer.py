@@ -1362,6 +1362,25 @@ def test_review_patches():
     return ok
 
 
+def test_require_config():
+    """psm-config.json ada di reports tapi --config absen -> exit 2 sebelum spawn (run & view)."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        Path(rep, "psm-config.json").write_text('{"psm_target_versions": "1.7.6,9.1"}',
+                                                encoding="utf-8")
+        fake = E2EChild()
+        rc, err, out = _run_full(_e2e(rep, m, None, "--versions", "9.1"), fake)
+        ok &= check("run e2e tanpa --config padahal psm-config.json ada -> exit 2, tak spawn",
+                    rc == 2 and fake.cmds == [] and out.strip() == "" and "--config" in err)
+        fake = E2EChild()
+        rc, err, _out = _run_full(["--layer", "e2e", "--module", m, "--reports-dir", rep,
+                                   "--merge-only"], fake)
+        ok &= check("merge-only e2e tanpa --config padahal psm-config.json ada -> exit 2",
+                    rc == 2 and "--config" in err)
+    return ok
+
+
 def test_e2e_stopped():
     ok = True
     fl = mod.flashlight()
@@ -1578,6 +1597,7 @@ def main():
     ok = True
     for name, fn in (("test_pure", test_pure),
                      ("test_review_patches", test_review_patches),
+                     ("test_require_config", test_require_config),
                      ("test_execute_and_collect", test_execute_and_collect),
                      ("test_cli_gates", test_cli_gates),
                      ("test_output_is_derived", test_output_is_derived),
