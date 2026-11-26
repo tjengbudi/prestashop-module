@@ -813,6 +813,10 @@ def _e2e_input(args, extra, fl, log):
     if not pl.valid_session(args.session):
         raise InputError(f"--session tak valid: {args.session!r} — harus [a-z0-9]{{16}} "
                          "(dari ps-plan-layers.py --new-session)")
+    try:
+        fl.require_config(args.config, args.reports_dir)
+    except fl.CellConfigError as e:
+        raise InputError(str(e)) from None
     cfg = read_e2e_config(args.config, fl)
     if args.cells:
         cells = parse_cells(args.cells, cfg["versions"], cfg["browsers"])
@@ -999,6 +1003,7 @@ def merge_only_e2e(args, log):
     if bad:
         return 2
     try:
+        fl.require_config(args.config, args.reports_dir)
         cfg_versions, cfg_browsers = fl.configured_cells(args.config)
     except fl.CellConfigError as e:
         log(f"error: himpunan sel terkonfigurasi tak sah: {e}")

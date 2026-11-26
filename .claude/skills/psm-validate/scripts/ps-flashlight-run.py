@@ -1400,6 +1400,28 @@ def read_config_json(path):
     return cfg
 
 
+CONFIG_BASENAME = "psm-config.json"  # config resolved yang ditulis orkestrator di psm_reports_dir
+
+
+def require_config(config_path, reports_dir):
+    """Tolak run tanpa --config bila `<reports>/psm-config.json` ADA. Error -> CellConfigError.
+
+    Tanpa --config himpunan sel wajib jatuh ke default skrip; proyek yang menargetkan versi lain
+    (mis. menambah 1.7.6) lalu lupa --config akan mendapat `ready` atas himpunan yang lebih sempit
+    tanpa satu pun error — penyempitan diam-diam yang dilarang hukum kejujuran. Bila file config
+    resolved ada di folder laporan, pemanggil jelas punya config: wajibkan ia diteruskan.
+    Tanpa folder laporan / tanpa file itu -> default skrip tetap sah (runner tanpa resolver).
+    """
+    if config_path or not reports_dir:
+        return
+    cand = Path(reports_dir) / CONFIG_BASENAME
+    if cand.is_file():
+        raise CellConfigError(
+            f"--config tak diberikan padahal {cand} ada — tanpa --config himpunan sel wajib jatuh "
+            f"ke default skrip ({DEFAULT_TARGET_VERSIONS} × {DEFAULT_E2E_BROWSERS}) dan bisa "
+            f"menyempit diam-diam; ulangi dengan --config {cand}")
+
+
 def configured_cells(config_path=None):
     """Himpunan sel terkonfigurasi -> (versions, browsers). Error -> CellConfigError (exit 2).
 

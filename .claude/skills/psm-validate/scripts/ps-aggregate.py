@@ -929,6 +929,7 @@ def main():
 
     # Versi target = himpunan TERKONFIGURASI (bukan --versions, bukan versi di hasil static).
     try:
+        pl.fl.require_config(args.config, args.reports_dir)
         target_versions, cfg_browsers, cfg_tag_map = read_aggregate_config(args.config)
     except pl.fl.CellConfigError as e:
         return _input_error(f"himpunan sel terkonfigurasi tak sah: {e}")

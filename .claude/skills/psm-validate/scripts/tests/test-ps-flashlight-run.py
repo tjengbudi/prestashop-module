@@ -752,6 +752,21 @@ def test_configured_cells():
                 mod.version_key("10.0") > mod.version_key("9.1")
                 and mod.version_key("1.7.10") > mod.version_key("1.7.8"))
     ok &= check("duplikat persis dibuang", mod.normalize_versions("9.1,9.1, 8.1") == ["8.1", "9.1"])
+    with tempfile.TemporaryDirectory() as rd:
+        def _req(cfg, rep):
+            try:
+                mod.require_config(cfg, rep)
+                return None
+            except mod.CellConfigError as e:
+                return str(e)
+        ok &= check("require_config: tanpa psm-config.json di reports -> default sah",
+                    _req(None, rd) is None and _req(None, None) is None)
+        Path(rd, mod.CONFIG_BASENAME).write_text("{}", encoding="utf-8")
+        msg = _req(None, rd)
+        ok &= check("require_config: psm-config.json ada tapi --config absen -> error menyebut path",
+                    msg is not None and str(Path(rd, mod.CONFIG_BASENAME)) in msg)
+        ok &= check("require_config: --config diberikan -> sah",
+                    _req(str(Path(rd, mod.CONFIG_BASENAME)), rd) is None)
     try:
         mod.normalize_versions("\u0669.\u0661")  # digit Arab-Indic: \d menerimanya, regex ASCII tidak
         ok &= check("versi berdigit non-ASCII -> error input", False)
