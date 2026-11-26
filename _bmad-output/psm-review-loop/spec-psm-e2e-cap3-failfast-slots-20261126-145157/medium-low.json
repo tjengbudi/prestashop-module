@@ -1,0 +1,247 @@
+[
+ {
+  "round": 1,
+  "location": "Always > Slots (slots.lock)",
+  "issue": "edge-case-9: OSError saat membuat/membuka slots.lock tak punya jalur galat"
+ },
+ {
+  "round": 1,
+  "location": "Always > Child (--sequential-browsers)",
+  "issue": "edge-case-13: preseden engine yang tak tersedia sekaligus sesudah engine gagal (not-run vs browser-unavailable)"
+ },
+ {
+  "round": 1,
+  "location": "Always > Child (--sequential-browsers)",
+  "issue": "edge-case-14: run langsung multi-versi; engine fail-fast jelas per versi"
+ },
+ {
+  "round": 1,
+  "location": "Always > Slots (startup timeout)",
+  "issue": "edge-case-25: --startup-timeout <= 0 tak divalidasi (perilaku lama)"
+ },
+ {
+  "round": 1,
+  "location": "Always > Slots (docker absent mid-run)",
+  "issue": "edge-case-27: kontrak sudah menetapkan galat hitung = cap penuh"
+ },
+ {
+  "round": 1,
+  "location": "I/O Labels row",
+  "issue": "implementer-13: plumbing slot-cost (global vs parameter) dan cara mengukur sum di test"
+ },
+ {
+  "round": 1,
+  "location": "Tasks > resolve-psm-config + drift test",
+  "issue": "implementer-19: file host drift check tak disebut"
+ },
+ {
+  "round": 1,
+  "location": "Design Notes > Records",
+  "issue": "edge-case-22: started_at/finished_at sudah diatur kontrak Evidence record > Fields (kini ditunjuk)"
+ },
+ {
+  "round": 1,
+  "location": "Design Notes > Interim cost/mode",
+  "issue": "adversarial-14: rekaman browser_mode sequential tanpa reset snapshot bisa terbaca konform sesudah CAP-7; usul catatan deferred-work"
+ },
+ {
+  "round": 2,
+  "location": "adversarial-7",
+  "issue": "Always > Child: ps-run-layer could validate the child's not-run cell (reason, earlier fail) and treat a mismatch as crash"
+ },
+ {
+  "round": 2,
+  "location": "adversarial-15",
+  "issue": "Tasks > docs: SKILL.md token budget and placement of the new topics"
+ },
+ {
+  "round": 2,
+  "location": "edge-case-2",
+  "issue": "cleanup only once per run: a container leaked later in the run is never cleaned (changes the contract)"
+ },
+ {
+  "round": 2,
+  "location": "edge-case-3",
+  "issue": "no acquire timeout on slots.lock"
+ },
+ {
+  "round": 2,
+  "location": "edge-case-9",
+  "issue": "claims disappear while the child is still booting if ps-run-layer dies (contract-level design)"
+ },
+ {
+  "round": 2,
+  "location": "edge-case-10",
+  "issue": "child not-run reason and vres.run_id are not checked against the claim id"
+ },
+ {
+  "round": 2,
+  "location": "implementer-11",
+  "issue": "tests for the remaining Always/Design Notes rules (RESERVED_PASSTHROUGH, SLOW never, etc.)"
+ },
+ {
+  "round": 2,
+  "location": "implementer-15",
+  "issue": "Labels row: Layer 5 boot -> 0"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Admission/Claims",
+  "issue": "adversarial-1: no cross-run fairness; a run with a long queue can starve another run into no-slots (FIFO would expand scope)"
+ },
+ {
+  "round": 3,
+  "location": "Tasks > tests",
+  "issue": "adversarial-6: no child-side test that --run-id lands in psm.run/registry/progress and --progress-append keeps the log"
+ },
+ {
+  "round": 3,
+  "location": "Tasks > tests",
+  "issue": "adversarial-7: no ps-run-layer test that a child not-run cell is kept without derive_state"
+ },
+ {
+  "round": 3,
+  "location": "Always > RESERVED_PASSTHROUGH",
+  "issue": "adversarial-9: --slot-cost makes the --slo abbreviation of --slow-after exit 2; undocumented"
+ },
+ {
+  "round": 3,
+  "location": "Always > Slots",
+  "issue": "adversarial-10/implementer-8: psm_e2e_slots validated only where read_e2e_config runs; merge-only and Layers 2/5 ignore it (scope not stated)"
+ },
+ {
+  "round": 3,
+  "location": "Intent / Design Notes",
+  "issue": "adversarial-12: with default 6 slots and 3 versions cross-version fail-fast saves nothing; docs could say gain needs queueing"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Admission (progress log path)",
+  "issue": "edge-case-1: two runs of the same module+version share one progress log (pre-existing; keying by job is scope expansion)"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Admission (wait outcomes)",
+  "issue": "edge-case-3: heartbeat stop/join before END not stated for every outcome or on unexpected exceptions"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Claims",
+  "issue": "edge-case-6: a failed claim-removal write leaves a phantom claim for the rest of the run"
+ },
+ {
+  "round": 3,
+  "location": "Code Map",
+  "issue": "implementer-10: omits run_one_version, _new_cell/note, exit_code, ps-scenario-run.py and its test; cost parameter should be keyword-only for positional callers/stubs"
+ },
+ {
+  "round": 4,
+  "location": "Always > Fail-fast (trigger)",
+  "issue": "adversarial-1: trigger reads stored `fail` (derive_state) while plan/aggregate read record_state, which turns a fail with a null INCOMPLETE_KEYS field into inconclusive/incomplete-record; edge case, trigger wording matches contract and binding r1-q1"
+ },
+ {
+  "round": 4,
+  "location": "Always > Fail-fast (child exit 2); Tasks > docs",
+  "issue": "adversarial-2/implementer-3: uv run's own exit 2 now also writes `input-error after <ver>` not-run records for queued cells; known deferred-work defect (needs contract change), docs could note it"
+ },
+ {
+  "round": 4,
+  "location": "Design Notes > Admission (heartbeat)",
+  "issue": "adversarial-3: background heartbeat keeps ALIVE wait-slots flowing even if the admission loop wedges; could carry last-pass age"
+ },
+ {
+  "round": 4,
+  "location": "Design Notes > Admission (label parsing)",
+  "issue": "adversarial-5: no upper clamp on psm.slots cost; psm.job/host label values not sanitised before tab-separated parsing and log output"
+ },
+ {
+  "round": 4,
+  "location": "Design Notes > Interim cost/mode",
+  "issue": "adversarial-7: always --sequential-browsers under ps-run-layer means a Chromium fail leaves Firefox not-run even on an idle daemon; trade-off not weighed until CAP-7"
+ },
+ {
+  "round": 4,
+  "location": "Design Notes > Admission (no-slots clock)",
+  "issue": "adversarial-8: clock source unspecified; time.monotonic recommended so host sleep/WSL clock jumps do not exhaust the limit"
+ },
+ {
+  "round": 4,
+  "location": "Design Notes > Admission (ALIVE detail)",
+  "issue": "adversarial-9: ALIVE wait-slots detail does not show own-queue vs bounded no-slots wait or remaining budget"
+ },
+ {
+  "round": 4,
+  "location": "Tasks > docs (headless.md)",
+  "issue": "adversarial-10: headless return cannot tell no-slots (daemon busy) from missing Docker; tied to deferred CAP-1 Headless bullet"
+ },
+ {
+  "round": 4,
+  "location": "Design Notes > Records (wait-slots merge)",
+  "issue": "edge-case-3: merging wait-slots into a child not-run cell whose phase_durations is null must create the dict"
+ },
+ {
+  "round": 5,
+  "location": "Boundaries > Always > Child (child not-run timestamps)",
+  "issue": "adversarial-3: wall_clock of a child not-run cell spans the whole version run; contract field rule ('when ps-run-layer admitted it') is followed literally; changing it is a contract change"
+ },
+ {
+  "round": 5,
+  "location": "Tasks > docs",
+  "issue": "adversarial-4: e2e-quickstart.md / SKILL.md direct runs could warn that direct ps-e2e-run.py runs count against psm_e2e_slots but bypass admission"
+ },
+ {
+  "round": 5,
+  "location": "Design Notes > Admission (cleanup inside wait-slots)",
+  "issue": "adversarial-5: cleanup time inflates wait-slots; optional ALIVE detail 'cleanup-orphans running' and cleanup seconds in stderr summary"
+ },
+ {
+  "round": 5,
+  "location": "Boundaries > Always > Child (cell_state lazy load)",
+  "issue": "adversarial-6: eager _plan_layers() load in child main() would turn a broken scripts/ copy into a pre-boot exit 2"
+ },
+ {
+  "round": 5,
+  "location": "Boundaries > Always / I/O matrix (skipped child)",
+  "issue": "adversarial-7: skipped child admission unchanged from today (contract Runner > Output governs output line); optional explicit row"
+ },
+ {
+  "round": 5,
+  "location": "Tasks > docs (interim step 3 --cells order)",
+  "issue": "adversarial-8: orchestrator --cells order (newest first) not fixed; canary/order is CAP-1 scope"
+ },
+ {
+  "round": 5,
+  "location": "Boundaries > Always > Child (fallback stderr line)",
+  "issue": "adversarial-9: fallback message wording could avoid implying slot shortage in the CAP-3 interim"
+ },
+ {
+  "round": 5,
+  "location": "Boundaries > Always > Child (--run-id vs second fl copy)",
+  "issue": "adversarial-10: latent: ps-plan-layers' separate ps-flashlight-run copy has its own RUN_ID"
+ },
+ {
+  "round": 5,
+  "location": "Boundaries > Always > Fail-fast (append error vs trigger)",
+  "issue": "edge-case-1: same-batch precedence; 'no not-run record follows' an append error already decides it temporally"
+ },
+ {
+  "round": 5,
+  "location": "Design Notes > Admission (startup timeout <= 0)",
+  "issue": "edge-case-3: zero/negative startup timeout not rejected; behavior deterministic (immediate no-slots)"
+ },
+ {
+  "round": 5,
+  "location": "Boundaries > Always > Slots (slots.lock OSError)",
+  "issue": "edge-case-4: lock open/flock failure falls to the ps-run-layer-raises path (rc=crash); optional 'counts as full' rule"
+ },
+ {
+  "round": 5,
+  "location": "Design Notes > Records (versions with no record)",
+  "issue": "edge-case-5: skipped / STOPPED_CODES / exit-2 versions leave no record, so no wait-slots entry; could be stated"
+ },
+ {
+  "round": 5,
+  "location": "Acceptance Criteria #2 / Tasks > tests (harness seam)",
+  "issue": "implementer-4: pre-seeded registry vs fresh temp dir per _run_full call; harness extension left to the implementer"
+ }
+]

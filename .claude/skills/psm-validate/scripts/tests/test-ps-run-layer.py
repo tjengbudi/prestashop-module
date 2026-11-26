@@ -87,25 +87,46 @@ class FakeChildren:
         return [c[c.index(flag) + 1] if flag in c else None for c in self.cmds]
 
 
-def _run_full(argv, fake, docker=True):
+def _no_cleanup():
+    return {"mode": "cleanup-orphans", "status": "ran", "removed": [], "skipped": [], "errors": []}
+
+
+def _run_full(argv, fake, docker=True, *, usage=None, cleanup=None, seed=None):
     """Jalankan main() dengan anak palsu & Docker di-stub. Return (exit_code, stderr, stdout).
 
     stderr ikut dikembalikan karena beberapa gerbang menghasilkan exit code yang SAMA lewat
     jalur berbeda (lapis serial vs lapis tak dikenal; gerbang bentuk vs raise merge), jadi
     exit code saja tak membuktikan gerbang yang dimaksud yang menyala. stdout memikul baris
     output JSON Lapis 4.
+
+    Tak pernah menyentuh daemon Docker maupun registry `/tmp/psm-jobs` asli: hitungan slot
+    (`usage`, default daemon kosong) dan `--cleanup-orphans` (`cleanup`) di-stub; JOB_REGISTRY
+    dan LOCK_DIR menunjuk folder temp BARU per panggilan (`seed(registry_dir)` boleh mengisinya
+    dulu); SLOT_POLL & PROGRESS_HEARTBEAT dikecilkan.
     """
     fl = mod.flashlight()
-    real, real_docker = mod._spawn, fl.docker_available
+    saved = (mod._spawn, fl.docker_available, fl.daemon_slot_usage, fl.cleanup_orphans,
+             fl.JOB_REGISTRY, fl.LOCK_DIR, mod.SLOT_POLL, fl.PROGRESS_HEARTBEAT)
+    reg_tmp = tempfile.mkdtemp(prefix="psm-test-reg-")
     mod._spawn = fake
     fl.docker_available = lambda: docker
+    fl.daemon_slot_usage = usage or (lambda: (0, [], None))
+    fl.cleanup_orphans = cleanup or _no_cleanup
+    fl.JOB_REGISTRY = Path(reg_tmp) / "psm-jobs"
+    fl.LOCK_DIR = Path(reg_tmp) / "psm-locks"
+    mod.SLOT_POLL = 0.02
+    fl.PROGRESS_HEARTBEAT = 0.02
+    if seed:
+        seed(fl.JOB_REGISTRY)
     buf, out = io.StringIO(), io.StringIO()
     try:
         with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(out):
             rc = mod.main(argv)
     finally:
-        mod._spawn = real
-        fl.docker_available = real_docker
+        (mod._spawn, fl.docker_available, fl.daemon_slot_usage, fl.cleanup_orphans,
+         fl.JOB_REGISTRY, fl.LOCK_DIR, mod.SLOT_POLL, fl.PROGRESS_HEARTBEAT) = saved
+        import shutil as _sh0
+        _sh0.rmtree(reg_tmp, ignore_errors=True)
     kept = re.search(r"DIPERTAHANKAN untuk diagnosis: (\S+)", buf.getvalue())
     if kept and "/psm-layer-" in kept.group(1) and Path(kept.group(1)).is_dir() \
             and any(a == "e2e" for a in argv):
@@ -278,7 +299,7 @@ def test_cli_gates():
         rc_n, err_n = _run_main(["--layer", "flashlight", "--module", m, "--reports-dir", rep],
                                 fake)
         ok &= check("--versions absen (lapis selain e2e) -> exit 2", rc_n == 2 and "kosong" in err_n)
-        rc_j, _ = _run_main(["--layer", "e2e", "--module", m, "--versions", "9.1",
+        rc_j, _ = _run_main(["--layer", "flashlight", "--module", m, "--versions", "9.1",
                              "--reports-dir", rep, "--jobs", "0"], fake)
         ok &= check("--jobs 0 -> exit 2", rc_j == 2)
 
@@ -1148,8 +1169,9 @@ def test_e2e_record_fields():
 
         def behave(ver, engines):
             return _child_payload(ver, engines, tag="9.1.4-nginx"), 0
+        child = E2EChild(behave)
         rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:firefox",
-                                       more=["--job-id", job]), E2EChild(behave))
+                                       more=["--job-id", job]), child)
         recs = _hist(rep, "9.1", "firefox")
         r = recs[0] if recs else {}
         ok &= check("rekaman: kunci PERSIS Fields + boot_wall_clock + boot_log",
@@ -1162,15 +1184,18 @@ def test_e2e_record_fields():
                     (r.get("state"), r.get("conclusive"), r.get("reason")) == ("pass", True, None))
         ok &= check("rekaman: field level-versi anak disalin apa adanya",
                     r.get("boot") == "cold" and r.get("boot_id") == "c0ffee000001"
-                    and r.get("run_id") == "c0ffee000001" and r.get("image_tag") == "9.1.4-nginx"
+                    and r.get("run_id") == child.arg("--run-id")[0]
+                    and r.get("image_tag") == "9.1.4-nginx"
                     and r.get("browser_mode") == "sequential" and r.get("boot_wall_clock") == 42.5
                     and r.get("boot_phases") == {"pull": {"seconds": 1.0, "outcome": "ok"}}
                     and r.get("boot_log") is None and r.get("install") == {"ok": True}
                     and r.get("errors") == [] and r.get("scenario_notes") == [])
         ok &= check("rekaman: field sel anak (timestamp, phase_durations, scenario_set)",
                     r.get("started_at") == _iso(0) and r.get("finished_at") == _iso(7.25)
-                    and r.get("phase_durations") == {"browser:firefox": {"seconds": 7.2,
-                                                                         "outcome": "ok"}}
+                    and (r.get("phase_durations") or {}).get("browser:firefox")
+                    == {"seconds": 7.2, "outcome": "ok"}
+                    and set(r["phase_durations"]) == {"browser:firefox", "wait-slots"}
+                    and r["phase_durations"]["wait-slots"]["outcome"] == "ok"
                     and r.get("scenario_set") == "full" and r.get("authored_assertions") == 2)
         ok &= check("rekaman: wall_clock = finished_at - started_at", r.get("wall_clock") == 7.25)
         ok &= check("rekaman: pembaca plan menilainya passing gate-grade",
@@ -1193,16 +1218,16 @@ def test_e2e_crash_and_shape():
         rep, m = _e2e_env(tmp)
         cfg = _cfg(tmp)
         fl = mod.flashlight()
-        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1"),
-                                  E2EChild(lambda v, e: (None, 1)))
+        crash_child = E2EChild(lambda v, e: (None, 1))
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1"), crash_child)
         recs = _hist(rep, "9.1", "chromium") + _hist(rep, "9.1", "firefox")
         ok &= check("crash: anak exit 1 tanpa output -> exit 1", rc == 1)
         ok &= check("crash: satu rekaman inconclusive/crash per sel diadmisi",
                     len(recs) == 2 and all((r["state"], r["conclusive"], r["reason"])
                                            == ("inconclusive", False, "crash") for r in recs))
-        ok &= check("crash: run_id = RUN_ID ps-run-layer, image_tag = tag ter-resolve",
-                    all(r["run_id"] == fl.RUN_ID and r["image_tag"] == "9.1.4-nginx"
-                        for r in recs))
+        ok &= check("crash: run_id = RUN_ID klaim versi (--run-id anak), image_tag = tag ter-resolve",
+                    all(r["run_id"] == crash_child.arg("--run-id")[0] != fl.RUN_ID
+                        and r["image_tag"] == "9.1.4-nginx" for r in recs))
         ok &= check("crash: field level-versi lain null, timestamp diisi (UTC valid)",
                     all(r["boot"] is None and r["install"] is None and r["boot_log"] is None
                         and PL.parse_utc(r["started_at"]) and PL.parse_utc(r["finished_at"])
@@ -1277,12 +1302,13 @@ def test_e2e_probe_drop_and_fail():
         def drop(v, e):
             p = _child_payload(v, ["chromium"], available=["chromium"])
             return p, 0
-        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1"), E2EChild(drop))
+        drop_child = E2EChild(drop)
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1"), drop_child)
         ff = (_hist(rep, "9.1", "firefox") or [{}])[0]
         ok &= check("probe drop: firefox -> browser-unavailable",
                     (ff.get("state"), ff.get("reason")) == ("inconclusive", "browser-unavailable"))
         ok &= check("probe drop: field level-versi anak ikut di rekaman browser-unavailable",
-                    ff.get("boot") == "cold" and ff.get("run_id") == "c0ffee000001"
+                    ff.get("boot") == "cold" and ff.get("run_id") == drop_child.arg("--run-id")[0]
                     and ff.get("scenario_set") is None)
         ok &= check("probe drop: chromium tetap pass; exit 1 (ada inconclusive)",
                     _hist(rep, "9.1", "chromium")[0]["state"] == "pass" and rc == 1
@@ -1296,7 +1322,19 @@ def test_e2e_probe_drop_and_fail():
     return ok
 
 
+def _log_lines(rep, ver):
+    p = Path(rep) / f"mymod-e2e-{ver}.progress.log"
+    return p.read_text(encoding="utf-8").splitlines() if p.is_file() else []
+
+
+def _tok(line):
+    """(TOKEN, sisa) satu baris log kemajuan: <iso> job= pid= run= v= TOKEN ..."""
+    parts = line.split()
+    return (parts[5] if len(parts) > 5 else None), " ".join(parts[6:])
+
+
 def test_e2e_child_exit2():
+    """I/O 'Child exit 2': sel antre -> not-run `input-error after <ver>`, versi itu nihil, exit 2."""
     ok = True
     with tempfile.TemporaryDirectory() as tmp:
         rep, m = _e2e_env(tmp)
@@ -1304,14 +1342,24 @@ def test_e2e_child_exit2():
         fake = E2EChild(lambda v, e: (None, 2) if v == "1.7.8" else (_child_payload(v, e), 0))
         rc, err, out = _run_full(_e2e(rep, m, cfg, "--cells",
                                       "1.7.8:chromium,8.1:chromium,9.1:firefox",
-                                      more=["--jobs", "1"]), fake)
-        ok &= check("anak pertama exit 2 (--jobs 1) -> tak ada anak lain dimulai",
+                                      more=["--slots", "1"]), fake)
+        ok &= check("anak pertama exit 2 (--slots 1) -> tak ada anak lain dimulai",
                     [_ver_of(c) for c in fake.cmds] == ["1.7.8"])
-        ok &= check("anak exit 2 -> nihil di-append, exit 2",
-                    rc == 2 and not list(Path(rep).glob("*.jsonl")))
-        ok &= check("anak exit 2 -> baris output ran (pasca-spawn), appended kosong",
-                    _line(out) == {"e2e_status": "ran", "reason": None, "appended": [],
+        ok &= check("anak exit 2 -> versi itu sendiri tanpa rekaman, exit 2",
+                    rc == 2 and _hist(rep, "1.7.8", "chromium") == [])
+        nr = _hist(rep, "8.1", "chromium") + _hist(rep, "9.1", "firefox")
+        ok &= check("anak exit 2 -> sel antre not-run `input-error after 1.7.8`",
+                    len(nr) == 2 and all((r["state"], r["conclusive"], r["reason"])
+                                         == ("not-run", False, "input-error after 1.7.8")
+                                         for r in nr))
+        ok &= check("anak exit 2 -> baris output ran, appended = sel not-run",
+                    _line(out) == {"e2e_status": "ran", "reason": None,
+                                   "appended": ["8.1:chromium", "9.1:firefox"],
                                    "source_fingerprint": PL.source_fingerprint(m, rep)})
+        ok &= check("anak exit 2 -> log versi antre = satu baris DONE rc=not-run <reason>",
+                    all([_tok(ln) for ln in _log_lines(rep, v)]
+                        == [("DONE", "rc=not-run input-error after 1.7.8")]
+                        for v in ("8.1", "9.1")))
 
     with tempfile.TemporaryDirectory() as tmp:
         rep, m = _e2e_env(tmp)
@@ -1321,12 +1369,14 @@ def test_e2e_child_exit2():
                         delay={"9.1": 0.4})
         rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells",
                                        "9.1:chromium,8.1:chromium,1.7.8:chromium",
-                                       more=["--jobs", "2"]), fake)
+                                       more=["--slots", "2"]), fake)
         ok &= check("exit 2: anak yang sedang jalan selesai & rekamannya di-append",
                     rc == 2 and len(_hist(rep, "9.1", "chromium")) == 1
-                    and _line(out)["appended"] == ["9.1:chromium"])
-        ok &= check("exit 2: versi antre tak dimulai, versi exit 2 tanpa rekaman",
+                    and _line(out)["appended"] == ["1.7.8:chromium", "9.1:chromium"])
+        ok &= check("exit 2: versi antre tak dimulai (not-run), versi exit 2 tanpa rekaman",
                     "1.7.8" not in [_ver_of(c) for c in fake.cmds]
+                    and [r["reason"] for r in _hist(rep, "1.7.8", "chromium")]
+                    == ["input-error after 8.1"]
                     and _hist(rep, "8.1", "chromium") == [])
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1340,7 +1390,7 @@ def test_e2e_child_exit2():
                     "1.7.8": (None, 2)}[v]
         rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells",
                                        "9.1:chromium,8.1:chromium,1.7.8:chromium",
-                                       more=["--jobs", "3"]), E2EChild(behave))
+                                       more=["--slots", "3"]), E2EChild(behave))
         ok &= check("exit 2 mengalahkan fail & skipped (ran, exit 2)",
                     rc == 2 and _line(out)["e2e_status"] == "ran"
                     and _line(out)["reason"] is None)
@@ -1393,7 +1443,7 @@ def test_e2e_stopped():
                             else (_child_payload(v, e), 0))
             rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells",
                                            "8.1:chromium,9.1:chromium,1.7.8:chromium",
-                                           more=["--jobs", "1"]), fake)
+                                           more=["--slots", "1"]), fake)
             ok &= check(f"anak di-SIGTERM ({label}): run lanjut, baris output ada, exit 1",
                         rc == 1 and _line(out)["e2e_status"] == "ran"
                         and sorted(_line(out)["appended"]) == ["1.7.8:chromium", "8.1:chromium"])
@@ -1409,7 +1459,7 @@ def test_e2e_stopped():
                             else (_child_payload(v, e), 0))
             rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells",
                                            "8.1:chromium,9.1:chromium,1.7.8:chromium",
-                                           more=["--jobs", "1"]), fake)
+                                           more=["--slots", "1"]), fake)
             ok &= check(f"stop ({label}): exit 143, tanpa baris output",
                         rc == 143 and out.strip() == "")
             ok &= check(f"stop ({label}): rekaman anak yang sudah selesai tetap",
@@ -1417,6 +1467,12 @@ def test_e2e_stopped():
             ok &= check(f"stop ({label}): tak ada crash utk yang dihentikan / belum mulai",
                         _hist(rep, "9.1", "chromium") == [] and _hist(rep, "1.7.8", "chromium") == []
                         and [_ver_of(c) for c in fake.cmds] == ["8.1", "9.1"])
+            t178 = [_tok(ln) for ln in _log_lines(rep, "1.7.8")]
+            ok &= check(f"stop ({label}): versi antre: END wait-slots stopped lalu DONE rc=stopped",
+                        any(t == "END" and d.startswith("wait-slots stopped") for t, d in t178)
+                        and t178[-1] == ("DONE", "rc=stopped")
+                        and [_tok(ln) for ln in _log_lines(rep, "9.1")][-1]
+                        == ("DONE", "rc=stopped"))
     return ok
 
 
@@ -1467,7 +1523,7 @@ def test_e2e_completion_order():
                 seen["9.1"] = len(_hist(rep, "9.1", "chromium"))
         fake = E2EChild(delay={"8.1": 0.6}, hook=hook)
         rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells", "8.1:chromium,9.1:chromium",
-                                       more=["--jobs", "2"]), fake)
+                                       more=["--slots", "2"]), fake)
         ok &= check("anak cepat di-append SEBELUM anak lambat selesai", seen.get("9.1") == 1)
         ok &= check("appended mengikuti urutan selesai",
                     rc == 0 and _line(out)["appended"] == ["9.1:chromium", "8.1:chromium"])
@@ -1532,7 +1588,7 @@ def test_e2e_append_error():
         Path(blocker).mkdir()  # path histori berupa folder -> open() gagal
         fake = E2EChild(delay={"8.1": 0.3})
         rc, err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1,8.1",
-                                      more=["--jobs", "2"]), fake)
+                                      more=["--slots", "2"]), fake)
         ok &= check("append gagal -> exit 2 menyebut path", rc == 2 and str(blocker) in err)
         ok &= check("append gagal: sel lain & anak yang sedang jalan tetap di-append",
                     len(_hist(rep, "9.1", "firefox")) == 1 and len(_hist(rep, "8.1", "chromium")) == 1
@@ -1558,9 +1614,9 @@ def test_e2e_merge_only_view():
         legacy.write_text('{"module": "mymod", "pass": true, "versions": {}}', encoding="utf-8")
         fake = E2EChild()
         rc, err, out = _run_full(["--layer", "e2e", "--module", m, "--reports-dir", rep,
-                                  "--config", cfg, "--merge-only", "--jobs", "7"], fake)
+                                  "--config", cfg, "--merge-only"], fake)
         view = json.loads(legacy.read_text()) if legacy.is_file() else {}
-        ok &= check("merge-only e2e: exit 0, tak spawn, --jobs diabaikan",
+        ok &= check("merge-only e2e: exit 0, tak spawn",
                     rc == 0 and fake.cmds == [] and out.strip() == "")
         ok &= check("merge-only e2e: tampilan menimpa file legacy dgn {module, view, cells}",
                     set(view) == {"module", "view", "cells"} and view["view"] is True
@@ -1579,6 +1635,12 @@ def test_e2e_merge_only_view():
             rc2, err2, _o = _run_full(["--layer", "e2e", "--module", m, "--reports-dir", rep,
                                        "--config", cfg, "--merge-only", *more], E2EChild())
             ok &= check(f"merge-only e2e + {name} -> exit 2", rc2 == 2 and "merge-only" in err2)
+        for name, more, needle in (("--jobs", ["--jobs", "7"], "--slots"),
+                                   ("--slots", ["--slots", "2"], "--merge-only")):
+            rc2, err2, _o = _run_full(["--layer", "e2e", "--module", m, "--reports-dir", rep,
+                                       "--config", cfg, "--merge-only", *more], E2EChild())
+            ok &= check(f"merge-only e2e + {name} -> exit 2 (menyebut {needle})",
+                        rc2 == 2 and needle in err2)
         rc3, _e, _o = _run_full(["--layer", "e2e", "--module", m, "--reports-dir", rep,
                                  "--config", cfg, "--merge-only", "--per-version"], E2EChild())
         ok &= check("merge-only e2e + --per-version -> exit 2", rc3 == 2)
@@ -1590,6 +1652,588 @@ def test_e2e_merge_only_view():
                                  str(Path(tmp) / "tak-ada"), "--config", cfg, "--merge-only"],
                                 E2EChild())
         ok &= check("merge-only e2e: tulis gagal -> exit 2", rc5 == 2)
+    return ok
+
+
+# --- CAP-3: fail-fast, not-run, slot sedaemon (spec-psm-e2e-cap3-failfast-slots) -----------
+FL = mod.flashlight()
+THREE = "9.1:chromium,8.1:chromium,1.7.8:chromium"
+
+
+def _spawned(fake):
+    return [_ver_of(c) for c in fake.cmds]
+
+
+def _seed_entry(reg, job, pid, claims, **over):
+    """Entri registry run LAIN di folder registry temp (bukan /tmp/psm-jobs asli)."""
+    d = Path(reg) / job
+    d.mkdir(parents=True, exist_ok=True)
+    entry = {"job": job, "pid": pid, "host": FL.OWNER_HOST, "boot": FL.OWNER_BOOT,
+             "ns": FL.OWNER_NS, "slot_claims": claims}
+    entry.update(over)
+    path = d / f"{pid}.json"
+    path.write_text(json.dumps(entry), encoding="utf-8")
+    return path
+
+
+def _usage(used=0, counted=(), err=None):
+    return lambda: (used if err is None else None, list(counted) if err is None else [], err)
+
+
+def test_e2e_failfast_ac():
+    """I/O 'AC fail-fast' + AC 1: --slots 1, daemon kosong, 9.1 gagal -> 8.1 & 1.7.8 tak
+    pernah di-spawn, not-run `fail-fast after 9.1:chromium`, log = satu DONE, exit 3."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        fake = E2EChild(lambda v, e: (_child_payload(v, e, kind="fail"), 3) if v == "9.1"
+                        else (_child_payload(v, e), 0))
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells", THREE, more=["--slots", "1"]),
+                                  fake, usage=_usage(0))
+        ok &= check("AC fail-fast: exit 3, hanya 9.1 di-spawn", rc == 3 and _spawned(fake) == ["9.1"])
+        ok &= check("AC 1: baris output `appended` memuat KETIGA sel",
+                    _line(out)["e2e_status"] == "ran"
+                    and sorted(_line(out)["appended"]) == sorted(THREE.split(",")))
+        ok &= check("AC 1: tiap histori tepat satu rekaman",
+                    all(len(_hist(rep, v, "chromium")) == 1 for v in ("9.1", "8.1", "1.7.8")))
+        nr = [_hist(rep, v, "chromium")[0] for v in ("8.1", "1.7.8")]
+        ok &= check("AC fail-fast: not-run, conclusive false, reason `fail-fast after 9.1:chromium`",
+                    all((r["state"], r["conclusive"], r["reason"])
+                        == ("not-run", False, "fail-fast after 9.1:chromium") for r in nr))
+        ok &= check("not-run: wait-slots yang dibatalkan tercatat `cancelled` di phase_durations",
+                    all(set(r["phase_durations"]) == {"wait-slots"}
+                        and r["phase_durations"]["wait-slots"]["outcome"] == "cancelled"
+                        for r in nr))
+        ok &= check("not-run: run_id ps-run-layer, timestamp UTC valid, kunci rekaman persis",
+                    all(r["run_id"] == FL.RUN_ID and PL.parse_utc(r["started_at"])
+                        and PL.parse_utc(r["finished_at"]) and set(r) == RECORD_FIELDS
+                        for r in nr))
+        ok &= check("not-run tak pernah gate-grade",
+                    not any(PL.is_gate_grade(r, PL.source_fingerprint(m, rep), r["image_tag"])
+                            for r in nr))
+        ok &= check("AC fail-fast: log 8.1 & 1.7.8 = satu baris DONE rc=not-run, tanpa bring-up",
+                    all([_tok(ln) for ln in _log_lines(rep, v)]
+                        == [("DONE", "rc=not-run fail-fast after 9.1:chromium")]
+                        and "bring-up" not in "".join(_log_lines(rep, v))
+                        for v in ("8.1", "1.7.8")))
+        f91 = _hist(rep, "9.1", "chromium")[0]
+        ok &= check("9.1: rekaman fail, wait-slots ok (diadmisi pass pertama) + browser:chromium",
+                    f91["state"] == "fail"
+                    and f91["phase_durations"]["wait-slots"]["outcome"] == "ok"
+                    and "browser:chromium" in f91["phase_durations"])
+    # Engine gagal PERTAMA menurut urutan psm_e2e_browsers yang menamai sel pemicu.
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp, browsers="firefox,chromium")
+        fake = E2EChild(lambda v, e: (_child_payload(v, e, kind="fail"), 3) if v == "9.1"
+                        else (_child_payload(v, e), 0))
+        rc, _err, _out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium+firefox,8.1:chromium",
+                                        more=["--slots", "1"]), fake)
+        ok &= check("dua engine gagal: sel pemicu = yang pertama di psm_e2e_browsers (firefox)",
+                    rc == 3 and [r["reason"] for r in _hist(rep, "8.1", "chromium")]
+                    == ["fail-fast after 9.1:firefox"])
+    return ok
+
+
+def test_e2e_fail_in_flight():
+    """I/O 'Fail in flight': --slots 2, 9.1 gagal saat 8.1 jalan, 1.7.8 antre."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        fake = E2EChild(lambda v, e: (_child_payload(v, e, kind="fail"), 3) if v == "9.1"
+                        else (_child_payload(v, e), 0), delay={"8.1": 0.5})
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells", THREE, more=["--slots", "2"]), fake)
+        ok &= check("fail in flight: exit 3; 1.7.8 tak di-spawn", rc == 3
+                    and sorted(_spawned(fake)) == ["8.1", "9.1"])
+        ok &= check("fail in flight: 8.1 (sedang jalan) selesai & di-append (pass)",
+                    [r["state"] for r in _hist(rep, "8.1", "chromium")] == ["pass"])
+        ok &= check("fail in flight: 1.7.8 not-run, di-append SAAT pemicu (sebelum 8.1)",
+                    [r["state"] for r in _hist(rep, "1.7.8", "chromium")] == ["not-run"]
+                    and _line(out)["appended"] == ["9.1:chromium", "1.7.8:chromium", "8.1:chromium"])
+    return ok
+
+
+def test_e2e_no_failfast_cases():
+    """I/O 'Exit 1 child' + exit-3 anak ber-output rusak (crash): tak ada fail-fast."""
+    ok = True
+    for label, behave, want_rc in (
+            ("anak pertama inconclusive (exit 1)",
+             lambda v, e: (_child_payload(v, e, kind="boot"), 1) if v == "9.1"
+             else (_child_payload(v, e), 0), 1),
+            ("anak exit 3 tapi output rusak -> crash",
+             lambda v, e: ("{rusak", 3) if v == "9.1" else (_child_payload(v, e), 0), 1)):
+        with tempfile.TemporaryDirectory() as tmp:
+            rep, m = _e2e_env(tmp)
+            cfg = _cfg(tmp)
+            fake = E2EChild(behave)
+            rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells", THREE, more=["--slots", "1"]),
+                                      fake)
+            recs = [r for v in ("9.1", "8.1", "1.7.8") for r in _hist(rep, v, "chromium")]
+            ok &= check(f"{label}: tanpa fail-fast, sisa versi tetap jalan, exit {want_rc}",
+                        rc == want_rc and _spawned(fake) == ["9.1", "8.1", "1.7.8"]
+                        and not any(r["state"] == "not-run" for r in recs) and len(recs) == 3)
+            if "crash" in label:
+                ok &= check("exit 3 + output rusak -> rekaman crash (bukan fail)",
+                            [r["reason"] for r in _hist(rep, "9.1", "chromium")] == ["crash"])
+    return ok
+
+
+def test_e2e_batch_fail_and_exit2():
+    """`fail` (lebih awal di rencana) dan exit 2 di-reap dalam SATU batch -> alasan
+    `fail-fast after <ver fail>:…` untuk sel antre, exit 2."""
+    import threading
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        go = threading.Event()
+        calls = {"n": 0}
+
+        def behave(v, e):
+            if v in ("9.1", "8.1"):
+                go.wait(10)
+            return {"9.1": (_child_payload(v, e, kind="fail"), 3), "8.1": (None, 2),
+                    "1.7.8": (_child_payload(v, e), 0)}[v]
+
+        def usage():
+            calls["n"] += 1
+            if calls["n"] == 2:  # hitungan pass kedua "menggantung": kedua anak selesai di sini
+                go.set()
+                time.sleep(0.4)
+            return 0, [], None
+        fake = E2EChild(behave)
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells", THREE, more=["--slots", "2"]),
+                                  fake, usage=usage)
+        ok &= check("satu batch: exit 2 (anak exit 2 tetap membuat run exit 2), baris ran",
+                    rc == 2 and _line(out)["e2e_status"] == "ran")
+        ok &= check("satu batch: urut rencana -> alasan = fail-fast after 9.1:chromium",
+                    [r["reason"] for r in _hist(rep, "1.7.8", "chromium")]
+                    == ["fail-fast after 9.1:chromium"] and "1.7.8" not in _spawned(fake))
+        ok &= check("satu batch: 9.1 fail di-append, 8.1 (exit 2) tanpa rekaman",
+                    [r["state"] for r in _hist(rep, "9.1", "chromium")] == ["fail"]
+                    and _hist(rep, "8.1", "chromium") == [])
+    return ok
+
+
+def test_e2e_foreign_full():
+    """I/O 'Foreign full': hitungan daemon = slot selamanya, `-- --startup-timeout 1` ->
+    tiap sel no-slots, tak ada anak di-spawn, exit 1; `errors` menyebut isi cap."""
+    ok = True
+    counted = [{"job": "other-e2e-0900-beef", "host": "hostA", "run": "r1", "cost": 2},
+               {"job": "orphan-e2e-0800-dead", "host": "hostB", "run": "r2", "cost": None}]
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        fake = E2EChild()
+        t0 = time.monotonic()
+        rc, err, out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium+firefox,8.1:chromium",
+                                      more=["--slots", "3"], extra=["--startup-timeout", "1"]),
+                                 fake, usage=_usage(3, counted))
+        took = time.monotonic() - t0
+        recs = _hist(rep, "9.1", "chromium") + _hist(rep, "9.1", "firefox") + _hist(rep, "8.1", "chromium")
+        want_err = ["other-e2e-0900-beef@hostA=2", "orphan-e2e-0800-dead@hostB=?"]
+        ok &= check("foreign full: tak ada anak di-spawn, exit 1, ~startup-timeout ditunggu",
+                    fake.cmds == [] and rc == 1 and took >= 0.9)
+        ok &= check("foreign full: tiap sel no-slots (inconclusive, conclusive false)",
+                    len(recs) == 3 and all((r["state"], r["conclusive"], r["reason"])
+                                           == ("inconclusive", False, "no-slots") for r in recs))
+        ok &= check("foreign full: errors = container terhitung <job>@<host>=<cost> (label rusak =?)",
+                    all(r["errors"] == want_err for r in recs))
+        ok &= check("foreign full: phase_durations = {wait-slots: no-slots}, run_id ps-run-layer",
+                    all(set(r["phase_durations"]) == {"wait-slots"}
+                        and r["phase_durations"]["wait-slots"]["outcome"] == "no-slots"
+                        and r["run_id"] == FL.RUN_ID for r in recs))
+        ok &= check("foreign full: baris output ran, appended ketiga sel",
+                    _line(out)["e2e_status"] == "ran" and len(_line(out)["appended"]) == 3)
+        for v in ("9.1", "8.1"):
+            toks = [_tok(ln) for ln in _log_lines(rep, v)]
+            ok &= check(f"foreign full: log {v} START wait-slots ... END no-slots + DONE rc=no-slots",
+                        toks[0][0] == "START" and toks[-2][0] == "END"
+                        and toks[-2][1].startswith("wait-slots no-slots")
+                        and toks[-1] == ("DONE", "rc=no-slots"))
+            alive = [d for t, d in toks if t == "ALIVE"]
+            ok &= check(f"foreign full: ALIVE {v} menyebut isi cap, sisa budget & pass terakhir",
+                        any("other-e2e-0900-beef@hostA=2, orphan-e2e-0800-dead@hostB=?" in d
+                            and "budget" in d and "last pass" in d for d in alive))
+    return ok
+
+
+def test_e2e_own_queue():
+    """I/O 'Own queue': --slots 1, dua versi, anak lebih lama dari startup timeout -> versi
+    kedua menunggu melewatinya lalu jalan. + cleanup sekali, sesudah semua START wait-slots &
+    sebelum hitungan pertama; klaim registry; tak ada SLOW."""
+    ok = True
+    saved = (FL.PROGRESS_SLOW_AFTER, dict(FL._PROGRESS))
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        calls = {"usage": 0, "cleanup": []}
+
+        def usage():
+            calls["usage"] += 1
+            return 0, [], None
+
+        def cleanup():
+            calls["cleanup"].append({"usage_before": calls["usage"],
+                                     "logs": {v: [_tok(ln) for ln in _log_lines(rep, v)]
+                                              for v in ("9.1", "8.1")}})
+            time.sleep(0.15)  # denyut ALIVE 'cleanup-orphans running' sempat ditulis
+            return _no_cleanup()
+        reg_claims = {}
+
+        def hook(ver):
+            entries = FL._registry_entries()
+            own = [e for es in entries.values() for e in es if e.get("pid") == FL.OWNER_PID]
+            reg_claims[ver] = [c["run"] for e in own for c in e.get("slot_claims") or []]
+        fake = E2EChild(delay={"9.1": 1.5}, hook=hook)
+        FL.PROGRESS_SLOW_AFTER = 0
+        FL._PROGRESS["slow_after"] = 0.001
+        try:
+            rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium,8.1:chromium",
+                                           more=["--slots", "1"],
+                                           extra=["--startup-timeout", "1"]),
+                                      fake, usage=usage, cleanup=cleanup)
+        finally:
+            FL.PROGRESS_SLOW_AFTER = saved[0]
+            FL._PROGRESS.clear()
+            FL._PROGRESS.update(saved[1])
+        r81 = (_hist(rep, "8.1", "chromium") or [{}])[0]
+        ok &= check("own queue: kedua versi jalan berurutan, exit 0, tanpa no-slots",
+                    rc == 0 and fake.done == ["9.1", "8.1"] and r81.get("state") == "pass")
+        ws = (r81.get("phase_durations") or {}).get("wait-slots") or {}
+        ok &= check("own queue: 8.1 menunggu MELEWATI startup timeout (wait-slots ok >= 1.2s)",
+                    ws.get("outcome") == "ok" and ws.get("seconds", 0) >= 1.2)
+        claims = dict(zip(_spawned(fake), fake.arg("--run-id")))
+        ok &= check("klaim: registry memuat klaim versi itu saat spawn; klaim 9.1 dilepas saat reap",
+                    reg_claims.get("9.1") == [claims["9.1"]] and reg_claims.get("8.1") == [claims["8.1"]])
+        alive81 = [d for t, d in (_tok(ln) for ln in _log_lines(rep, "8.1")) if t == "ALIVE"]
+        ok &= check("own queue: ALIVE wait-slots 8.1 menyebut klaim 9.1 & 'own queue'",
+                    any("claim:" in d and claims["9.1"] in d and "own queue" in d for d in alive81))
+        ok &= check("ALIVE wait-slots 'cleanup-orphans running' selama pembersihan",
+                    any("cleanup-orphans running" in d for d in alive81))
+        ok &= check("cleanup dipanggil TEPAT sekali, sebelum hitungan pertama",
+                    len(calls["cleanup"]) == 1 and calls["cleanup"][0]["usage_before"] == 0)
+        ok &= check("cleanup: saat itu log SETIAP versi antre sudah berisi START wait-slots",
+                    bool(calls["cleanup"]) and all(
+                        toks and toks[0][0] == "START" and toks[0][1].startswith("wait-slots")
+                        for toks in calls["cleanup"][0]["logs"].values()))
+        ok &= check("tak ada fase tunggu yang menulis SLOW (slow_after ~0)",
+                    not any(_tok(ln)[0] == "SLOW" for v in ("9.1", "8.1")
+                            for ln in _log_lines(rep, v)))
+    return ok
+
+
+def test_e2e_slots_suffice():
+    """Slot cukup: cleanup tetap sekali & sebelum hitungan; tiap anak menerima --run-id <klaim>
+    --slot-cost 1 --progress-append --sequential-browsers; log ditutup DONE bila anak tak menulisnya."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        calls = {"usage": 0, "cleanup": []}
+
+        def usage():
+            calls["usage"] += 1
+            return 0, [], None
+
+        def cleanup():
+            calls["cleanup"].append((calls["usage"], {v: [_tok(ln) for ln in _log_lines(rep, v)]
+                                                      for v in ("9.1", "8.1")}))
+            return _no_cleanup()
+        fake = E2EChild(lambda v, e: (_child_payload(v, e), 1 if v == "8.1" else 0))
+        rc, err, _out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1,8.1"), fake,
+                                  usage=usage, cleanup=cleanup)
+        ok &= check("slot cukup (default 6): kedua versi diadmisi pass pertama",
+                    rc == 0 and sorted(_spawned(fake)) == ["8.1", "9.1"] and calls["usage"] == 1)
+        ok &= check("slot cukup: cleanup sekali, sebelum hitungan, sesudah START wait-slots tiap log",
+                    len(calls["cleanup"]) == 1 and calls["cleanup"][0][0] == 0
+                    and all(t and t[0][0] == "START" for t in calls["cleanup"][0][1].values()))
+        ok &= check("cleanup: ringkasannya di stderr", "cleanup-orphans otomatis" in err)
+        ids = fake.arg("--run-id")
+        ok &= check("tiap anak: --run-id <klaim hex12 unik> --slot-cost 1 --progress-append "
+                    "--sequential-browsers",
+                    all(re.fullmatch(r"[0-9a-f]{12}", i or "") for i in ids) and len(set(ids)) == 2
+                    and fake.arg("--slot-cost") == ["1", "1"]
+                    and all("--progress-append" in c and "--sequential-browsers" in c
+                            for c in fake.cmds))
+        recs = _hist(rep, "9.1", "chromium") + _hist(rep, "8.1", "firefox")
+        ok &= check("pass pertama: rekaman membawa wait-slots outcome ok",
+                    all(r["phase_durations"]["wait-slots"]["outcome"] == "ok" for r in recs))
+        t91 = [_tok(ln) for ln in _log_lines(rep, "9.1")]
+        ok &= check("log: START wait-slots, END wait-slots ok, lalu DONE rc=<exit anak> (anak "
+                    "tiruan tak menulis DONE)",
+                    t91[0][0] == "START" and ("END", t91[1][1]) == t91[1]
+                    and t91[1][1].startswith("wait-slots ok") and t91[-1] == ("DONE", "rc=0")
+                    and [_tok(ln) for ln in _log_lines(rep, "8.1")][-1] == ("DONE", "rc=1"))
+    return ok
+
+
+def test_e2e_count_error():
+    """I/O 'Count error': docker ps gagal = penuh -> no-slots sesudah batas (config 0 di sini),
+    `errors` = `docker count failed: <ekor stderr>`."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp, psm_flashlight_startup_timeout="0")
+        fake = E2EChild()
+        msg = "Cannot connect to the Docker daemon.\n   Is the docker daemon running?"
+        rc, _err, _out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium"), fake,
+                                   usage=_usage(err=msg))
+        r = (_hist(rep, "9.1", "chromium") or [{}])[0]
+        ok &= check("count error: tak spawn, no-slots, exit 1",
+                    fake.cmds == [] and rc == 1 and r.get("reason") == "no-slots")
+        ok &= check("count error: errors = 'docker count failed: ' + ekor (whitespace diringkas)",
+                    r.get("errors") == ["docker count failed: Cannot connect to the Docker daemon. "
+                                        "Is the docker daemon running?"])
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp, psm_flashlight_startup_timeout="0")
+        rc, _err, _out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium"), E2EChild(),
+                                   usage=_usage(err="x" * 300 + "TAIL"))
+        e = (_hist(rep, "9.1", "chromium") or [{}])[0].get("errors") or [""]
+        ok &= check("count error: ekor dibatasi 200 karakter terakhir",
+                    e[0] == "docker count failed: " + ("x" * 196 + "TAIL"))
+    return ok
+
+
+def test_e2e_claim_counting():
+    """Klaim + container PS-nya = 1; klaim + container DB-nya saja (tak berlabel) = 1; klaim
+    entri mati / asing = 0; cost klaim rusak = 1 (`=?`)."""
+    import subprocess as sp
+    ok = True
+    job = "other-e2e-0900-beef"
+    sleeper = sp.Popen(["sleep", "30"])
+    dead = sp.Popen(["true"])
+    dead.wait()
+    try:
+        cases = [
+            ("klaim + container PS-nya (slot 1) -> penuh oleh container saja", "1",
+             [{"run": "aaaaaaaaaaaa", "cost": 1}], sleeper.pid, {},
+             [{"job": job, "host": "hostA", "run": "aaaaaaaaaaaa", "cost": 1}],
+             ["other-e2e-0900-beef@hostA=1"]),
+            ("klaim + container PS-nya (slot 2) -> = 1, masih muat", "2",
+             [{"run": "aaaaaaaaaaaa", "cost": 1}], sleeper.pid, {},
+             [{"job": job, "host": "hostA", "run": "aaaaaaaaaaaa", "cost": 1}], None),
+            ("klaim tanpa container PS (DB tak berlabel) -> klaim = 1", "1",
+             [{"run": "bbbbbbbbbbbb", "cost": 1}], sleeper.pid, {}, [],
+             [f"claim:{job}/bbbbbbbbbbbb=1"]),
+            ("klaim cost rusak -> dihitung 1, tampil =?", "1",
+             [{"run": "cccccccccccc", "cost": "x"}], sleeper.pid, {}, [],
+             [f"claim:{job}/cccccccccccc=?"]),
+            ("klaim entri mati -> 0", "1", [{"run": "dddddddddddd", "cost": 1}], dead.pid, {},
+             [], None),
+            ("klaim entri host lain -> 0", "1", [{"run": "eeeeeeeeeeee", "cost": 1}],
+             sleeper.pid, {"host": "host-lain"}, [], None),
+        ]
+        for label, slots, claims, pid, over, counted, want_err in cases:
+            with tempfile.TemporaryDirectory() as tmp:
+                rep, m = _e2e_env(tmp)
+                cfg = _cfg(tmp)
+                fake = E2EChild()
+                used = sum(c["cost"] for c in counted)
+                rc, _err, _out = _run_full(
+                    _e2e(rep, m, cfg, "--cells", "9.1:chromium", more=["--slots", slots],
+                         extra=["--startup-timeout", "0"]), fake,
+                    usage=_usage(used, counted),
+                    seed=lambda reg, c=claims, p=pid, o=over: _seed_entry(reg, job, p, c, **o))
+                r = (_hist(rep, "9.1", "chromium") or [{}])[0]
+                if want_err is None:
+                    ok &= check(f"{label}: diadmisi", rc == 0 and _spawned(fake) == ["9.1"])
+                else:
+                    ok &= check(f"{label}: no-slots, errors {want_err}",
+                                fake.cmds == [] and r.get("reason") == "no-slots"
+                                and r.get("errors") == want_err)
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+    return ok
+
+
+def test_e2e_ac2_foreign_claim():
+    """AC 2: --slots 1, --startup-timeout besar, entri registry `alive` milik run lain memegang
+    satu klaim -> run menunggu di wait-slots (ALIVE menyebut claim:<job>/<run>=1) dan diadmisi
+    begitu klaim itu dilepas."""
+    import subprocess as sp
+    import threading
+    ok = True
+    job, run = "other-e2e-0900-beef", "0123456789ab"
+    sleeper = sp.Popen(["sleep", "60"])
+    state = {}
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            rep, m = _e2e_env(tmp)
+            cfg = _cfg(tmp)
+            log = Path(rep) / "mymod-e2e-9.1.progress.log"
+
+            def seed(reg):
+                state["entry"] = _seed_entry(reg, job, sleeper.pid, [{"run": run, "cost": 1}])
+
+            def watcher():
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    text = log.read_text(encoding="utf-8") if log.is_file() else ""
+                    if any(" ALIVE wait-slots " in ln and f"claim:{job}/{run}=1" in ln
+                           for ln in text.splitlines()):
+                        state["seen"] = True
+                        break
+                    time.sleep(0.02)
+                time.sleep(0.2)  # tetap menunggu sebentar: tak boleh diadmisi selama klaim ada
+                state["spawned_before_release"] = bool(fake.cmds)
+                entry = state.get("entry")
+                if entry is not None:
+                    data = json.loads(entry.read_text(encoding="utf-8"))
+                    data.pop("slot_claims", None)
+                    entry.write_text(json.dumps(data), encoding="utf-8")
+                state["released"] = time.monotonic()
+            fake = E2EChild(hook=lambda v: state.setdefault("spawn_at", time.monotonic()))
+            th = threading.Thread(target=watcher, daemon=True)
+            th.start()
+            rc, _err, _out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium",
+                                            more=["--slots", "1"],
+                                            extra=["--startup-timeout", "600"]),
+                                       fake, usage=_usage(0), seed=seed)
+            th.join(timeout=30)
+            ok &= check("AC 2: ALIVE wait-slots menyebut claim:<job>/<run>=1", state.get("seen") is True)
+            ok &= check("AC 2: tak diadmisi selama klaim asing ada",
+                        state.get("spawned_before_release") is False)
+            ok &= check("AC 2: diadmisi begitu klaim dilepas, exit 0",
+                        rc == 0 and _spawned(fake) == ["9.1"]
+                        and state.get("spawn_at", 0) >= state.get("released", float("inf")))
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+    return ok
+
+
+def test_e2e_slots_input_errors():
+    """I/O 'Bad input' (sisi runner) + flag RESERVED baru; kontrol positif sumber nilai slot."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        bad_x = _cfg(tmp, name="sx.json", psm_e2e_slots="x")
+        bad_0 = _cfg(tmp, name="s0.json", psm_e2e_slots="0")
+        cases = [
+            ("--slots 0", _e2e(rep, m, cfg, "--versions", "9.1", more=["--slots", "0"]), None),
+            ("--slots -1", _e2e(rep, m, cfg, "--versions", "9.1", more=["--slots=-1"]), None),
+            ("--slots x", _e2e(rep, m, cfg, "--versions", "9.1", more=["--slots", "x"]), None),
+            ("--slots 1.5", _e2e(rep, m, cfg, "--versions", "9.1", more=["--slots", "1.5"]), None),
+            ("psm_e2e_slots 'x'", _e2e(rep, m, bad_x, "--versions", "9.1"), "psm_e2e_slots"),
+            ("psm_e2e_slots '0'", _e2e(rep, m, bad_0, "--versions", "9.1"), "psm_e2e_slots"),
+            ("psm_e2e_slots 'x' walau --slots 2", _e2e(rep, m, bad_x, "--versions", "9.1",
+                                                        more=["--slots", "2"]), "psm_e2e_slots"),
+            ("--jobs 2 --layer e2e", _e2e(rep, m, cfg, "--versions", "9.1", more=["--jobs", "2"]),
+             "--slots"),
+            ("--startup-timeout passthrough bukan bilangan",
+             _e2e(rep, m, cfg, "--versions", "9.1", extra=["--startup-timeout", "abc"]),
+             "--startup-timeout"),
+            ("--slots dgn lapis flashlight", ["--layer", "flashlight", "--module", m,
+                                              "--reports-dir", rep, "--versions", "9.1",
+                                              "--slots", "2"], "--slots"),
+        ]
+        for flag in ("--run-id", "--slot-cost", "--progress-append", "--sequential-browsers"):
+            cases.append((f"{flag} di passthrough", _e2e(rep, m, cfg, "--versions", "9.1",
+                                                         extra=[flag, "1"]), flag))
+        cases += [("--run-id=x di passthrough", _e2e(rep, m, cfg, "--versions", "9.1",
+                                                     extra=["--run-id=0123456789ab"]), "--run-id"),
+                  ("singkatan --slo di passthrough", _e2e(rep, m, cfg, "--versions", "9.1",
+                                                          extra=["--slo", "2"]), "--slot-cost"),
+                  ("singkatan --sequ di passthrough", _e2e(rep, m, cfg, "--versions", "9.1",
+                                                           extra=["--sequ"]), "--sequential")]
+        for name, argv, needle in cases:
+            fake = E2EChild()
+            rc, err, out = _run_full(argv, fake)
+            ok &= check(f"input: {name} -> exit 2, tak spawn, tanpa baris output",
+                        rc == 2 and fake.cmds == [] and out.strip() == ""
+                        and (needle is None or needle in err))
+        for flag in ("--run-id", "--slot-cost", "--progress-append", "--sequential-browsers"):
+            ok &= check(f"RESERVED_PASSTHROUGH memuat {flag}", flag in mod.RESERVED_PASSTHROUGH)
+        # Kontrol positif: sumber N = --slots > psm_e2e_slots > 6; kosong = default.
+        for label, c, more, want in (
+                ("default 6", cfg, [], "6 slot"),
+                ("psm_e2e_slots kosong = default", _cfg(tmp, name="se.json", psm_e2e_slots=""),
+                 [], "6 slot"),
+                ("psm_e2e_slots '2'", _cfg(tmp, name="s2.json", psm_e2e_slots="2"), [], "2 slot"),
+                ("--slots 4 menang atas psm_e2e_slots '2'", _cfg(tmp, name="s2b.json",
+                                                                 psm_e2e_slots="2"),
+                 ["--slots", "4"], "4 slot")):
+            rc, err, _out = _run_full(_e2e(rep, m, c, "--cells", "9.1:chromium",
+                                           more=[*more, "--verbose"]), E2EChild())
+            ok &= check(f"slot: {label} -> {want}", rc == 0 and f"{want} sedaemon" in err)
+    return ok
+
+
+def test_e2e_child_not_run_kept():
+    """Sel `not-run` dari anak (fail-fast antar-engine) dipertahankan tanpa derive_state."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+
+        def behave(v, e):
+            p = _child_payload(v, e, kind="fail")
+            p["versions"][v]["cells"]["firefox"] = mod.e2e_module()._not_run_cell(
+                f"fail-fast after {v}:chromium")
+            return p, 3
+        rc, _err, _out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium+firefox"),
+                                   E2EChild(behave))
+        ff = (_hist(rep, "9.1", "firefox") or [{}])[0]
+        ok &= check("anak not-run: state/conclusive/reason dipertahankan (bukan derive_state)",
+                    (ff.get("state"), ff.get("conclusive"), ff.get("reason"))
+                    == ("not-run", False, "fail-fast after 9.1:chromium")
+                    and PL.derive_state(ff, "firefox")["state"] != "not-run")
+        ok &= check("anak not-run: sisanya seperti sel yang tak di-drive (timestamp diisi, "
+                    "phase_durations = wait-slots saja, field level-versi disalin)",
+                    PL.parse_utc(ff.get("started_at")) and PL.parse_utc(ff.get("finished_at"))
+                    and set(ff.get("phase_durations") or {}) == {"wait-slots"}
+                    and ff.get("scenario_set") is None and ff.get("boot") == "cold")
+        ok &= check("anak not-run: chromium fail, exit 3",
+                    rc == 3 and _hist(rep, "9.1", "chromium")[0]["state"] == "fail")
+    return ok
+
+
+def test_e2e_own_exception():
+    """ps-run-layer sendiri meledak (exception di pass admisi): tunggu terbuka berakhir
+    `cancelled`, log antre ditutup DONE rc=crash, lalu exception dilempar ulang."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+
+        def boom():
+            raise RuntimeError("hitungan meledak")
+        raised = False
+        try:
+            _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium"), E2EChild(), usage=boom)
+        except RuntimeError:
+            raised = True
+        toks = [_tok(ln) for ln in _log_lines(rep, "9.1")]
+        ok &= check("exception sendiri: dilempar ulang; END wait-slots cancelled + DONE rc=crash",
+                    raised and any(t == "END" and d.startswith("wait-slots cancelled")
+                                   for t, d in toks) and toks[-1] == ("DONE", "rc=crash"))
+    return ok
+
+
+def test_e2e_append_error_cancels():
+    """Galat append menghentikan admisi: tak ada not-run/no-slots menyusul, tunggu terbuka
+    berakhir `cancelled`, log versi antre ditutup DONE rc=2."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        Path(PL.history_path(rep, "mymod", "9.1", "chromium")).mkdir()
+        fake = E2EChild(lambda v, e: (_child_payload(v, e, kind="fail"), 3))
+        rc, _err, out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium,8.1:chromium",
+                                       more=["--slots", "1"]), fake)
+        toks = [_tok(ln) for ln in _log_lines(rep, "8.1")]
+        ok &= check("append error: exit 2 tanpa baris output, 8.1 tak di-spawn & tanpa rekaman",
+                    rc == 2 and out.strip() == "" and _spawned(fake) == ["9.1"]
+                    and _hist(rep, "8.1", "chromium") == [])
+        ok &= check("append error: wait-slots 8.1 END cancelled, lalu DONE rc=2",
+                    any(t == "END" and d.startswith("wait-slots cancelled") for t, d in toks)
+                    and toks[-1] == ("DONE", "rc=2"))
     return ok
 
 
@@ -1626,6 +2270,20 @@ def main():
                      ("test_e2e_screenshots_line", test_e2e_screenshots_line),
                      ("test_e2e_append_error", test_e2e_append_error),
                      ("test_e2e_merge_only_view", test_e2e_merge_only_view),
+                     ("test_e2e_failfast_ac", test_e2e_failfast_ac),
+                     ("test_e2e_fail_in_flight", test_e2e_fail_in_flight),
+                     ("test_e2e_no_failfast_cases", test_e2e_no_failfast_cases),
+                     ("test_e2e_batch_fail_and_exit2", test_e2e_batch_fail_and_exit2),
+                     ("test_e2e_foreign_full", test_e2e_foreign_full),
+                     ("test_e2e_own_queue", test_e2e_own_queue),
+                     ("test_e2e_slots_suffice", test_e2e_slots_suffice),
+                     ("test_e2e_count_error", test_e2e_count_error),
+                     ("test_e2e_claim_counting", test_e2e_claim_counting),
+                     ("test_e2e_ac2_foreign_claim", test_e2e_ac2_foreign_claim),
+                     ("test_e2e_slots_input_errors", test_e2e_slots_input_errors),
+                     ("test_e2e_child_not_run_kept", test_e2e_child_not_run_kept),
+                     ("test_e2e_append_error_cancels", test_e2e_append_error_cancels),
+                     ("test_e2e_own_exception", test_e2e_own_exception),
                      ("test_help_prints_docstring", test_help_prints_docstring)):
         print(f"{name}:")
         ok &= fn()

@@ -366,7 +366,7 @@ def main():
     _creators = [m for m in re.finditer(r'\["docker", "(?:run|network", "create)"', fl_src)]
     ok &= check(f"tiap pemanggilan docker yang MEMBUAT artefak membawa label ({len(_creators)} situs)",
                 len(_creators) >= 3
-                and all("_label_flags()" in fl_src[m.start():m.start() + 400] for m in _creators))
+                and all("_label_flags(" in fl_src[m.start():m.start() + 400] for m in _creators))
     ok &= check("_label_flags menurunkan --label dari owner_labels (bukan literal terpisah)",
                 mod._label_flags() == [x for k, v in labels.items()
                                        for x in ("--label", f"{k}={v}")])
@@ -647,6 +647,12 @@ def main():
                     mod.DEFAULT_TARGET_VERSIONS == D["psm_target_versions"])
         ok &= check("drift: DEFAULT_E2E_BROWSERS == psm_e2e_browsers",
                     mod.DEFAULT_E2E_BROWSERS == D["psm_e2e_browsers"])
+        # Cap slot E2E sedaemon (cell-contract.md > Config keys > psm_e2e_slots): default
+        # ps-run-layer dipakai saat psm_e2e_slots kosong/absen — wajib sama dgn resolver.
+        slots_default = _literal_const(
+            Path(__file__).resolve().parent.parent / "ps-run-layer.py", "DEFAULT_E2E_SLOTS")
+        ok &= check("drift: DEFAULT_E2E_SLOTS ps-run-layer == psm_e2e_slots",
+                    "psm_e2e_slots" in D and str(slots_default) == str(D["psm_e2e_slots"]))
         # customization-2: psm_reports_dir dulu required=True tanpa default kanonik skrip,
         # jadi janji SKILL "resolver absen -> default skrip" tak bisa ditepati. Default skrip
         # bentuk TANPA token; resolver ber-token {project-root}/... -> bandingkan sesudah strip.
@@ -723,6 +729,7 @@ def main():
     ok &= test_job_id()
     ok &= test_configured_cells()
     ok &= test_timing_sink()
+    ok &= test_cap3_plumbing()
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
@@ -1101,6 +1108,213 @@ def test_job_id():
         (mod.JOB_REGISTRY, mod.subprocess.run, mod.docker_available, mod._remove_artifact) = saved[1:5]
         mod._PROGRESS.clear()
         mod._PROGRESS.update(saved[5])
+    return ok
+
+
+def _slots_sum(texts, argvs):
+    """Jumlah label psm.slots di teks compose ter-render + argv `docker run` yang ditangkap."""
+    total = sum(int(n) for t in texts for n in re.findall(r'psm\.slots: "(\d+)"', t))
+    for argv in argvs:
+        for i, a in enumerate(argv):
+            if a == "--label" and argv[i + 1].startswith("psm.slots="):
+                total += int(argv[i + 1].split("=", 1)[1])
+    return total
+
+
+class _FakeDocker:
+    """subprocess.run tiruan: merekam teks compose (dibaca saat `up`) & argv `docker run`."""
+
+    def __init__(self):
+        self.compose, self.runs = [], []
+
+    def __call__(self, cmd, **kw):
+        import subprocess
+        if cmd[:2] == ["docker", "compose"] and "up" in cmd:
+            self.compose.append(Path(cmd[cmd.index("-f") + 1]).read_text(encoding="utf-8"))
+        if cmd[:2] == ["docker", "run"]:
+            self.runs.append(list(cmd))
+        out = "cid0\n" if ("ps" in cmd and "-q" in cmd) else ""
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+
+
+def test_cap3_plumbing():
+    """CAP-3: helper log path+versi, fase tunggu tanpa SLOW, registry atomik + job_update,
+    LOCK_DIR, label psm.slots HANYA di container PS bila diberi cost, daemon_slot_usage."""
+    import subprocess
+    import time as _t
+    ok = True
+    print("\n[CAP-3: plumbing slot]")
+    saved = (mod.PROGRESS_HEARTBEAT, mod.PROGRESS_SLOW_AFTER, dict(mod._PROGRESS), dict(mod._JOB),
+             mod.JOB_REGISTRY, mod.subprocess.run)
+
+    def lines(path):
+        return Path(path).read_text(encoding="utf-8").splitlines()
+
+    def toks(path):
+        return [ln.split()[5] for ln in lines(path)]
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "w" / "v.progress.log"
+            mod.progress_to(str(log), "8.1", "START", "x", "d")
+            ok &= check("progress_to: path & versi per panggilan (folder dibuat, v=8.1)",
+                        len(lines(log)) == 1 and " v=8.1 START x d" in lines(log)[0])
+            mod.progress_to(str(log), "8.1", "DONE", "", "rc=not-run z", truncate=True)
+            ok &= check("progress_to truncate: log = satu baris itu saja",
+                        [ln.split()[5:] for ln in lines(log)] == [["DONE", "rc=not-run", "z"]])
+            mod.progress_init(str(log), truncate=False)
+            mod.progress_version("8.1")
+            mod.progress("START", "probe")
+            ok &= check("progress_init(truncate=False) mempertahankan baris lama; progress "
+                        "mendelegasi ke helper path+versi",
+                        toks(log) == ["DONE", "START"] and " v=8.1 START probe" in lines(log)[1])
+            mod.progress_init(str(log))
+            ok &= check("progress_init default tetap mengosongkan", lines(log) == [])
+
+            # Fase tunggu: START/ALIVE/END ke log yang diberikan, TAK PERNAH SLOW.
+            mod.PROGRESS_HEARTBEAT = 0.03
+            mod.PROGRESS_SLOW_AFTER = 0
+            mod._PROGRESS["slow_after"] = 0.001
+            wlog = Path(td) / "wait.log"
+            n = {"i": 0}
+
+            def det():
+                n["i"] += 1
+                return f"claim:x/y=1; beat {n['i']}"
+            w = mod.wait_phase(str(wlog), "9.1", "wait-slots", det).start()
+            _t.sleep(0.25)
+            res = w.end("ok")
+            size = len(lines(wlog))
+            _t.sleep(0.1)
+            tk = toks(wlog)
+            ok &= check("wait_phase: START, ALIVE, END ok; detail callable dihitung ulang",
+                        tk[0] == "START" and tk[-1] == "END" and "ALIVE" in tk
+                        and len({ln.split("beat ")[-1] for ln in lines(wlog)
+                                 if " ALIVE " in ln}) > 1
+                        and " END wait-slots ok " in lines(wlog)[-1] + " ")
+            ok &= check("wait_phase: tak pernah SLOW walau slow_after ~0", "SLOW" not in tk)
+            ok &= check("wait_phase: denyut berhenti sebelum END (tak ada baris sesudahnya)",
+                        len(lines(wlog)) == size)
+            ok &= check("wait_phase: return {seconds, outcome}; end kedua = hasil sama",
+                        set(res) == {"seconds", "outcome"} and res["outcome"] == "ok"
+                        and res["seconds"] >= 0.2 and w.end("cancelled") is res)
+            plog = Path(td) / "phase.log"
+            mod.progress_init(str(plog))
+            for name in ("wait-slots", "keeper-wait", "lock-wait:firefox", "barrier-wait:chromium"):
+                with mod.phase(name):
+                    _t.sleep(0.12)
+            with mod.phase("install"):
+                _t.sleep(0.12)
+            pt = [(ln.split()[5], ln.split()[6]) for ln in lines(plog)]
+            ok &= check("phase(): fase tunggu tak pernah SLOW; fase biasa tetap bisa SLOW",
+                        not any(t == "SLOW" and n != "install" for t, n in pt)
+                        and ("SLOW", "install") in pt)
+            mod.progress_init(None)
+
+            # Registry atomik + job_update.
+            mod.JOB_REGISTRY = Path(td) / "reg"
+            mod._JOB.update({"id": None, "entry_path": None, "entry": None})
+            ok &= check("job_update tanpa job terdaftar -> False", mod.job_update(x=1) is False)
+            jid = "mymod-e2e-1200-abcd"
+            mod.job_register(jid, module="mymod", layer="e2e", versions="9.1")
+            entry = mod.JOB_REGISTRY / jid / f"{mod.OWNER_PID}.json"
+            claims = [{"run": "0123456789ab", "cost": 1}]
+            ok &= check("job_update: entri sendiri ditulis ulang (slot_claims), field lain tetap",
+                        mod.job_update(slot_claims=claims) is True
+                        and json.loads(entry.read_text())["slot_claims"] == claims
+                        and json.loads(entry.read_text())["job"] == jid)
+            ok &= check("job_update: _registry_entries membaca klaimnya; tak ada sisa temp",
+                        mod._registry_entries(jid)[jid][0]["slot_claims"] == claims
+                        and [f.name for f in entry.parent.iterdir()] == [entry.name])
+            src = MOD_PATH.read_text(encoding="utf-8")
+            ok &= check("registry: temp `.<pid>.json.tmp` di folder sama + os.replace (tak cocok *.json)",
+                        'f".{OWNER_PID}.json.tmp"' in src and "os.replace(tmp, path)" in src
+                        and not Path(f".{mod.OWNER_PID}.json.tmp").match("*.json"))
+            mod._job_unregister()
+            import signal as _sig
+            _sig.signal(_sig.SIGTERM, _sig.SIG_DFL)
+            ok &= check("LOCK_DIR = <tmp>/psm-locks (di luar psm-jobs)",
+                        mod.LOCK_DIR == Path(tempfile.gettempdir()) / "psm-locks")
+
+            # Label psm.slots: HANYA service/container PS, hanya bila cost diberikan.
+            y2 = mod._compose_file_text("db", "img", "localhost:8000", "/m", slot_cost=2)
+            ps_part = y2.split("  ps:\n", 1)[1].split("networks:\n", 1)[0]
+            ok &= check("compose slot_cost=2: tepat satu psm.slots, di service ps",
+                        y2.count(mod.LABEL_SLOTS) == 1 and f'{mod.LABEL_SLOTS}: "2"' in ps_part)
+            ok &= check("compose tanpa slot_cost (posisional lama sah): tak ada psm.slots",
+                        mod.LABEL_SLOTS not in mod._compose_file_text("db", "img", "d", "/m", "8000:80"))
+            ok &= check("_label_flags() (DB/network) tak pernah membawa psm.slots",
+                        not any(mod.LABEL_SLOTS in x for x in mod._label_flags()))
+
+            # Boot Lapis 2 (compose & manual) = jumlah psm.slots 0.
+            saved_fn = {n: getattr(mod, n) for n in ("compose_available", "image_present",
+                                                     "wait_healthy", "_exec", "_teardown")}
+            try:
+                mod.image_present = lambda ref: True
+                # DB healthy (manual: supaya `docker run` PS benar-benar terjadi), PS tidak.
+                mod.wait_healthy = lambda c, t, poll=3.0: ("-db-" in c, "x")
+                mod._teardown = lambda s: None
+                sums = {}
+                for orch in ("compose", "manual"):
+                    fake = _FakeDocker()
+                    mod.subprocess.run = fake
+                    mod.compose_available = lambda: True
+                    mod.run_one_version(Path(td), "m", "9.1", "9.1.4-nginx", orchestrator=orch,
+                                        db_image="db", ps_domain="localhost:8000",
+                                        startup_timeout=1, op_timeout=1, allow_pull=False)
+                    ps_booted = bool(fake.compose) if orch == "compose" else any(
+                        r[-1] == f"{mod.IMAGE}:9.1.4-nginx" for r in fake.runs)
+                    sums[orch] = (_slots_sum(fake.compose, fake.runs), ps_booted)
+                ok &= check("boot Lapis 2: psm.slots compose 0 / manual 0 (boot memang terjadi)",
+                            sums == {"compose": (0, True), "manual": (0, True)})
+            finally:
+                for n, v in saved_fn.items():
+                    setattr(mod, n, v)
+                mod.subprocess.run = saved[5]
+
+            # daemon_slot_usage: satu `docker ps` (yang jalan saja), label rusak = 1 (`None`).
+            seen = []
+
+            def ps_ok(cmd, **kw):
+                seen.append((cmd, kw.get("timeout")))
+                return subprocess.CompletedProcess(cmd, 0, "2\tjob-a\thostA\tr1\nx\tjob-b\thostB\tr2\n\n", "")
+            mod.subprocess.run = ps_ok
+            used, counted, err = mod.daemon_slot_usage()
+            ok &= check("daemon_slot_usage: jumlah label (rusak = 1), counted per container",
+                        (used, err) == (3, None)
+                        and counted == [{"job": "job-a", "host": "hostA", "run": "r1", "cost": 2},
+                                        {"job": "job-b", "host": "hostB", "run": "r2", "cost": None}])
+            cmd, to = seen[0]
+            ok &= check("daemon_slot_usage: docker ps --filter label=psm.slots, tanpa -a, "
+                        "batas DOCKER_CMD_TIMEOUT",
+                        len(seen) == 1 and cmd[:2] == ["docker", "ps"] and "-a" not in cmd
+                        and f"label={mod.LABEL_SLOTS}" in cmd and to == mod.DOCKER_CMD_TIMEOUT)
+            mod.subprocess.run = lambda cmd, **kw: subprocess.CompletedProcess(
+                cmd, 1, "", "Cannot connect to the Docker daemon\n")
+            ok &= check("daemon_slot_usage: exit != 0 -> (None, [], ekor stderr)",
+                        mod.daemon_slot_usage() == (None, [], "Cannot connect to the Docker daemon"))
+
+            def to_raise(cmd, **kw):
+                raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+            mod.subprocess.run = to_raise
+            u, c, e = mod.daemon_slot_usage()
+            ok &= check("daemon_slot_usage: timeout -> error = teks exception",
+                        u is None and c == [] and "timed out" in (e or ""))
+
+            def os_raise(cmd, **kw):
+                raise OSError("docker: not found")
+            mod.subprocess.run = os_raise
+            ok &= check("daemon_slot_usage: OSError -> error = teks exception",
+                        mod.daemon_slot_usage() == (None, [], "docker: not found"))
+            ok &= check("slot_cost_value: int >= 1 saja",
+                        [mod.slot_cost_value(x) for x in ("3", 2, "0", "-1", "x", True, None, " 4 ", "\uff16")]
+                        == [3, 2, None, None, None, None, None, 4, None])
+    finally:
+        (mod.PROGRESS_HEARTBEAT, mod.PROGRESS_SLOW_AFTER) = saved[0], saved[1]
+        mod._PROGRESS.clear()
+        mod._PROGRESS.update(saved[2])
+        mod._JOB.clear()
+        mod._JOB.update(saved[3])
+        mod.JOB_REGISTRY, mod.subprocess.run = saved[4], saved[5]
     return ok
 
 

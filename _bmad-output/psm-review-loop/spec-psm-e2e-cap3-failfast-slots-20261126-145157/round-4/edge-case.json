@@ -1,0 +1,32 @@
+[
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:79 (Design Notes > Admission: 'spawning each admitted version at once (claim written first)') + :81 (Records: DONE rule)",
+  "issue": "Spawning can fail synchronously after the claim is written and `END wait-slots ok` is logged, for example Popen OSError (`uv` missing, EAGAIN, EMFILE). It can also fail in the runner, which today gives rc None (run_children). The spec does not say whether the claim is removed at once, whether the version gets `crash` records with the `wait-slots` entry, whether the rest of the pass still admits, or which DONE token applies. The DONE rule only knows `rc=<child exit code>` and `rc=crash`.",
+  "implementation_impact": "A phantom claim can hold the slot for the rest of the run. The log can end with `DONE rc=None`, or the loop can raise out with waits still open.",
+  "suggestion": "State: a spawn failure is reaped at once as rc None. Remove its claim under slots.lock, append `crash` records with `wait-slots` merged, write `DONE rc=crash`, and continue admission."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:81 (Design Notes > Records: '`rc=crash` when killed by a signal')",
+  "issue": "A reaped child with rc in STOPPED_CODES (-15, 143) is treated by ps-run-layer as stopped: no record and `child_stopped`. The DONE fallback rule says a child killed by a signal gets `rc=crash`. So a child stopped by SIGTERM that left no DONE gets `rc=crash`, while its records and exit code treat it as stopped.",
+  "implementation_impact": "The progress log reports a crash for a stopped child, which misleads the stall and crash diagnosis in run-phases.md.",
+  "suggestion": "Write `rc=stopped` for rc in STOPPED_CODES and `rc=crash` for any other negative rc."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:27 (Child: not-run cell 'every `_new_cell` key `null`, ... `phase_durations` included') vs :81 (Records: 'every record of a spawned version gets that entry merged')",
+  "issue": "A child `not-run` cell carries `phase_durations: null`. ps-run-layer must merge `{\"wait-slots\": …}` into the `phase_durations` of every record of a spawned version. The spec does not say how to merge into null, or into a cell whose `phase_durations` is missing or not a dict.",
+  "implementation_impact": "A naive `rec['phase_durations']['wait-slots'] = …` raises TypeError on not-run cells and crashes the run in the sequential fail-fast path.",
+  "suggestion": "State: when the cell's phase_durations is not a dict, ps-run-layer sets it to {\"wait-slots\": entry}; otherwise it adds the key."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:25 (Always > Fail-fast: 'once its `not-run` records are appended, its progress log is truncated' / 'An append error stops admission ... no `not-run`/`no-slots` record follows')",
+  "issue": "An append can fail partway through writing `not-run` or `no-slots` records at the trigger or timeout. A version may then have some cells recorded and others not, and later versions have none. The spec does not say whether a partly recorded version's log is truncated to `DONE rc=not-run <reason>` or ends `END wait-slots cancelled` + `DONE rc=2`. It also does not say how versions with no record yet are closed.",
+  "implementation_impact": "Progress logs disagree with the histories, and tests cannot fix the expected log for the append-error-during-not-run path.",
+  "suggestion": "State: the DONE rc=not-run/no-slots truncation happens only after every cell of that version is appended. Any version left incomplete closes its wait `cancelled` and gets DONE rc=<run exit code>."
+ },
+ {
+  "location": "spec-psm-e2e-cap3-failfast-slots.md:79,81 (wait-slots outcomes `ok|no-slots|cancelled|stopped`; DONE 'else `rc=<run exit code>`')",
+  "issue": "Exits that are neither JobStopped nor a normal return are not covered. Examples: Ctrl-C (KeyboardInterrupt, re-raised by `_run`), or an unexpected exception in the admission loop (registry, lock or count bug). For these the spec gives no outcome for the open `wait-slots` phases, no DONE token (there is no run exit code), and no rule for stopping the heartbeat threads or waiting for children.",
+  "implementation_impact": "Non-daemon heartbeat threads can keep the process alive after the exception. Queued logs stay open with no DONE and look stalled.",
+  "suggestion": "Close open waits in a finally block with outcome `error`, join the heartbeats, and write DONE rc=crash for truncated logs with no running child. Use daemon threads for heartbeats."
+ }
+]

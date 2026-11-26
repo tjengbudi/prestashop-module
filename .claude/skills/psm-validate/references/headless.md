@@ -63,6 +63,14 @@ juga untuk job E2E (exit 143).
 - Job yang **bukan** dimulai run ini tak pernah disentuh — tak ada operator yang bisa
   mengizinkannya. Larangan perintah luas di SKILL.md (pkill, `docker rm|kill|stop` berdasarkan
   nama/prefix, `compose down` tanpa project, prune) berlaku penuh.
+- **Satu pengecualian, otomatis:** tiap run `ps-run-layer.py --layer e2e` menjalankan rutin
+  `--cleanup-orphans` sekali di dalam `wait-slots`, sebelum hitungan slot pertama — juga
+  headless. Ia hanya menghapus container/network yang pemiliknya **terbukti mati** di host ini
+  (`references/run-phases.md` > Job ID); job hidup milik siapa pun tetap tak tersentuh.
+  Jangan menambah pembersihan lain.
+- **`no-slots` / `not-run` bukan `blocked`.** Cap slot penuh (`no-slots`, alasan infra) atau
+  sel yang dilewati fail-fast (`not-run`) hanya membuat sel itu tak terbukti; tanpa infra retry
+  headless, langkah E2E versi itu tak jatuh tempo lagi (`references/run-phases.md` > Istilah E2E).
 
 ## Yang tak boleh di headless
 

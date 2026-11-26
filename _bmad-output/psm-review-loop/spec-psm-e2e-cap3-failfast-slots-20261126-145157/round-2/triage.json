@@ -1,0 +1,64 @@
+{
+ "round": 2,
+ "critical_high": 32,
+ "fixed": 30,
+ "escalated": 2,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261126-145157.r2-q1",
+   "finding": "ps-e2e-run.py yang dijalankan tanpa --slot-cost (run langsung, loop TDD quickstart) belum diatur spec maupun kontrak. Kalau tanpa label, container E2E langsung tidak terhitung, padahal SPEC.md bilang 'setiap container E2E yang berjalan' dihitung.",
+   "options": [
+    "Tanpa label (tak dihitung, seperti skrip lama)",
+    "Default psm.slots=1"
+   ],
+   "recommended": "Default psm.slots=1",
+   "oscillation": false
+  },
+  {
+   "id": "20261126-145157.r2-q2",
+   "finding": "Daftar exit di Always > Honesty law masih kurang cabang 'tak ada rekaman ter-append atau ada anak yang dihentikan -> 1' dari kode sekarang. Ronde 1 sudah pernah melengkapi daftar ini, jadi temuan ini berulang.",
+   "options": [
+    "Hapus daftarnya, tulis 'tidak berubah; not-run/no-slots dihitung bukan pass'",
+    "Tulis daftar lengkap termasuk cabang itu"
+   ],
+   "recommended": "Hapus daftarnya",
+   "oscillation": true
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "adversarial-7",
+   "issue": "Always > Child: ps-run-layer could validate the child's not-run cell (reason, earlier fail) and treat a mismatch as crash"
+  },
+  {
+   "location": "adversarial-15",
+   "issue": "Tasks > docs: SKILL.md token budget and placement of the new topics"
+  },
+  {
+   "location": "edge-case-2",
+   "issue": "cleanup only once per run: a container leaked later in the run is never cleaned (changes the contract)"
+  },
+  {
+   "location": "edge-case-3",
+   "issue": "no acquire timeout on slots.lock"
+  },
+  {
+   "location": "edge-case-9",
+   "issue": "claims disappear while the child is still booting if ps-run-layer dies (contract-level design)"
+  },
+  {
+   "location": "edge-case-10",
+   "issue": "child not-run reason and vres.run_id are not checked against the claim id"
+  },
+  {
+   "location": "implementer-11",
+   "issue": "tests for the remaining Always/Design Notes rules (RESERVED_PASSTHROUGH, SLOW never, etc.)"
+  },
+  {
+   "location": "implementer-15",
+   "issue": "Labels row: Layer 5 boot -> 0"
+  }
+ ]
+}

@@ -32,8 +32,9 @@ Skrip lapisnya sendiri TIDAK disentuh: tiap anak adalah `ps-<lapis>-run.py <modu
 adanya sesudah `--`, jadi flag baru di skrip lapis tak perlu didaftarkan ulang di sini.
 
 `--config <psm-config.json>` berlaku untuk SEMUA lapis dan diteruskan apa adanya ke tiap anak
-(Lapis 2/5 tak memvalidasinya). `--config`, `--browsers`, `--engines` (dan flag lain milik skrip
-ini, termasuk singkatan awalan >= 4 karakter) DILARANG di passthrough sesudah `--`.
+(Lapis 2/5 tak memvalidasinya). `--config`, `--browsers`, `--engines`, `--run-id`, `--slot-cost`,
+`--progress-append`, `--sequential-browsers` (dan flag lain milik skrip ini, termasuk singkatan
+awalan >= 4 karakter, mis. `--slo`) DILARANG di passthrough sesudah `--`.
 
 Lapis 2/5 — exit 2 = error input (lapis tak paralel, flag milik skrip ini ada di passthrough,
 token path belum diresolve, anak menolak inputnya, bukti tak konsisten) — bukti per-versi
@@ -46,19 +47,39 @@ LAPIS E2E (cell-contract.md > Evidence record, Runner):
     (= versi itu x SEMUA browser terkonfigurasi). Himpunan terkonfigurasi = psm_target_versions
     x psm_e2e_browsers dari `--config` (default skrip bila absen); sel di luarnya = exit 2.
     `--session <[a-z0-9]{16}>` WAJIB (dari ps-plan-layers.py --new-session). `--per-version`
-    = exit 2; `--jobs` membatasi versi serentak. Browser dipilih lewat `--cells`/config, BUKAN
-    `--browsers` sesudah `--` (anak menerima `--engines` dari skrip ini).
-  - Tiap anak `ps-e2e-run.py --versions <ver> --engines <engine versi itu>` (+ `--config`);
-    begitu anak di-reap (urutan selesai), satu rekaman per sel yang diadmisi di-APPEND ke
-    histori selnya: hasil sel anak + field level-versi + `session`, `source_fingerprint`
-    (dihitung SEKALI sebelum spawn), `job_id`, `state/conclusive/reason`. Sel tanpa hasil:
-    `browser-unavailable` (engine di-drop probe binary) atau `crash`. Tak ada `<module>-e2e*.json`.
+    atau `--jobs` (juga dgn --merge-only) = exit 2. Browser dipilih lewat `--cells`/config,
+    BUKAN `--browsers` sesudah `--` (anak menerima `--engines` dari skrip ini).
+  - SLOT (CAP-3): admisi per slot SEDAEMON — N = `--slots` (override manual), else
+    `psm_e2e_slots` dari `--config` (divalidasi walau --slots diberikan; kosong = default),
+    else 6; bukan bilangan bulat >= 1 = exit 2. Terpakai = jumlah label `psm.slots` semua
+    container yang JALAN di daemon (satu `docker ps`; gagal/timeout = penuh) + klaim
+    `slot_claims` entri registry hidup lain (dan klaim sendiri) yang container-nya belum jalan,
+    dihitung di bawah `<tmp>/psm-locks/slots.lock`. Tiap versi antre = fase `wait-slots` di log
+    kemajuannya (dibuka begitu run mulai; ALIVE menyebut isi cap; tak pernah SLOW); di dalamnya
+    `--cleanup-orphans` jalan SEKALI sebelum hitungan pertama (hanya yang pemiliknya terbukti
+    mati). Kepala antrean (urutan tertulis) diadmisi selama muat, biaya 1, dengan
+    `--sequential-browsers`. Cap penuh selama batas startup (`--startup-timeout` passthrough,
+    else psm_flashlight_startup_timeout, else 180 s; dihitung hanya saat tak ada anak sendiri
+    yang jalan) -> tiap sel yang masih antre = rekaman `inconclusive`, reason `no-slots`
+    (`errors` = isi cap).
+  - FAIL-FAST: begitu anak yang di-reap (urutan selesai) meng-append rekaman `fail`, tak ada
+    versi antre yang dimulai; anak yang sedang jalan ditunggu; tiap sel yang belum dimulai =
+    rekaman `not-run`, reason `fail-fast after <ver>:<browser>`. Anak exit 2 sama, reason
+    `input-error after <ver>` (versi itu sendiri tanpa rekaman). Log versi yang tak satu sel pun
+    mulai = satu baris `DONE rc=not-run <reason>`.
+  - Tiap anak `ps-e2e-run.py --versions <ver> --engines <engine versi itu> --run-id <klaim>
+    --slot-cost 1 --progress-append --sequential-browsers` (+ `--config`); begitu anak di-reap,
+    satu rekaman per sel yang diadmisi di-APPEND ke histori selnya: hasil sel anak + field
+    level-versi + `session`, `source_fingerprint` (dihitung SEKALI sebelum admisi), `job_id`,
+    `run_id` (= klaim), `state/conclusive/reason`, `phase_durations.wait-slots`. Sel tanpa hasil:
+    `browser-unavailable` (engine di-drop probe binary) atau `crash`; sel `not-run` anak
+    (fail-fast antar-engine) dipertahankan. Tak ada `<module>-e2e*.json`.
   - Baris terakhir stdout: satu JSON `{"e2e_status": "ran"|"skipped", "reason",
     "appended": ["<ver>:<browser>", ...], "source_fingerprint"}` — dicetak di setiap exit
     kecuali error input pra-spawn dan stop.
-  - exit 3 = ada rekaman `fail`; 1 = ada rekaman inconclusive/not-run; 0 = semua pass, atau
-    `skipped` (Docker absen / anak melaporkan skipped, tanpa `fail`); 2 = error input (sebelum
-    spawn, tanpa baris output) ATAU anak exit 2 (tak ada anak baru dimulai, baris output
+  - exit 3 = ada rekaman `fail`; 1 = ada rekaman inconclusive/not-run/no-slots; 0 = semua
+    pass, atau `skipped` (Docker absen / anak melaporkan skipped, tanpa `fail`); 2 = error
+    input (sebelum spawn, tanpa baris output) ATAU anak exit 2 (sel antre not-run, baris output
     `ran`); 143 = dihentikan `--stop-job` (rekaman yang sudah di-append tetap; tanpa baris output).
   - `--merge-only --layer e2e` (hanya `--module`, `--reports-dir`, `--config`) menulis TAMPILAN
     laporan `<module>-e2e.json` = {module, view: true, cells: {ver: {browser: rekaman terbaru|null}}}
@@ -66,12 +87,14 @@ LAPIS E2E (cell-contract.md > Evidence record, Runner):
 
 Contoh:
   uv run scripts/ps-run-layer.py --layer e2e --module modules/mymod --session <token> \\
-      --cells 1.7.8:chromium+firefox,9.1:firefox --jobs 3 --reports-dir reports \\
+      --cells 1.7.8:chromium+firefox,9.1:firefox --reports-dir reports \\
       --config reports/psm-config.json -- --tag-map 1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx
   uv run scripts/ps-run-layer.py --layer flashlight --module modules/mymod \\
       --versions 1.7.8,8.1,9.1 --reports-dir reports --config reports/psm-config.json
 """
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -79,6 +102,7 @@ import shutil
 import sys
 import tempfile
 import time
+import uuid
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
@@ -103,11 +127,19 @@ SERIAL_LAYERS = {
 # `--config`, `--browsers`, `--engines`: ps-run-layer meneruskan `--config` sendiri ke tiap anak
 # dan memilih engine tiap versi (`--engines`) dari `--cells`/config — salinan di passthrough
 # akan diam-diam mengganti himpunan yang di-drive di bawah himpunan yang dicatat di histori.
+# `--run-id`, `--slot-cost`, `--progress-append`, `--sequential-browsers`: diset skrip ini pada
+# tiap anak E2E (klaim slot, biaya, log wait-slots, mode sekuensial) — salinan di passthrough
+# memalsukan klaim/biaya yang dihitung seluruh daemon.
 RESERVED_PASSTHROUGH = ("--versions", "-o", "--output", "--cleanup-orphans", "--progress-file",
                         "--job-id", "--stop-job", "--list-jobs", "--config", "--browsers",
-                        "--engines")
+                        "--engines", "--run-id", "--slot-cost", "--progress-append",
+                        "--sequential-browsers")
 
-DEFAULT_JOBS = 3  # tiap job mem-boot container PS + DB (Lapis 4 plus engine browser)
+DEFAULT_JOBS = 3  # Lapis 2/5: tiap job mem-boot container PS + DB
+# Lapis 4: admisi per SLOT sedaemon (cell-contract.md > Config keys > psm_e2e_slots), bukan
+# --jobs. Default dikunci ke PSM_DEFAULTS resolver lewat test drift.
+DEFAULT_E2E_SLOTS = 6
+SLOT_POLL = 5  # detik antar-pass admisi bila tak ada anak yang selesai
 
 # --- Penggabungan bukti per-versi ---------------------------------------------------------
 # Aturannya tinggal di sini, bersama satu-satunya yang menggabungkan. Sebelumnya ia CLI
@@ -644,7 +676,8 @@ def _passthrough_value(extra, full, min_len=5):
 
 def read_e2e_config(path, fl):
     """Peta key ps-run-layer atas `--config` (bukan apply_config_file): himpunan sel,
-    `psm_flashlight_tag_map`, `psm_flashlight_startup_timeout`. Error -> InputError."""
+    `psm_flashlight_tag_map`, `psm_flashlight_startup_timeout`, `psm_e2e_slots` (kosong =
+    default; bukan bilangan bulat >= 1 = error, juga bila --slots diberikan). Error -> InputError."""
     try:
         cfg = fl.read_config_json(path) if path else {}
         versions = fl.normalize_versions(cfg.get("psm_target_versions"))
@@ -663,8 +696,32 @@ def read_e2e_config(path, fl):
         except (TypeError, ValueError):
             raise InputError(f"--config: psm_flashlight_startup_timeout={timeout!r} bukan "
                              "bilangan") from None
+    slots = cfg.get("psm_e2e_slots")
+    if isinstance(slots, str) and not slots.strip():
+        slots = None  # kosong = default
+    if slots is not None:
+        try:
+            slots = parse_slots(slots)
+        except ValueError:
+            raise InputError(f"--config: psm_e2e_slots={cfg.get('psm_e2e_slots')!r} harus "
+                             "bilangan bulat >= 1") from None
     return {"versions": versions, "browsers": browsers, "tag_map": tag_map,
-            "startup_timeout": timeout}
+            "startup_timeout": timeout, "slots": slots}
+
+
+def parse_slots(raw):
+    """Nilai slot (str/int) -> int >= 1. Bukan bilangan bulat / < 1 -> ValueError."""
+    if isinstance(raw, bool):
+        raise ValueError(raw)
+    if isinstance(raw, int):
+        val = raw
+    elif isinstance(raw, str) and re.fullmatch(r"\s*-?[0-9]+\s*", raw):
+        val = int(raw)
+    else:
+        raise ValueError(raw)
+    if val < 1:
+        raise ValueError(raw)
+    return val
 
 
 def resolve_tags(extra, cfg_tag_map, versions, fl):
@@ -711,9 +768,17 @@ def child_shape_ok(payload, ver):
     return isinstance(cells, dict) and all(isinstance(c, dict) for c in cells.values())
 
 
-def build_record(pl, ver, engine, *, vres, cell, reason, admitted, ctx):
+def build_record(pl, ver, engine, *, vres, cell, reason, admitted, ctx, run_id=None,
+                 state="inconclusive", errors=None, wait=None):
     """Satu rekaman histori (RECORD_KEYS persis). `reason` terisi = sel tanpa hasil anak
-    (`crash`/`browser-unavailable`); selain itu state dihitung dgn derive_state."""
+    (`crash`/`browser-unavailable`/`no-slots` dgn `state` inconclusive, atau `not-run`);
+    sel anak ber-`state: not-run` (fail-fast antar-engine) dipertahankan apa adanya, tanpa
+    derive_state; selain itu state dihitung dgn derive_state.
+
+    `run_id` = RUN_ID klaim versi yang diadmisi (semua rekamannya, crash termasuk); tanpa itu
+    `ctx["run_id"]` (milik ps-run-layer: not-run/no-slots). `wait` = hasil `wait-slots`
+    ({seconds, outcome}) yang digabung ke `phase_durations` (dict baru bila null).
+    """
     rec = dict.fromkeys(RECORD_KEYS)
     if vres is not None:
         for k in VERSION_KEYS:
@@ -721,6 +786,10 @@ def build_record(pl, ver, engine, *, vres, cell, reason, admitted, ctx):
     else:
         rec["run_id"] = ctx["run_id"]
         rec["image_tag"] = ctx["tags"][ver]
+    if run_id:
+        rec["run_id"] = run_id
+    if errors is not None:
+        rec["errors"] = list(errors)
     if cell is not None:
         for k in CELL_KEYS:
             rec[k] = cell.get(k)
@@ -728,10 +797,15 @@ def build_record(pl, ver, engine, *, vres, cell, reason, admitted, ctx):
                source_fingerprint=ctx["fingerprint"], job_id=ctx["job_id"],
                tier=None, keeper_boot=None)
     if reason:
-        rec.update(state="inconclusive", conclusive=False, reason=reason)
+        rec.update(state=state, conclusive=False, reason=reason)
+    elif cell is not None and cell.get("state") == "not-run":
+        rec.update(state="not-run", conclusive=False, reason=cell.get("reason"))
     else:
         st = pl.derive_state(rec, engine)
         rec.update(state=st["state"], conclusive=st["conclusive"], reason=st["reason"])
+    if wait is not None:
+        pd = rec["phase_durations"]
+        rec["phase_durations"] = {**(pd if isinstance(pd, dict) else {}), "wait-slots": wait}
     # Sel yang engine-nya tak pernah jalan: started_at = saat diadmisi, finished_at = saat ditulis.
     if pl.parse_utc(rec["started_at"]) is None:
         rec["started_at"] = admitted
@@ -742,12 +816,13 @@ def build_record(pl, ver, engine, *, vres, cell, reason, admitted, ctx):
     return rec
 
 
-def records_for_child(pl, ver, engines, payload, admitted, ctx, log):
+def records_for_child(pl, ver, engines, payload, admitted, ctx, log, *, run_id=None, wait=None):
     """Rekaman untuk satu anak yang selesai (bukan exit 2/stop/skipped). Return [record]."""
+    kw = {"admitted": admitted, "ctx": ctx, "run_id": run_id, "wait": wait}
     if not child_shape_ok(payload, ver):
         log(f"versi {ver}: output anak tak ada/tak terbaca/salah bentuk — sel diadmisi = crash")
-        return [build_record(pl, ver, e, vres=None, cell=None, reason="crash",
-                             admitted=admitted, ctx=ctx) for e in engines]
+        return [build_record(pl, ver, e, vres=None, cell=None, reason="crash", **kw)
+                for e in engines]
     vres = payload["versions"][ver]
     cells = vres["cells"]
     available = payload.get("browsers_available")
@@ -758,45 +833,12 @@ def records_for_child(pl, ver, engines, payload, admitted, ctx, log):
     out = []
     for e in engines:
         if e in cells:
-            out.append(build_record(pl, ver, e, vres=vres, cell=cells[e], reason=None,
-                                    admitted=admitted, ctx=ctx))
+            out.append(build_record(pl, ver, e, vres=vres, cell=cells[e], reason=None, **kw))
         else:
             why = ("browser-unavailable" if isinstance(available, list) and e not in available
                    else "crash")
-            out.append(build_record(pl, ver, e, vres=vres, cell=None, reason=why,
-                                    admitted=admitted, ctx=ctx))
+            out.append(build_record(pl, ver, e, vres=vres, cell=None, reason=why, **kw))
     return out
-
-
-def run_children(plan, jobs, runner, on_start, on_reaped):
-    """Jalankan anak (paling banyak `jobs` serentak) dan panggil `on_reaped(ver, rc)` di thread
-    utama begitu tiap anak selesai, dalam URUTAN SELESAI. `on_reaped` mengembalikan False untuk
-    berhenti memulai anak baru (anak yang sedang jalan tetap ditunggu). `rc` None = runner
-    meledak. JobStopped (BaseException) merambat ke pemanggil."""
-    queue = list(plan)
-    order = {ver: i for i, (ver, _c, _o) in enumerate(plan)}
-    running = {}
-    go = True
-    ex = ThreadPoolExecutor(max_workers=max(1, min(jobs, len(plan) or 1)))
-    try:
-        while queue or running:
-            while go and queue and len(running) < jobs:
-                ver, cmd, _out = queue.pop(0)
-                on_start(ver)
-                running[ex.submit(runner, cmd)] = ver
-            if not running:
-                break
-            done, _ = wait(list(running), return_when=FIRST_COMPLETED)
-            for fut in sorted(done, key=lambda f: order[running[f]]):
-                ver = running.pop(fut)
-                try:
-                    rc = fut.result()
-                except Exception:  # runner meledak = anak tanpa output (crash), bukan crash kita
-                    rc = None
-                if not on_reaped(ver, rc):
-                    go = False
-    finally:
-        ex.shutdown(wait=False, cancel_futures=True)
 
 
 def _e2e_input(args, extra, fl, log):
@@ -818,6 +860,13 @@ def _e2e_input(args, extra, fl, log):
     except fl.CellConfigError as e:
         raise InputError(str(e)) from None
     cfg = read_e2e_config(args.config, fl)
+    if args.slots is not None:
+        try:
+            slots = parse_slots(args.slots)
+        except ValueError:
+            raise InputError(f"--slots {args.slots!r} harus bilangan bulat >= 1") from None
+    else:
+        slots = cfg["slots"] if cfg["slots"] is not None else DEFAULT_E2E_SLOTS
     if args.cells:
         cells = parse_cells(args.cells, cfg["versions"], cfg["browsers"])
     else:
@@ -830,6 +879,19 @@ def _e2e_input(args, extra, fl, log):
                              f"entri harus PERSIS salah satu dari: {', '.join(cfg['versions'])}")
         cells = [(v, list(cfg["browsers"])) for v in versions]
     extra, shot_base = split_screenshot_dir(extra)
+    # Batas tunggu `no-slots` = batas startup kontrak: --startup-timeout passthrough, else
+    # psm_flashlight_startup_timeout, else default skrip. <= 0 diterima (tanpa jatah tunggu).
+    raw_timeout = _passthrough_value(extra, "--startup-timeout")
+    if raw_timeout is not None:
+        try:
+            startup_timeout = int(raw_timeout)
+        except ValueError:
+            raise InputError(f"--startup-timeout {raw_timeout!r} (passthrough) bukan bilangan "
+                             "bulat") from None
+    elif cfg["startup_timeout"] is not None:
+        startup_timeout = cfg["startup_timeout"]
+    else:
+        startup_timeout = fl.DEFAULT_STARTUP_TIMEOUT
     agg = aggregate()
     ss = agg.load_sibling(_HERE / "ps-static-scan.py", "ps_static_scan")
     bad = ss.unresolved_path_args([("--reports-dir", args.reports_dir),
@@ -845,7 +907,391 @@ def _e2e_input(args, extra, fl, log):
     except pl.PlanInputError as e:
         raise InputError(str(e)) from None
     return {"cells": cells, "extra": extra, "shot_base": shot_base, "tags": tags,
-            "fingerprint": fingerprint}
+            "fingerprint": fingerprint, "slots": slots, "startup_timeout": startup_timeout}
+
+
+def _count_error_tail(err):
+    """Ekor galat hitungan docker: 200 karakter terakhir, whitespace diringkas jadi satu spasi."""
+    return " ".join(str(err).split())[-200:]
+
+
+class _SlotRun:
+    """Satu run Lapis 4 di bawah admisi slot sedaemon (cell-contract.md > Config keys >
+    psm_e2e_slots, Runner > Fail-fast, not-run (CAP-3)).
+
+    Antrean = urutan tertulis `--cells`/`--versions`. Tiap versi yang diantre: log kemajuannya
+    dikosongkan lalu fase `wait-slots` dibuka (START, denyut ALIVE, tak pernah SLOW). Di dalam
+    fase itu `--cleanup-orphans` jalan SEKALI, lalu loop: reap anak yang selesai (urutan
+    selesai; satu batch urut rencana), lalu — selama belum ada pemicu fail-fast/exit 2/galat
+    append — pegang `slots.lock`, baca klaim registry, hitung sekali, dan admisi kepala antrean
+    selama muat (klaim ditulis dulu, `END wait-slots ok`, lalu spawn). Jam `no-slots` satu
+    akumulator sepanjang run: maju hanya saat ada versi menunggu dan tak ada anak sendiri yang
+    jalan; habis -> tiap sel yang masih antre `no-slots`.
+    """
+
+    def __init__(self, args, inp, extra, script, job_id, module_name, log, fl, pl):
+        self.args, self.log, self.fl, self.pl = args, log, fl, pl
+        self.module_name = module_name
+        self.versions = [v for v, _e in inp["cells"]]
+        self.engines_of = dict(inp["cells"])
+        self.order = {v: i for i, v in enumerate(self.versions)}
+        self.slots = inp["slots"]
+        self.limit = max(0, inp["startup_timeout"])
+        self.ctx = {"session": args.session, "fingerprint": inp["fingerprint"],
+                    "job_id": job_id, "run_id": fl.RUN_ID, "tags": inp["tags"]}
+        self.claim_of = {v: uuid.uuid4().hex[:12] for v in self.versions}
+        self.logs = {v: progress_file(args.reports_dir, args.module, "e2e", v)
+                     for v in self.versions}
+        self.tmp = tempfile.mkdtemp(prefix="psm-layer-")
+        self.cmds, self.outs = {}, {}
+        for ver, cmd, out in plan_children(script, args.module, self.versions, self.tmp, extra,
+                                           progress=(args.reports_dir, "e2e"), job_id=job_id):
+            self.cmds[ver] = [*cmd, "--engines", ",".join(self.engines_of[ver]),
+                              "--run-id", self.claim_of[ver], "--slot-cost", "1",
+                              "--progress-append", "--sequential-browsers"]
+            self.outs[ver] = out
+        self.waits, self.wait_res = {}, {}
+        self.queue = []
+        self.running = {}            # future -> versi
+        self.reaped = {}             # versi -> rc anak (None = runner meledak)
+        self.done_written = set()    # versi yang log-nya sudah diberi DONE oleh skrip ini
+        self.own_claims = {}         # versi -> {"run", "cost"} (memori; tak dibaca ulang dari file)
+        self.admitted = {}
+        self.trigger = None
+        self.appended, self.states, self.skipped, self.child_stopped = [], [], [], []
+        self.exit2 = self.keep = False
+        self.append_error = None
+        self.registry_warned = False
+        self.note = None             # detail ALIVE sebelum hitungan pertama
+        self.tokens = []
+        self.budget, self.accum, self.last_tick, self.last_pass = 0.0, False, None, None
+
+    # --- log & detail ------------------------------------------------------------------
+    def _budget_now(self):
+        extra = (time.monotonic() - self.last_tick) if (self.accum and self.last_tick) else 0.0
+        return self.budget + extra
+
+    def _wait_detail(self):
+        if self.note:
+            return self.note
+        base = ", ".join(self.tokens) or "-"
+        if self.running:
+            tail = "own queue"
+        else:
+            tail = f"budget {max(0, int(self.limit - self._budget_now()))}s left"
+        ago = int(time.monotonic() - self.last_pass) if self.last_pass else 0
+        return f"{base}; {tail}; last pass {ago}s ago"
+
+    def _close_wait(self, ver, outcome):
+        w = self.waits.get(ver)
+        if w is None:
+            return None
+        res = w.end(outcome)
+        self.wait_res.setdefault(ver, res)
+        return self.wait_res[ver]
+
+    def _done_line(self, ver, detail, truncate=False):
+        self.fl.progress_to(self.logs[ver], ver, "DONE", "", detail, truncate=truncate)
+        self.done_written.add(ver)
+
+    # --- registry & lock ----------------------------------------------------------------
+    @contextlib.contextmanager
+    def _slots_lock(self):
+        """`<tmp>/psm-locks/slots.lock`, flock blok. OSError = ps-run-layer sendiri meledak."""
+        lock_dir = self.fl.LOCK_DIR
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / "slots.lock"
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o666)
+        # /tmp dibagi lintas user: tanpa ini user kedua tak bisa membuka lock (umask 022) dan
+        # tiap run E2E-nya crash. Best-effort — hanya pemilik yang bisa chmod.
+        for path, mode in ((lock_dir, 0o1777), (lock_path, 0o666)):
+            try:
+                os.chmod(path, mode)
+            except OSError:
+                pass
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)  # menutup fd melepas flock
+
+    def _write_claims(self):
+        claims = [dict(self.own_claims[v]) for v in self.versions if v in self.own_claims]
+        if not self.fl.job_update(slot_claims=claims) and not self.registry_warned:
+            self.registry_warned = True
+            self.log("peringatan: klaim slot gagal ditulis ke registry job — run lain baru "
+                     "melihat klaim ini begitu container-nya jalan")
+
+    def _foreign_claims(self):
+        """[(job, run, cost)] klaim entri registry HIDUP selain milik proses ini."""
+        out = []
+        try:
+            registry = self.fl._registry_entries()
+        except OSError as e:  # registry tak terbaca: klaim asing tak terlihat, admisi jalan terus
+            if not self.registry_warned:
+                self.registry_warned = True
+                self.log(f"peringatan: registry job tak terbaca ({e}) — klaim run lain tak dihitung")
+            return out
+        for job, entries in registry.items():
+            for e in entries:
+                claims = e.get("slot_claims")
+                if e.get("pid") == self.fl.OWNER_PID or not isinstance(claims, list) or not claims:
+                    continue
+                try:
+                    alive = self.fl.entry_state(e)[0] == "alive"
+                except Exception:  # noqa: BLE001 — entri asing rusak tak boleh mematikan admisi
+                    alive = False
+                if not alive:
+                    continue
+                for c in claims:
+                    if isinstance(c, dict) and c.get("run"):
+                        out.append((e.get("job") or job, str(c["run"]), c.get("cost")))
+        return out
+
+    # --- rekaman ------------------------------------------------------------------------
+    def _append(self, rec, force=False):
+        """Append satu rekaman. Sesudah galat append pertama hanya `force` (rekaman anak yang
+        di-reap) yang masih dicoba; not-run/no-slots tidak lagi."""
+        if self.append_error and not force:
+            return False
+        path = self.pl.history_path(self.args.reports_dir, self.module_name, rec["version"],
+                                    rec["browser"])
+        try:
+            self.pl.append_record(path, rec)
+        except self.pl.PlanInputError as e:
+            if self.append_error is None:
+                self.append_error = str(e)
+                # Admisi berhenti; tak ada not-run/no-slots menyusul; tunggu terbuka = cancelled.
+                for v in list(self.queue):
+                    self._close_wait(v, "cancelled")
+                self.queue = []
+            return False
+        self.appended.append(f"{rec['version']}:{rec['browser']}")
+        self.states.append(rec["state"])
+        if self.args.verbose:
+            self.log(f"  {rec['version']}:{rec['browser']} -> {rec['state']}"
+                     + (f" ({rec['reason']})" if rec["reason"] else ""))
+        return True
+
+    def _unstarted_records(self, reason, state, errors=None, outcome="cancelled"):
+        """Rekaman tiap sel yang masih antre (urutan rencana); antrean dikosongkan. Return
+        [(versi, semua-tertulis?)]."""
+        out = []
+        for ver in list(self.queue):
+            if self.append_error:
+                break
+            wait = self._close_wait(ver, outcome)
+            decided = utc_now()
+            ok = True
+            for e in self.engines_of[ver]:
+                rec = build_record(self.pl, ver, e, vres=None, cell=None, reason=reason,
+                                   admitted=decided, ctx=self.ctx, state=state, errors=errors,
+                                   wait=wait)
+                ok = self._append(rec) and ok
+            out.append((ver, ok))
+        self.queue = []
+        return out
+
+    def _fire(self, reason):
+        """Pemicu fail-fast / exit 2: sel yang belum dimulai -> not-run (alasan PERTAMA menang)."""
+        if self.trigger is not None:
+            return
+        self.trigger = reason
+        if self.append_error:
+            return
+        self.log(f"{reason}: {len(self.queue)} versi antre tak dimulai (not-run); anak yang "
+                 "sedang jalan ditunggu")
+        for ver, ok in self._unstarted_records(reason, "not-run"):
+            if ok:
+                # wait-slots (cancelled) sudah ditutup; log versi yang tak satu sel pun mulai
+                # dikosongkan jadi satu baris DONE, tanpa sisa baris run lain.
+                self._done_line(ver, f"rc=not-run {reason}", truncate=True)
+
+    def _no_slots(self):
+        errors = list(self.tokens)
+        self.log(f"no-slots: cap {self.slots} slot penuh selama {self.limit}s — "
+                 f"{len(self.queue)} versi tak dimulai ({', '.join(errors) or '-'})")
+        for ver, ok in self._unstarted_records("no-slots", "inconclusive", errors=errors,
+                                               outcome="no-slots"):
+            if ok:
+                self._done_line(ver, "rc=no-slots")
+
+    # --- reap ---------------------------------------------------------------------------
+    def _release_claim(self, ver):
+        if ver in self.own_claims:
+            try:
+                with self._slots_lock():
+                    del self.own_claims[ver]
+                    self._write_claims()
+            except OSError as e:
+                # Lock tak bisa dibuka: klaim tetap dilepas di memori; rekaman anak tetap di-append.
+                self.own_claims.pop(ver, None)
+                self.log(f"peringatan: klaim slot {ver} dilepas tanpa slots.lock ({e})")
+
+    def _on_reaped(self, ver, rc):
+        self.reaped[ver] = rc
+        self._release_claim(ver)
+        if rc in STOPPED_CODES:
+            # SIGTERM ke SATU anak (bukan --stop-job pemanggil ini) hanya membuat versi itu tak
+            # berbukti: saudaranya tetap jalan & di-append. Hanya JobStopped milik proses ini
+            # sendiri yang menghentikan seluruh run (exit 143).
+            self.log(f"versi {ver}: anak dihentikan (rc={rc}) — tak ada rekaman untuk versi ini")
+            self.child_stopped.append(ver)
+            return
+        if rc == 2:
+            self.log(f"error: versi {ver}: anak menolak input (exit 2) — baca stderr-nya; tak ada "
+                     "anak baru dimulai")
+            self.exit2 = self.keep = True
+            self._fire(f"input-error after {ver}")
+            return
+        payload = None
+        if rc is not None:
+            try:
+                payload = json.loads(Path(self.outs[ver]).read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                payload = None
+        if isinstance(payload, dict) and payload.get("status") == "skipped":
+            reason = payload.get("reason")
+            self.log(f"versi {ver}: anak melaporkan skipped ({reason}) — tak ada rekaman")
+            self.skipped.append(reason)
+            return
+        records = records_for_child(self.pl, ver, self.engines_of[ver], payload,
+                                    self.admitted[ver], self.ctx, self.log,
+                                    run_id=self.claim_of[ver], wait=self.wait_res.get(ver))
+        if any(r["reason"] == "crash" for r in records):
+            self.keep = True
+        failed = None
+        for rec in records:
+            # Rekaman anak yang di-reap tetap DICOBA walau append lain sudah gagal.
+            if self._append(rec, force=True) and rec["state"] == "fail" and failed is None:
+                failed = rec["browser"]  # engine gagal pertama, urutan psm_e2e_browsers
+        if failed is not None:
+            self._fire(f"fail-fast after {ver}:{failed}")
+
+    # --- admisi -------------------------------------------------------------------------
+    def _admitting(self):
+        return self.trigger is None and self.append_error is None
+
+    def _pass(self, ex):
+        """Satu pass admisi di bawah slots.lock: klaim + SATU hitungan, admisi kepala antrean."""
+        with self._slots_lock():
+            claims = self._foreign_claims()
+            used, counted, err = self.fl.daemon_slot_usage()
+            self.last_pass = time.monotonic()
+            self.note = None
+            if err is not None:
+                # Hitungan gagal/timeout = cap penuh (tak ada yang diadmisi).
+                self.tokens = [f"docker count failed: {_count_error_tail(err)}"]
+                return
+            live_runs = {c["run"] for c in counted if c.get("run")}
+            tokens = [f"{c.get('job') or '?'}@{c.get('host') or '?'}={c['cost'] or '?'}"
+                      for c in counted]
+            total = used
+            own = [(self.ctx["job_id"], c["run"], c["cost"]) for c in self.own_claims.values()]
+            for job, run, cost in claims + own:
+                if run in live_runs:
+                    continue  # container-nya sudah jalan & terhitung lewat psm.slots
+                val = self.fl.slot_cost_value(cost)
+                total += val or 1
+                tokens.append(f"claim:{job}/{run}={val or '?'}")
+            while self.queue and total + 1 <= self.slots:
+                ver = self.queue.pop(0)
+                self.own_claims[ver] = {"run": self.claim_of[ver], "cost": 1}
+                self._write_claims()
+                total += 1
+                tokens.append(f"claim:{self.ctx['job_id']}/{self.claim_of[ver]}=1")
+                self._close_wait(ver, "ok")
+                self.admitted[ver] = utc_now()
+                self.running[ex.submit(_spawn, self.cmds[ver])] = ver
+            self.tokens = tokens
+
+    def _cleanup(self):
+        """`--cleanup-orphans` SEKALI per run, di dalam wait-slots, sebelum hitungan pertama.
+        Hanya menghapus yang pemiliknya terbukti mati; galatnya tak pernah menggagalkan run."""
+        try:
+            res = self.fl.cleanup_orphans()
+            self.log(f"cleanup-orphans otomatis: {res.get('status')} — dihapus "
+                     f"{len(res.get('removed') or [])}, dilewati {len(res.get('skipped') or [])}, "
+                     f"galat {len(res.get('errors') or [])}")
+        except Exception as e:  # noqa: BLE001 — pembersihan tak boleh menggagalkan run
+            self.log(f"cleanup-orphans otomatis gagal (diabaikan): {e}")
+
+    def _tick(self):
+        now = time.monotonic()
+        if self.accum and self.last_tick is not None:
+            self.budget += now - self.last_tick
+        self.last_tick = now
+
+    def loop(self):
+        """Jalankan run; JobStopped/exception merambat ke pemanggil (finish() menutup log)."""
+        # Tiap log versi antre dikosongkan lalu LANGSUNG membuka wait-slots, jadi log antre tak
+        # pernah sunyi; pembersihan jalan di dalam fase itu (di luar jam no-slots).
+        self.note = "cleanup-orphans running"
+        for ver in self.versions:
+            self.fl.progress_reset(self.logs[ver])
+            self.queue.append(ver)
+            self.waits[ver] = self.fl.wait_phase(self.logs[ver], ver, "wait-slots",
+                                                 self._wait_detail).start()
+        self._cleanup()
+        self.note = "first count pending"
+        self.ex = ThreadPoolExecutor(max_workers=max(1, len(self.versions)))
+        first = True
+        while self.queue or self.running:
+            if not first:
+                if self.running:
+                    wait(list(self.running), timeout=SLOT_POLL, return_when=FIRST_COMPLETED)
+                else:
+                    time.sleep(SLOT_POLL)
+            first = False
+            self._tick()
+            done = sorted((f for f in self.running if f.done()),
+                          key=lambda f: self.order[self.running[f]])
+            for fut in done:
+                ver = self.running.pop(fut)
+                try:
+                    rc = fut.result()
+                except Exception:  # runner meledak = anak tanpa output (crash), bukan crash kita
+                    rc = None
+                self._on_reaped(ver, rc)
+            if self.queue and self._admitting():
+                self._pass(self.ex)
+            if self.queue and self._admitting() and not self.running \
+                    and self.budget >= self.limit:
+                self._no_slots()
+            self.accum = bool(self.queue) and not self.running and self._admitting()
+
+    def finish(self, mode, run_rc=None):
+        """Tutup tunggu yang masih terbuka, lalu beri DONE pada log yang skrip ini kosongkan
+        dan belum ber-DONE — hanya bila tak ada anak versi itu yang masih jalan."""
+        in_flight = set(self.running.values())
+        for ver in self.versions:
+            if ver in self.done_written or ver in in_flight:
+                continue
+            self._close_wait(ver, "stopped" if mode == "stopped" else "cancelled")
+            if self._log_has_done(ver):
+                continue
+            if ver in self.reaped:
+                rc = self.reaped[ver]
+                if rc in STOPPED_CODES:
+                    detail = "rc=stopped"
+                elif rc is None or rc < 0 or rc > 128:
+                    detail = "rc=crash"
+                else:
+                    detail = f"rc={rc}"
+            else:
+                detail = {"stopped": "rc=stopped", "crash": "rc=crash"}.get(mode, f"rc={run_rc}")
+            self._done_line(ver, detail)
+        ex = getattr(self, "ex", None)
+        if ex is not None:
+            ex.shutdown(wait=False, cancel_futures=True)
+
+    def _log_has_done(self, ver):
+        try:
+            text = Path(self.logs[ver]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        # Baris: <iso> job=.. pid=.. run=.. v=.. TOKEN ... -> token di kolom ke-6.
+        return any(ln.split()[5:6] == ["DONE"] for ln in text.splitlines())
 
 
 def run_e2e(args, extra, log):
@@ -872,6 +1318,8 @@ def run_e2e(args, extra, log):
                           "source_fingerprint": inp["fingerprint"]}, ensure_ascii=False),
               flush=True)
 
+    # Docker absen: dicek PERTAMA — sebelum registrasi job, pengosongan log, wait-slots atau
+    # pembersihan; run yang dilewati tak menyentuh log kemajuan mana pun.
     if not fl.docker_available():
         log(f"lapis e2e tak dijalankan: {DOCKER_SKIP_REASON}")
         emit("skipped", DOCKER_SKIP_REASON, [])
@@ -888,104 +1336,54 @@ def run_e2e(args, extra, log):
 
     fl.job_register(job_id, module=module_name, layer="e2e",
                     versions=",".join(v for v, _e in inp["cells"]))
-    engines_of = dict(inp["cells"])
-    ctx = {"session": args.session, "fingerprint": inp["fingerprint"], "job_id": job_id,
-           "run_id": fl.RUN_ID, "tags": inp["tags"]}
-    tmp = tempfile.mkdtemp(prefix="psm-layer-")
-    plan = []
-    for ver, cmd, out in plan_children(script, args.module, [v for v, _e in inp["cells"]], tmp,
-                                       extra, progress=(args.reports_dir, "e2e"), job_id=job_id):
-        cmd = [*cmd, "--engines", ",".join(engines_of[ver])]
-        plan.append((ver, cmd, out))
-    outs = {ver: out for ver, _c, out in plan}
-    admitted = {}
-    st = {"appended": [], "states": [], "skipped": [], "exit2": False, "stopped": False,
-          "child_stopped": [],
-          "append_error": None, "keep": False}
+    run = _SlotRun(args, inp, extra, script, job_id, module_name, log, fl, pl)
     log(f"log kemajuan: {progress_file(args.reports_dir, args.module, 'e2e', '<versi>')}")
     if args.verbose:
-        log(f"lapis e2e: {len(plan)} versi, {min(args.jobs, len(plan))} serentak")
-
-    def on_start(ver):
-        admitted[ver] = utc_now()
-
-    def on_reaped(ver, rc):
-        if st["stopped"]:
-            return False
-        if rc in STOPPED_CODES:
-            # SIGTERM ke SATU anak (bukan --stop-job pemanggil ini) hanya membuat versi itu tak
-            # berbukti: saudaranya yang selesai belakangan tetap di-append. Hanya JobStopped milik
-            # proses ini sendiri yang menghentikan seluruh run (exit 143).
-            log(f"versi {ver}: anak dihentikan (rc={rc}) — tak ada rekaman untuk versi ini")
-            st["child_stopped"].append(ver)
-            return st["append_error"] is None
-        if rc == 2:
-            log(f"error: versi {ver}: anak menolak input (exit 2) — baca stderr-nya; tak ada "
-                "anak baru dimulai")
-            st["exit2"] = True
-            st["keep"] = True
-            return False
-        try:
-            payload = json.loads(Path(outs[ver]).read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            payload = None
-        if isinstance(payload, dict) and payload.get("status") == "skipped":
-            reason = payload.get("reason")
-            log(f"versi {ver}: anak melaporkan skipped ({reason}) — tak ada rekaman")
-            st["skipped"].append(reason)
-            return st["append_error"] is None
-        records = records_for_child(pl, ver, engines_of[ver], payload, admitted[ver], ctx, log)
-        if any(r["reason"] == "crash" for r in records):
-            st["keep"] = True
-        for rec in records:
-            path = pl.history_path(args.reports_dir, module_name, ver, rec["browser"])
-            try:
-                pl.append_record(path, rec)
-            except pl.PlanInputError as e:
-                st["append_error"] = st["append_error"] or str(e)
-                continue
-            st["appended"].append(f"{ver}:{rec['browser']}")
-            st["states"].append(rec["state"])
-            if args.verbose:
-                log(f"  {ver}:{rec['browser']} -> {rec['state']}"
-                    + (f" ({rec['reason']})" if rec["reason"] else ""))
-        return st["append_error"] is None
-
+        log(f"lapis e2e: {len(run.versions)} versi, {run.slots} slot sedaemon, batas tunggu "
+            f"{run.limit}s")
     try:
-        run_children(plan, args.jobs, _spawn, on_start, on_reaped)
-    except BaseException as e:
-        if type(e).__name__ != "JobStopped":
-            raise
-        st["stopped"] = True
+        try:
+            run.loop()
+        except BaseException as e:
+            if type(e).__name__ != "JobStopped":
+                run.finish("crash")
+                raise
+            run.finish("stopped")
+            log("dihentikan: job ini (--stop-job) — rekaman yang sudah di-append tetap")
+            return 143
+        rc = _e2e_exit(run, emit, log)
+        run.finish("normal", rc)
+        return rc
     finally:
         # Dipertahankan hanya bila ada output anak yang bisa didiagnosis (crash / exit 2).
-        if st["keep"] and not st["stopped"] and any(Path(tmp).iterdir()):
-            log(f"bukti per-versi DIPERTAHANKAN untuk diagnosis: {tmp}")
+        if run.keep and any(Path(run.tmp).iterdir()):
+            log(f"bukti per-versi DIPERTAHANKAN untuk diagnosis: {run.tmp}")
         else:
-            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(run.tmp, ignore_errors=True)
 
-    if st["stopped"]:
-        log("dihentikan: job ini (--stop-job) — rekaman yang sudah di-append tetap")
-        return 143
-    if st["append_error"]:
+
+def _e2e_exit(run, emit, log):
+    """Exit code + baris output atas semua rekaman yang di-append run ini."""
+    if run.append_error:
         # Tanpa baris output: ini galat lingkungan (disk/izin), bukan anak yang menolak input,
         # jadi orkestrator membacanya seperti exit 2 pra-spawn (perbaiki lalu ulangi) dan tak
         # mengakhiri loop E2E. Rekaman yang sudah ter-append tetap sah.
-        log(f"error: {st['append_error']}")
-        log(f"rekaman yang sudah di-append: {', '.join(st['appended']) or '(tak ada)'}")
+        log(f"error: {run.append_error}")
+        log(f"rekaman yang sudah di-append: {', '.join(run.appended) or '(tak ada)'}")
         return 2
-    if st["exit2"]:
-        emit("ran", None, st["appended"])
+    if run.exit2:
+        emit("ran", None, run.appended)
         return 2
-    if "fail" in st["states"]:
-        emit("ran", None, st["appended"])
+    if "fail" in run.states:
+        emit("ran", None, run.appended)
         return 3
-    if st["skipped"]:
-        emit("skipped", st["skipped"][0], st["appended"])
+    if run.skipped:
+        emit("skipped", run.skipped[0], run.appended)
         return 0
-    emit("ran", None, st["appended"])
+    emit("ran", None, run.appended)
     # Versi yang anaknya dihentikan tak berbukti: exit tak boleh 0 walau saudaranya lulus.
-    if not st["states"] or st["child_stopped"] or any(s != "pass" for s in st["states"]):
+    # not-run / no-slots / inconclusive = bukan pass -> 1.
+    if not run.states or run.child_stopped or any(s != "pass" for s in run.states):
         return 1
     return 0
 
@@ -1052,9 +1450,14 @@ def main(argv=None):
     ap.add_argument("--config", help="JSON psm-config (resolve-psm-config.py) — diteruskan apa "
                                      "adanya ke tiap anak. Lapis e2e membaca himpunan sel, "
                                      "psm_flashlight_tag_map dan psm_flashlight_startup_timeout")
-    ap.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
-                    help=f"Versi yang boot serentak (default {DEFAULT_JOBS}; tiap job mem-boot "
-                         "container PS + DB)")
+    ap.add_argument("--jobs", type=int, default=None,
+                    help=f"Lapis 2/5: versi yang boot serentak (default {DEFAULT_JOBS}; tiap job "
+                         "mem-boot container PS + DB). Lapis e2e: exit 2 — pakai --slots")
+    ap.add_argument("--slots",
+                    help="Lapis e2e saja (override manual): cap slot SEDAEMON — jumlah label "
+                         "psm.slots semua container yang jalan + klaim run lain (default "
+                         f"psm_e2e_slots dari --config, else {DEFAULT_E2E_SLOTS}); bilangan bulat "
+                         ">= 1")
     ap.add_argument("--reports-dir", required=True,
                     help="Folder laporan (psm_reports_dir). Nama file lapis DITURUNKAN dari "
                          "module & lapis — tak bisa diketik, supaya bukti tak bisa mendarat "
@@ -1092,13 +1495,24 @@ def main(argv=None):
         log(f"error: lapis '{args.layer}' tak dikenal; pilih: {', '.join(PARALLEL_LAYERS)}")
         return 2
     if args.layer != "e2e":
-        for flag, val in (("--cells", args.cells), ("--session", args.session)):
+        for flag, val in (("--cells", args.cells), ("--session", args.session),
+                          ("--slots", args.slots)):
             if val is not None:
                 log(f"error: {flag} hanya untuk lapis e2e")
                 return 2
-    if args.jobs < 1:
+    else:
+        if args.jobs is not None:
+            log("error: --jobs tak berlaku untuk lapis e2e — konkurensi E2E diatur slot sedaemon: "
+                "--slots (atau psm_e2e_slots di --config)")
+            return 2
+        if args.slots is not None and args.merge_only:
+            log("error: --slots tak berlaku dengan --merge-only (tak ada yang di-boot)")
+            return 2
+    if args.jobs is not None and args.jobs < 1:
         log(f"error: --jobs harus >= 1 (diberi {args.jobs})")
         return 2
+    if args.jobs is None:
+        args.jobs = DEFAULT_JOBS
 
     extra = list(args.extra)
     if extra and extra[0] == "--":

@@ -1,0 +1,58 @@
+{
+ "round": 1,
+ "critical_high": 55,
+ "fixed": 53,
+ "escalated": 2,
+ "dropped": 1,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261126-145157.r1-q1",
+   "finding": "Pemicu fail-fast di spec ('rekaman `fail` yang ter-append', Always + Design Notes > Trigger) mengubah aturan kontrak cell-contract.md > Runner > Fail-fast ('anak pertama yang exit 3') tanpa persetujuan, padahal Ask First mewajibkan bertanya. Hasilnya beda untuk anak exit 3 yang outputnya crash (semua sel `crash`): menurut spec antrean jalan terus, menurut kontrak berhenti (dan tak ada sel `fail` untuk disebut di reason `fail-fast after <ver>:<browser>`).",
+   "options": [
+    "Pertahankan pemicu spec, tulis balik ke cell-contract.md > Runner",
+    "Ikuti kontrak: pemicu = exit 3 (tetapkan reason untuk kasus crash)"
+   ],
+   "recommended": "Pertahankan pemicu spec, tulis balik ke cell-contract.md > Runner",
+   "oscillation": false
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "Always > Slots (slots.lock)",
+   "issue": "edge-case-9: OSError saat membuat/membuka slots.lock tak punya jalur galat"
+  },
+  {
+   "location": "Always > Child (--sequential-browsers)",
+   "issue": "edge-case-13: preseden engine yang tak tersedia sekaligus sesudah engine gagal (not-run vs browser-unavailable)"
+  },
+  {
+   "location": "Always > Child (--sequential-browsers)",
+   "issue": "edge-case-14: run langsung multi-versi; engine fail-fast jelas per versi"
+  },
+  {
+   "location": "Always > Slots (startup timeout)",
+   "issue": "edge-case-25: --startup-timeout <= 0 tak divalidasi (perilaku lama)"
+  },
+  {
+   "location": "Always > Slots (docker absent mid-run)",
+   "issue": "edge-case-27: kontrak sudah menetapkan galat hitung = cap penuh"
+  },
+  {
+   "location": "I/O Labels row",
+   "issue": "implementer-13: plumbing slot-cost (global vs parameter) dan cara mengukur sum di test"
+  },
+  {
+   "location": "Tasks > resolve-psm-config + drift test",
+   "issue": "implementer-19: file host drift check tak disebut"
+  },
+  {
+   "location": "Design Notes > Records",
+   "issue": "edge-case-22: started_at/finished_at sudah diatur kontrak Evidence record > Fields (kini ditunjuk)"
+  },
+  {
+   "location": "Design Notes > Interim cost/mode",
+   "issue": "adversarial-14: rekaman browser_mode sequential tanpa reset snapshot bisa terbaca konform sesudah CAP-7; usul catatan deferred-work"
+  }
+ ]
+}

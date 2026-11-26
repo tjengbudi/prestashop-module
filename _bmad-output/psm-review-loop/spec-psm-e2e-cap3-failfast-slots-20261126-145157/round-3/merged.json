@@ -1,0 +1,261 @@
+{
+ "run_id": "20261126-145157",
+ "round": 3,
+ "complete": true,
+ "lenses": {
+  "adversarial": {
+   "reported": 12,
+   "valid": true,
+   "count": 12
+  },
+  "edge-case": {
+   "reported": 7,
+   "valid": true,
+   "count": 7
+  },
+  "implementer": {
+   "reported": 10,
+   "valid": true,
+   "count": 10
+  }
+ },
+ "invalid": [],
+ "missing": [],
+ "unexpected": [],
+ "findings": [
+  {
+   "id": "adversarial-1",
+   "lens": "adversarial",
+   "location": "Design Notes > Admission (loop wakes on a child exit or after SLOT_POLL 5 s) + Design Notes > Claims (claim removed at reap, under slots.lock)",
+   "issue": "Nothing makes admission fair across runs, and the design makes one run lose every time. Run B has queued versions. When one of its children exits, B wakes at once, takes slots.lock, removes that claim and admits its next head in the same pass, so the freed slot never shows as free to anyone else. Run A has no child in flight and polls every 5 s, so it always sees the cap full. Its no-slots clock runs the whole time, so after the startup timeout (180 s by default) every cell of A gets `no-slots`, while B keeps the daemon for hours. On a daemon shared by several sessions, a small run (for example a single-cell canary) next to a large run would get `no-slots` again and again. That is an infra result caused by the scheduling design, not by a lack of capacity.",
+   "implementation_impact": "An implementation built exactly as written passes every listed test and row, but on a shared host it gives spurious inconclusive `no-slots` records and pointless infra retries for any run that waits behind a run with a long queue. No row or test exercises two runs competing for freed slots.",
+   "suggestion": "Make the fairness choice explicit. Either (a) add a host-wide FIFO: a waiting run writes `waiting_since` into its registry entry, and a pass admits its head only while no live foreign entry with an older `waiting_since` is still waiting (B yields to A); or (b) at minimum, have a reaping run release slots.lock between removing a claim and the next admission pass, and document the starvation as a known limitation. Either way, add a matrix row with two runs: B with a queue, A waiting, a slot freed by B, and A's expected outcome. If (a) changes the contract's no-slots semantics, list it under Ask First."
+  },
+  {
+   "id": "adversarial-2",
+   "lens": "adversarial",
+   "location": "Design Notes > Admission ('Before the first pass ps-run-layer truncates every queued version's progress log' ... 'The first pass that cannot admit releases the lock, runs the --cleanup-orphans routine ... and is redone before any START wait-slots')",
+   "issue": "The progress logs go silent exactly when the daemon is slow. Each queued version's log is truncated before the first pass, and nothing is written to it until `START wait-slots`, which the spec deliberately puts after cleanup. In between come the first pass's `docker ps` count (up to DOCKER_CMD_TIMEOUT, 120 s), then `cleanup_orphans` (two listings of up to 60 s each, plus one `docker rm -f -v` per orphan, up to 120 s each), then the redone count. On the slow, shared daemon that slots exist for, this gap can pass 3 minutes. headless.md says 'Log diam ±3 menit tanpa DONE → hentikan' the job, and SKILL.md/run-phases.md say a log whose mtime has not changed for about 3 minutes is suspected stuck. So a healthy run can be stopped (headless) or flagged as stuck (interactive) before it ever waits.",
+   "implementation_impact": "Headless runs can stop themselves with `--stop-job` (exit 143, `blocked`) during the automatic cleanup or a slow first count. Interactive runs show false 'diduga macet' reports. The tests stub both cleanup and count, so this never shows in a test.",
+   "suggestion": "Log the gap. Either open `wait-slots` (START plus heartbeat, off the no-slots clock as now) before the first count and run cleanup inside it, or give cleanup its own heartbeated phase (`cleanup-orphans`, never SLOW) in every queued version's log. Then state in run-phases.md that this phase is expected before `wait-slots`."
+  },
+  {
+   "id": "adversarial-3",
+   "lens": "adversarial",
+   "location": "Design Notes > Admission ('admits the head while it fits ... The first pass that cannot admit releases the lock, runs the --cleanup-orphans routine on the loop thread ... and is redone')",
+   "issue": "The spec does not say whether the versions admitted in that first pass are spawned before cleanup or after it. With `--slots 1` (the Own queue row), v1 is admitted, which adds its claim to the registry, and v2 does not fit, which starts cleanup on the loop thread. If spawning happens at the end of the pass loop, v1's claim sits in the registry with no child for the whole cleanup. Other sessions count it, and v1's evidence is delayed by minutes for no benefit. If spawning happens per admission inside the pass, the order is fine, but nothing says so.",
+   "implementation_impact": "Two valid readings give different timing and a different `started_at` (admission time versus engine start). The 'cleanup called once' test in the Own queue row cannot tell them apart.",
+   "suggestion": "State that each admitted version is spawned right after its claim is written, within the pass and before cleanup runs. Have the Own queue test assert that v1's child was started before the cleanup stub was called."
+  },
+  {
+   "id": "adversarial-4",
+   "lens": "adversarial",
+   "location": "Design Notes > Records ('a log it truncated that lacks DONE gets one ... rc=crash after a reaped child') vs Always > Child ('--run-id ... else exit 2; set as fl.RUN_ID before progress')",
+   "issue": "Some child input errors get labelled as crashes. A child that exits 2 before `progress_init` never writes `DONE`: a rejected `--run-id` or `--slot-cost`, or an argparse error from a passthrough flag (its SystemExit reaches `run_main_with_progress` while the progress path is still None). That version's log, truncated by ps-run-layer, then gets `DONE rc=crash` from the exit rule. Meanwhile the run treats it as an input error: exit 2, nothing appended, and the other versions get `not-run input-error after <ver>`. The log for the version that caused the input error is the only one that says crash.",
+   "implementation_impact": "Operators and the stop-convergence and infra-retry guidance read `rc=crash` as an infra failure and retry. That repeats the same input error and hides the real cause, which is the child's stderr.",
+   "suggestion": "Change the rule to: after a reaped child, write `rc=<child exit code>` (so `rc=2` for an exit 2), and use `rc=crash` only when the child died by signal or the runner raised (rc None or negative). Add the exit-2-before-progress case to the 'Child exit 2' row's expected log."
+  },
+  {
+   "id": "adversarial-5",
+   "lens": "adversarial",
+   "location": "Acceptance Criteria #2 ('pre-seeded registry entry of a live test subprocess holding one claim') + Design Notes > Claims ('Claims of every other registry entry whose entry_state is alive') vs cell-contract.md > Config keys ('slot_claims of every live ps-run-layer registry entry')",
+   "issue": "The spec and the contract define which claims count differently, and AC2 depends on the difference. The contract counts only ps-run-layer entries. The spec counts any alive entry. `entry_state` returns `alive` only when host, boot id, PID namespace and pid all match and the entry's `script` appears in that pid's `/proc/<pid>/cmdline`. A seeded entry for a test subprocess such as `sleep` or `python -c` is therefore `dead` (pid-reused) unless its `script` matches that command line. If an implementer follows the contract and filters on `script == ps-run-layer.py`, the subprocess must also have that name in its command line. Neither the AC nor the tests task says how the seeded entry is built.",
+   "implementation_impact": "AC2 either passes vacuously (the claim is ignored, so the run is admitted at once and the test's timing assertion is easy to get wrong) or fails, depending on an unstated choice. The claim-counting filter may also differ from the contract.",
+   "suggestion": "Pick one filter and write it down: either 'alive entries with a `slot_claims` list' or 'alive entries whose `script` is ps-run-layer.py'. Then specify the AC2 fixture: an entry with `host`/`boot`/`ns` from fl.OWNER_*, the subprocess's pid, and a `script` value present in that subprocess's command line. Also assert the run is NOT admitted before the claim is removed."
+  },
+  {
+   "id": "adversarial-6",
+   "lens": "adversarial",
+   "location": "Tasks > tests + I/O matrix (no row for the child honouring --run-id / --progress-append)",
+   "issue": "Claim accounting assumes the child stamps the claim id as `psm.run` on its PS container. A claim stops counting only when a counted container carries that `psm.run`. Every listed ps-run-layer test stubs `daemon_slot_usage`, so no test checks that `ps-e2e-run.py --run-id X` actually puts `psm.run=X` on its PS container, writes `run=X` in its registry entry and progress lines, and emits `run_id`/`boot_id` X. If the child kept its own uuid, every admitted version would count twice (claim plus container) for its whole run, which silently halves the cap. In the same way, no test checks that `--progress-append` leaves the log ps-run-layer truncated intact, which is what keeps the `wait-slots` lines.",
+   "implementation_impact": "A wiring mistake on the child side, such as assigning `RUN_ID` after `job_start` or on the wrong module object, passes the whole suite. In production it doubles slot usage, or erases the wait-slots evidence from the log.",
+   "suggestion": "Add child-side tests to test-ps-e2e-run.py/test-ps-flashlight-run.py: with `--run-id 0123456789ab`, the compose text and the manual `docker run` argv carry `psm.run=0123456789ab`, and so do the registry entry `run` and the progress `run=`. And: with `--progress-append`, an existing log line survives `progress_init`."
+  },
+  {
+   "id": "adversarial-7",
+   "lens": "adversarial",
+   "location": "Always > Child ('ps-run-layer keeps a child not-run cell's state/conclusive/reason (no derive_state) and fills the rest as for a cell no engine ran') vs Tasks > tests",
+   "issue": "No I/O row or listed test covers the ps-run-layer side of engine fail-fast. The 'Sequential child' row only checks the child's output and exit code. Today `build_record` always calls `derive_state`, which turns a never-driven cell into `inconclusive`/`not-driven`. If the new pass-through branch is missing or wrong, the firefox record is appended as `inconclusive` with reason `not-driven`, and the plan reports `inconclusive`, which the docs class as an infra retry, instead of `not-run`.",
+   "implementation_impact": "The most likely regression, keeping the existing derive_state path, passes every listed test. It mislabels every engine-fail-fast cell in the history and sends the orchestrator into infra retries.",
+   "suggestion": "Add a ps-run-layer row and test: a child payload with chromium `fail` and firefox `state: not-run`, `reason: fail-fast after 9.1:chromium` gives an appended firefox record with `state: not-run`, `conclusive: false`, the same reason, `started_at` = the admission time, and `phase_durations` holding only `wait-slots` (when the version waited) or null."
+  },
+  {
+   "id": "adversarial-8",
+   "lens": "adversarial",
+   "location": "Always > Child ('with more than one engine the child logs the fallback once')",
+   "issue": "The spec does not say where this log goes or what form it takes. The progress-log tokens are a contract ('TOKEN (kontrak, dibaca pemanggil — jangan diganti)': START/ALIVE/SLOW/END/DONE), so a free-form line in the progress log would bring in an unlisted token. stderr is invisible to the log-tailing operator, and `browser_notes` lowers `ready`. Under the interim rule every multi-engine version runs in this 'fallback', so the message fires on every run.",
+   "implementation_impact": "An implementer has to guess. A new progress token breaks the documented log grammar, and a `browser_notes` entry would wrongly count as a coverage gap. Tests cannot assert something that is not specified.",
+   "suggestion": "Specify the channel and form, for example one stderr line, or a progress line using an existing token (such as `START`/`END` of a zero-length `sequential-browsers` marker phase, which must then be excluded from `boot_phases`). Say explicitly that it never goes into `browser_notes` or `errors`."
+  },
+  {
+   "id": "adversarial-9",
+   "lens": "adversarial",
+   "location": "Always > RESERVED_PASSTHROUGH ('gains --run-id, --slot-cost, --progress-append, --sequential-browsers') + ps-run-layer reserved_in_passthrough prefix matching",
+   "issue": "The reserved-flag gate rejects any passthrough token of 4 or more characters that is a prefix of a reserved flag. With `--slot-cost` added, `--slo 60`, which argparse accepts today as an abbreviation of the child's legitimate `--slow-after`, is rejected with exit 2 as 'flag milik skrip ini: --slot-cost'. Directly on `ps-e2e-run.py`, `--slo` becomes ambiguous and exits 2 too. The spec does not mention that it narrows which abbreviations are accepted.",
+   "implementation_impact": "A small behaviour change that nobody documented. The error message points at a flag the user never typed.",
+   "suggestion": "Accept it and note it in the docs (use full flag names in the passthrough), or have the gate report the ambiguity between `--slow-after` and `--slot-cost` instead of claiming ownership. Add one test for `--slo`."
+  },
+  {
+   "id": "adversarial-10",
+   "lens": "adversarial",
+   "location": "Always > Slots ('psm_e2e_slots from --config, validated in read_e2e_config')",
+   "issue": "The validation only runs where `read_e2e_config` runs, which is an E2E run. `merge_only_e2e` reads the config through `configured_cells`, and Layers 2/5 never parse it. So the same `--config` with `psm_e2e_slots: \"0\"` gives exit 2 on `--layer e2e` and exit 0 on `--merge-only --layer e2e` or `--layer flashlight`. The contract says 'below 1 is an input error (exit 2)' without limiting it to runs, and the previous slice's Phase 2 wrap-up calls merge-only.",
+   "implementation_impact": "The behaviour differs by entry point, and the I/O row 'Bad input psm_e2e_slots: \"x\"' does not say which entry points it covers.",
+   "suggestion": "State the scope explicitly. Either validate it wherever ps-run-layer reads `--config` for e2e, merge-only included, or write 'E2E runs only; merge-only and Layers 2/5 ignore the key'. Pin it with a test."
+  },
+  {
+   "id": "adversarial-11",
+   "lens": "adversarial",
+   "location": "Design Notes > Claims ('count unless a counted container (labelled psm.slots; the DB container also carries psm.run) has that psm.run')",
+   "issue": "The parenthetical can be read two opposite ways. It may mean 'note that the DB container also carries psm.run, but it is not counted, so it does not suppress the claim'. Or it may mean 'a counted container is one with psm.slots, or the DB container, which carries psm.run'. Only the first reading agrees with the tests line ('claim + its PS or DB container = 1') and with the `--filter label=psm.slots` count, which never returns the DB container. A reader who takes the second reading looks the DB container up separately and suppresses the claim while only the DB runs (manual mode), so the version counts 0 during that window.",
+   "implementation_impact": "In manual mode, admission can under-count by one per booting version.",
+   "suggestion": "Rewrite as: 'A claim counts unless a container returned by the `psm.slots` count carries its `psm.run`; the DB container (unlabelled with psm.slots) never suppresses a claim.'"
+  },
+  {
+   "id": "adversarial-12",
+   "lens": "adversarial",
+   "location": "Intent > Problem vs Boundaries/Design Notes (default psm_e2e_slots 6, default 3 target versions, in-flight children always finish)",
+   "issue": "With the default config (3 versions, 6 slots) and an idle daemon, every version is admitted in the first pass. Cross-version fail-fast then has nothing left to stop, because in-flight children are never cancelled. The 'Budi waits hours' problem from the Intent is only addressed when versions actually queue (a busy daemon, or a lowered `psm_e2e_slots`), or later by CAP-1's tiers. The only saving with defaults is engine fail-fast inside a version. Neither the ACs nor the docs task says this, and the docs task even replaces `--jobs 1` advice with 'one version per --cells call / lower psm_e2e_slots' without connecting it to fail-fast.",
+   "implementation_impact": "There is no code defect, but expectations will be wrong. A reader of the docs or the implementer's summary will expect cross-version fail-fast to save time by default, and it will not.",
+   "suggestion": "In Design Notes and run-phases.md, state that cross-version fail-fast saves time only when versions queue (slots < versions, or a busy daemon), and that the default immediate gain is engine fail-fast. Optionally point to CAP-1 as the slice that delivers ordering by tier."
+  },
+  {
+   "id": "edge-case-1",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap3-failfast-slots.md:79 (Design Notes > Admission: 'Before the first pass ps-run-layer truncates every queued version's progress log') + :25 (fail-fast log truncated to one DONE line)",
+   "issue": "The progress log path is `<reports>/<module>-e2e-<ver>.progress.log` (`progress_file` in ps-run-layer.py:365). It carries no Job ID. With `wait-slots`, two `--layer e2e` runs of the same module and version now overlap routinely: run B queues behind run A on the shared daemon. The spec does not say what run B does to a log that run A's in-flight child, or run A's own wait-slots heartbeat, is still writing.",
+   "implementation_impact": "Run B's pre-pass truncation wipes run A's live child log. Run B's fail-fast rewrite to a single `DONE rc=not-run` line does the same. Both runs' ALIVE/END/DONE lines can then interleave in one file. Stall monitoring and the `DONE` rule misread the run that is actually alive.",
+   "suggestion": "Either key the E2E progress log by Job ID (`<module>-e2e-<ver>.<job>.progress.log`, and update the docs that point at the log), or state that the queue is truncated and written only while no live registry entry of another job holds the same module and version, and otherwise define which run owns the file."
+  },
+  {
+   "id": "edge-case-2",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap3-failfast-slots.md:81 (Design Notes > Records: DONE written by ps-run-layer, 'rc=crash after a reaped child') vs :25 (child exit 2)",
+   "issue": "A child that exits 2 before `progress_init` writes no `DONE`: bad `--run-id`, argparse rejecting a passthrough flag, `--engines` normalizer errors, or a missing module dir. Examples are ps-e2e-run.py:1234-1251 and run_main_with_progress with `_PROGRESS` unset. ps-run-layer then applies its rule to that truncated log, and the only matching branch is `rc=crash`. The spec gives no DONE value for an exit-2 version.",
+   "implementation_impact": "The exit-2 version's log reads `DONE rc=crash`, while the run reports `input-error after <ver>` and exits 2. The operator is told the child crashed when the real cause is input they must fix.",
+   "suggestion": "Add a branch to the DONE rule: a reaped child with rc 2 gets `DONE rc=2` (or `rc=input-error`). Keep `rc=crash` for a reaped child with no rc or an unparseable result."
+  },
+  {
+   "id": "edge-case-3",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap3-failfast-slots.md:79 (Design Notes > Admission: wait outcomes ok/no-slots/cancelled/stopped; only the cancelled path says 'heartbeat joined')",
+   "issue": "The heartbeat thread is joined before the next log write only on the `cancelled` path. The spec does not say it is stopped and joined before `END wait-slots ok` (admission, then spawn), before `END wait-slots no-slots` + `DONE rc=no-slots`, on a stop, or when the loop thread raises an unexpected exception or KeyboardInterrupt (ps-run-layer handles only JobStopped).",
+   "implementation_impact": "A late `ALIVE wait-slots` line can land after `END ... ok`, among the child's appended lines, or after `DONE`. Readers then see a wait still running on a finished version. If the thread is not a daemon thread, an exception or Ctrl-C leaves the process alive and writing heartbeats.",
+   "suggestion": "State that the wait-phase helper stops and joins its heartbeat before writing END, on every outcome. Make it a context manager that closes on any exception, with outcome `stopped` for JobStopped/KeyboardInterrupt and `cancelled` otherwise. Run the DONE rule in a `finally`."
+  },
+  {
+   "id": "edge-case-4",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap3-failfast-slots.md:79 (Design Notes > Admission: `docker count failed: <stderr tail>` in `errors` and joined into `ALIVE` details)",
+   "issue": "The count-failure token embeds a raw stderr tail, which can span several lines (for example a daemon error followed by a hint). The token goes verbatim into the single-line `ALIVE wait-slots` progress format. The spec gives no rule for newlines or for the tail's length.",
+   "implementation_impact": "One heartbeat becomes several log lines, and the extra lines carry no timestamp, token or job. Log parsers and the stall/`DONE` readers misparse the version's log. The `no-slots` record's `errors` also carries an unbounded string.",
+   "suggestion": "Specify the tail as the last N (for example 200) characters with whitespace runs, newlines included, collapsed to one space, applied alike in `errors` and the `ALIVE` detail (as `_job_artifacts` does with `[-200:]`)."
+  },
+  {
+   "id": "edge-case-5",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap3-failfast-slots.md:79 (Design Notes > Admission: 'The loop wakes on a child exit (reaping stays in completion order) or after SLOT_POLL... Each pass ...admits the head while it fits')",
+   "issue": "The spec does not require every already-finished child to be reaped, and its fail-fast decision made, before an admission pass runs in the same wake. A child can finish while the loop sleeps on `SLOT_POLL`, runs cleanup, or holds `slots.lock` for a count. A pass that runs before its future is reaped can admit a further version.",
+   "implementation_impact": "A version can be spawned after a child has already exited with a `fail` that is merely unreaped. That version then boots for evidence the failure made moot, which is exactly what CAP-3 exists to prevent. The behavior also varies with timing, so the I/O rows can flake.",
+   "suggestion": "State: at the start of each wake, and again right before each pass, reap every completed child (batch in plan order) and apply fail-fast/exit-2. A pass runs only when no trigger has fired."
+  },
+  {
+   "id": "edge-case-6",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap3-failfast-slots.md:80 (Design Notes > Claims: 'A failed registry write warns on stderr and never fails the run; other runs then see its claims only once its containers run')",
+   "issue": "The rule covers only a failed write when a claim is added. It does not cover a failed rewrite when a claim is removed at reap, after earlier writes succeeded (ENOSPC, EACCES, or `os.replace` failing). The on-disk entry still lists the claim, the entry stays `alive` while ps-run-layer lives, and no container carries that `psm.run` any more.",
+   "implementation_impact": "Other runs count a phantom slot for the rest of this run, possibly hours of fail-fast drain or a long queue. Their `no-slots` clock advances against a cap that is not really full. Their `no-slots` records name a `claim:` that holds nothing.",
+   "suggestion": "Specify that on a failed claim-removal write ps-run-layer retries on the next pass. If the retry also fails, it deletes its own registry file (or rewrites it with `slot_claims: []`) and warns, so a stale claim never outlives its child."
+  },
+  {
+   "id": "edge-case-7",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap3-failfast-slots.md:73 (Acceptance Criteria 2: 'a pre-seeded registry entry of a live test subprocess holding one claim')",
+   "issue": "A claim counts only when `entry_state` is `alive`. That needs the entry's `host`, `boot` and `ns` to equal the caller's and its `script` to appear in `/proc/<pid>/cmdline` (ps-flashlight-run.py:563-584). The AC does not say the seeded entry must carry these fields, nor which script name the test subprocess must show.",
+   "implementation_impact": "A seeded entry without a matching `script`/`host` reads `dead`/`foreign`, so its claim is ignored and the run is admitted at once. The AC test then fails, or is rewritten to pass vacuously, without exercising cross-run claim counting.",
+   "suggestion": "Add to AC 2 that the seeded entry is built from `fl.OWNER_HOST`/`OWNER_BOOT`/`OWNER_NS`, the subprocess PID, and a `script` value its command line contains. Also add a negative check: the same entry with a dead PID is not counted."
+  },
+  {
+   "id": "implementer-1",
+   "lens": "implementer",
+   "location": "Tasks > docs (Run outcomes: '`input-error after …` once the rejected input is fixed'; companion amendment limited to 'step 3 --jobs -> --slots, Run outcomes/Infra retry') vs spec-psm-e2e-cap2-cap6-cell-evidence.interim-orchestration.md > Definitions > E2E loop ended",
+   "issue": "The interim companion ends the E2E loop for the whole session when 'an E2E run exited 2 because a child exited 2'. In this slice that is exactly the run that writes `input-error after <ver>` records. The docs task says such cells are 'due again once the rejected input is fixed', but it amends only step 3, Run outcomes and Infra retry of the companion and leaves the 'E2E loop ended' bullet as is. Under that bullet nothing is due again in the session, whatever is fixed. The two statements cannot both go into SKILL.md/run-phases.md.",
+   "implementation_impact": "The doc writer must guess one of three things: the loop still ends (the 'due again' clause applies only to a later session), the child-exit-2 bullet is dropped from 'E2E loop ended', or it becomes an infra-retry-like pending state. Each gives the orchestrator different behaviour after a child rejects its input, and the companion stays inconsistent with the skill docs.",
+   "suggestion": "State the rule explicitly. Either 'a child exit 2 still ends the E2E loop for the session; `input-error after …` cells are due again in the next session once the input is fixed', or list the 'E2E loop ended' bullet among the companion edits and say what replaces it."
+  },
+  {
+   "id": "implementer-2",
+   "lens": "implementer",
+   "location": "Boundaries > Always (Child: 'the child logs the fallback once') / cell-contract.md > Parallel browsers > Slots ('logs the fallback')",
+   "issue": "The spec does not name the channel for the sequential-fallback log line. ps-e2e-run.py has three: stderr, the progress log, and the per-cell `browser_notes` (via `note()`, today's channel for per-browser problems). If the line goes into `browser_notes`, every two-engine version run under ps-run-layer (which always passes `--sequential-browsers` this slice) gets non-empty `browser_notes`. Passing gate-grade requires empty `browser_notes`, so `ready` could never become true. If it goes into the progress log, there is no token for it: the documented tokens are START/ALIVE/SLOW/END/DONE, and run-phases.md has no entry for a note line.",
+   "implementation_impact": "The obvious reuse of `note()` silently blocks `ready` for every two-browser cell (plan reason `browser-notes`). The progress-log option needs a new token or phase that neither the spec nor the docs task defines.",
+   "suggestion": "Name the channel and its format, for example 'one progress-log line `<prefix> NOTE sequential-browsers <engines>` (documented in run-phases.md token table), never `browser_notes` or `errors`'. Add a test assertion that a two-engine `--sequential-browsers` pass leaves `browser_notes` empty."
+  },
+  {
+   "id": "implementer-3",
+   "lens": "implementer",
+   "location": "Design Notes > Records ('a log it truncated that lacks `DONE` gets one ...: `rc=crash` after a reaped child')",
+   "issue": "A child that exits 2 before `progress_init` leaves no DONE line. In ps-e2e-run.py `main`, `apply_config_file` (sys.exit 2), the `--engines` normaliser error, and the new `--run-id`/`--slot-cost` validation (required 'before progress') all return 2 before the progress log is opened, and `run_main_with_progress` writes DONE only once a path is set. ps-run-layer would then stamp `DONE rc=crash` into that version's log, while the run reports the child as an input error (exit 2, `input-error after <ver>` for queued cells).",
+   "implementation_impact": "The progress log and the run outcome disagree. The operator, or a headless caller reading the log, sees 'crash' for what is an input rejection, so the stall/crash guidance in run-phases.md points at the wrong cause.",
+   "suggestion": "Use the reaped child's return code: `rc=<child rc>` (e.g. `rc=2`), with `rc=crash` only when the runner raised or there is no return code. Alternatively, define `rc=crash` as 'any reaped child without DONE' and say so in the run-phases.md DONE table."
+  },
+  {
+   "id": "implementer-4",
+   "lens": "implementer",
+   "location": "Always > Fail-fast ('`not-run` records are appended at the trigger'; 'An append error stops admission ... no `not-run`/`no-slots` record follows') + Design Notes > Admission ('a cancelled wait is closed ... before its log is truncated to the DONE line')",
+   "issue": "The spec orders closing the wait before truncating the log, but it does not order truncate-to-`DONE rc=not-run` against appending that version's `not-run` record(s). It also does not say what happens when an append fails partway through the not-run batch. Do the remaining versions in the batch still get `DONE rc=not-run`? Does the failed version keep a `DONE rc=not-run` line even though its history has no record? Or do they get `DONE rc=<run exit code>` (=2) through the exit rule?",
+   "implementation_impact": "Depending on the order chosen, a log can say `rc=not-run` for a cell with no record, or the same append-error run can mix `rc=not-run` and `rc=2` across versions. Tests cannot pin either behaviour.",
+   "suggestion": "Specify: per version, append its not-run record(s) first and truncate its log to `DONE rc=not-run <reason>` only after they all appended. On an append error, stop the batch; versions not yet handled keep their open wait closed `cancelled` and get `DONE rc=2` at exit."
+  },
+  {
+   "id": "implementer-5",
+   "lens": "implementer",
+   "location": "Design Notes > Admission ('The `no-slots` clock ... is checked after each count')",
+   "issue": "The order between the timeout check and admission within one pass is not given. Take a pass whose count finds a free slot at the same moment the accumulator has passed the limit, for example because the foreign container just stopped. 'Checked after each count' could mean the run declares `no-slots` for every queued cell even though the head now fits, or that it admits first and checks only if the head still does not fit.",
+   "implementation_impact": "Two plausible implementations give different records (`no-slots` vs a run) in a boundary case. The Foreign full / Own queue tests do not distinguish them, and real runs near the timeout behave differently.",
+   "suggestion": "Say 'each pass first admits while the head fits; only if a version is still waiting is the clock checked, and on expiry every still-queued cell gets `no-slots`'."
+  },
+  {
+   "id": "implementer-6",
+   "lens": "implementer",
+   "location": "Design Notes > Claims ('count unless a counted container (labelled `psm.slots`; the DB container also carries `psm.run`) has that `psm.run`') + Tasks > tests ('claim + its PS or DB container = 1')",
+   "issue": "The parenthetical reads as if the DB container is a counted container that can suppress a claim, but it carries no `psm.slots` and `docker ps --filter label=psm.slots` never returns it. The intended rule seems to be 'the DB's `psm.run` does not suppress the claim, so claim + DB = 1'. The harness stubs `daemon_slot_usage` itself, so the 'claim + DB container' case has nothing to observe: the stub either returns no DB row (trivially 1) or a DB row the real function could never return.",
+   "implementation_impact": "An implementer may match claims against any container with `psm.run`, for example by querying without the `psm.slots` filter. That makes claim + DB = 0, so a manual-mode boot, whose DB starts before the PS container, is counted as 0 until PS runs. The prescribed test cannot catch this.",
+   "suggestion": "Reword: 'a claim is suppressed only by a container returned by `daemon_slot_usage` (PS containers carrying `psm.slots`) whose `psm.run` equals the claim; the DB container, which also carries `psm.run`, never suppresses it'. Test the DB case at the subprocess level: assert that the `docker ps` call filters on `label=psm.slots`, and that a stubbed output with only the PS row of another run leaves the claim counted."
+  },
+  {
+   "id": "implementer-7",
+   "lens": "implementer",
+   "location": "Design Notes > Admission ('Before the first pass ps-run-layer truncates every queued version's progress log' ... 'The first pass that cannot admit releases the lock, runs the `--cleanup-orphans` routine ... before any `START wait-slots`')",
+   "issue": "Queued versions' logs are emptied before the first pass, but their first line (`START wait-slots`) is written only after `cleanup_orphans()` returns. That routine runs `docker ps -a` and `docker network ls` with 60 s timeouts each, plus one `docker rm -f -v` (60 s timeout) per orphan, so it can take over 3 minutes. During that time those logs are empty with no `DONE`, which SKILL.md/run-phases.md ('no new line ±3 min without DONE') and headless.md (silent-log rule, job stopped and cells `stopped`) treat as a stall.",
+   "implementation_impact": "A headless run with several orphans to reap can stop its own job during the automatic cleanup that this slice adds to headless. Interactive runs show a false 'suspected stall' prompt.",
+   "suggestion": "Either truncate the queued logs after the cleanup, or have the cleanup emit START/ALIVE/END lines (a `cleanup-orphans` wait phase, never SLOW) in each queued version's log. Add it to the run-phases.md phase list."
+  },
+  {
+   "id": "implementer-8",
+   "lens": "implementer",
+   "location": "Boundaries > Always (Slots: '`psm_e2e_slots` from `--config`, validated in `read_e2e_config` even when `--slots` is given') vs ps-run-layer.py `merge_only_e2e` (uses `fl.configured_cells`, not `read_e2e_config`)",
+   "issue": "`--merge-only --layer e2e` takes `--config` but never calls `read_e2e_config`, and Layers 2/5 forward `--config` without validating it. The spec does not say whether `psm_e2e_slots: \"x\"` makes `--merge-only --layer e2e` exit 2. The Bad-input row tests only the run path.",
+   "implementation_impact": "The implementer has to choose between adding validation to merge-only, which could break the wrap-up step when the config is bad but the histories are fine, or leaving it out. Neither choice is testable against the spec.",
+   "suggestion": "State the scope: 'validated only by `--layer e2e` runs; `--merge-only` and Layers 2/5 ignore the key', or route merge-only through `read_e2e_config` and add a Bad-input case."
+  },
+  {
+   "id": "implementer-9",
+   "lens": "implementer",
+   "location": "Tasks > tests ('rewrite e2e tests that pass `--jobs` to `--slots`') vs test-ps-run-layer.py `test_e2e_merge_only_view` (`--merge-only --jobs 7`, expects exit 0 '--jobs diabaikan')",
+   "issue": "The blanket rewrite instruction conflicts with the new rule for this test. Under 'any `--jobs` with layer e2e (`--merge-only` included) = exit 2' and '`--slots` with `--merge-only` = exit 2', rewriting it to `--slots 7` still gives exit 2. Its assertion 'exit 0, no spawn, --jobs ignored' cannot survive either way.",
+   "implementation_impact": "Following the task literally leaves a failing test. The implementer must decide on their own to turn it into an exit-2 test (and for which flag), so the merge-only success path loses its coverage unless a separate case is added.",
+   "suggestion": "Say: 'test_e2e_merge_only_view drops `--jobs`; add merge-only cases `--jobs 7` -> exit 2 naming `--slots` and `--slots 2` -> exit 2'."
+  },
+  {
+   "id": "implementer-10",
+   "lens": "implementer",
+   "location": "Code Map (ps-e2e-run.py entry lists `main`, `_run_one_version_inner`, `cell_state` only; tests list `test-ps-{run-layer,e2e-run,flashlight-run}.py`)",
+   "issue": "The Always/Tasks text requires edits that the Code Map omits: `run_one_version` (its per-cell `phase_durations` copy must skip `not-run` cells), `_new_cell` and `note()` (null-field not-run cells; `note()` appends to `browser_notes`, which would crash on a null list), and `ps-scenario-run.py` / `tests/test-ps-scenario-run.py` (the 'Layer 5 boot stamps none' test). Layer 5 calls `fl._bring_up_compose(...)`/`fl._bring_up_manual(...)` positionally, as does the existing stub in test-ps-e2e-run.py (`lambda md, fv, ir, db, dom, ot, pub=None`). Any signature change for the slot cost has to stay compatible with both.",
+   "implementation_impact": "An implementer following the Code Map can miss the timing-copy skip, so the not-run cell gets `phase_durations: {}` and the spec's null rule is violated. They can also break the existing `_bring_up_compose` test stubs, or put the Layer 5 label test in a file the verification loop covers without the spec naming it.",
+   "suggestion": "Add `run_one_version`, `_new_cell`/`note`, `exit_code` (ps-e2e-run.py) and `ps-scenario-run.py` + `tests/test-ps-scenario-run.py` to the Code Map. Require the cost parameter to be keyword-only with a `None` default so existing positional callers and stubs keep working."
+  }
+ ],
+ "duplicates_removed": [],
+ "clusters": []
+}

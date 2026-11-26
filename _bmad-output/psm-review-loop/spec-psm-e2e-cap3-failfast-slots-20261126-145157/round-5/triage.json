@@ -1,0 +1,17 @@
+{"round": 5, "critical_high": 6, "fixed": 6, "escalated": 0, "dropped": 0, "code_defects": 0,
+ "questions_for_budi": [],
+ "medium_low": [
+  {"location": "Boundaries > Always > Child (child not-run timestamps)", "issue": "adversarial-3: wall_clock of a child not-run cell spans the whole version run; contract field rule ('when ps-run-layer admitted it') is followed literally; changing it is a contract change"},
+  {"location": "Tasks > docs", "issue": "adversarial-4: e2e-quickstart.md / SKILL.md direct runs could warn that direct ps-e2e-run.py runs count against psm_e2e_slots but bypass admission"},
+  {"location": "Design Notes > Admission (cleanup inside wait-slots)", "issue": "adversarial-5: cleanup time inflates wait-slots; optional ALIVE detail 'cleanup-orphans running' and cleanup seconds in stderr summary"},
+  {"location": "Boundaries > Always > Child (cell_state lazy load)", "issue": "adversarial-6: eager _plan_layers() load in child main() would turn a broken scripts/ copy into a pre-boot exit 2"},
+  {"location": "Boundaries > Always / I/O matrix (skipped child)", "issue": "adversarial-7: skipped child admission unchanged from today (contract Runner > Output governs output line); optional explicit row"},
+  {"location": "Tasks > docs (interim step 3 --cells order)", "issue": "adversarial-8: orchestrator --cells order (newest first) not fixed; canary/order is CAP-1 scope"},
+  {"location": "Boundaries > Always > Child (fallback stderr line)", "issue": "adversarial-9: fallback message wording could avoid implying slot shortage in the CAP-3 interim"},
+  {"location": "Boundaries > Always > Child (--run-id vs second fl copy)", "issue": "adversarial-10: latent: ps-plan-layers' separate ps-flashlight-run copy has its own RUN_ID"},
+  {"location": "Boundaries > Always > Fail-fast (append error vs trigger)", "issue": "edge-case-1: same-batch precedence; 'no not-run record follows' an append error already decides it temporally"},
+  {"location": "Design Notes > Admission (startup timeout <= 0)", "issue": "edge-case-3: zero/negative startup timeout not rejected; behavior deterministic (immediate no-slots)"},
+  {"location": "Boundaries > Always > Slots (slots.lock OSError)", "issue": "edge-case-4: lock open/flock failure falls to the ps-run-layer-raises path (rc=crash); optional 'counts as full' rule"},
+  {"location": "Design Notes > Records (versions with no record)", "issue": "edge-case-5: skipped / STOPPED_CODES / exit-2 versions leave no record, so no wait-slots entry; could be stated"},
+  {"location": "Acceptance Criteria #2 / Tasks > tests (harness seam)", "issue": "implementer-4: pre-seeded registry vs fresh temp dir per _run_full call; harness extension left to the implementer"}
+ ]}

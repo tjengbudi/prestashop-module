@@ -157,8 +157,53 @@ def main():
     ok &= check("restore gagal -> TAK KONKLUSIF & given tak dijalankan",
                 r["conclusive"] is False and not any(s["phase"] == "given" for s in r["steps"]))
 
+    ok &= test_no_slot_label()
+
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1
+
+
+def test_no_slot_label():
+    """Boot Lapis 5 (compose & manual) TAK PERNAH mencap psm.slots: container-nya tak dihitung
+    di slot E2E sedaemon (cell-contract.md > Config keys > psm_e2e_slots). Label dibaca dari
+    teks compose ter-render dan argv `docker run` yang ditangkap — tanpa Docker nyata."""
+    import re
+    import subprocess
+    ok = True
+    fl = mod.fl
+    names = ("compose_available", "image_present", "wait_healthy", "_teardown")
+    saved = ({n: getattr(fl, n) for n in names}, fl.subprocess.run)
+    compose, runs = [], []
+
+    def fake_run(cmd, **kw):
+        if cmd[:2] == ["docker", "compose"] and "up" in cmd:
+            compose.append(Path(cmd[cmd.index("-f") + 1]).read_text(encoding="utf-8"))
+        if cmd[:2] == ["docker", "run"]:
+            runs.append(list(cmd))
+        out = "cid0\n" if ("ps" in cmd and "-q" in cmd) else ""
+        return subprocess.CompletedProcess(cmd, 0, out, "")
+    try:
+        fl.compose_available = lambda: True
+        fl.image_present = lambda ref: True
+        fl.wait_healthy = lambda c, t, poll=3.0: ("-db-" in c, "x")  # DB sehat, PS tidak
+        fl._teardown = lambda s: None
+        fl.subprocess.run = fake_run
+        with tempfile.TemporaryDirectory() as td:
+            for orch in ("compose", "manual"):
+                mod.run_one_version(Path(td), "m", "9.1", "9.1.4-nginx", [_scen()],
+                                    orchestrator=orch, db_image="db", ps_domain="localhost:8000",
+                                    startup_timeout=1, op_timeout=1, allow_pull=False)
+    finally:
+        for n, v in saved[0].items():
+            setattr(fl, n, v)
+        fl.subprocess.run = saved[1]
+    total = sum(int(n) for t in compose for n in re.findall(r'psm\.slots: "(\d+)"', t))
+    total += sum(1 for r in runs for a in r if a.startswith("psm.slots="))
+    ps_run = any(r[-1] == f"{fl.IMAGE}:9.1.4-nginx" for r in runs)
+    ok &= check("boot Lapis 5 compose & manual terjadi (teks compose + docker run PS ditangkap)",
+                len(compose) == 1 and ps_run)
+    ok &= check("boot Lapis 5: psm.slots compose 0 / manual 0", total == 0)
+    return ok
 
 
 if __name__ == "__main__":

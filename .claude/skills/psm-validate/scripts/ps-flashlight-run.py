@@ -295,20 +295,35 @@ def parse_phpstan(out):
 PROGRESS_HEARTBEAT = 15          # detik antar denyut ALIVE/SLOW
 PROGRESS_SLOW_AFTER = 180        # detik sebelum fase ditandai SLOW
 PROGRESS_SLOW_AFTER_PHASE = {"pull": 900}  # unduh image multi-GB memang lama
+# Fase TUNGGU (cell-contract.md > Phase timings): lamanya = lamanya fase yang ditunggu, yang
+# punya batasnya sendiri — jadi TAK PERNAH ditandai SLOW, apa pun --slow-after.
+WAIT_PHASES = ("wait-slots", "keeper-wait")
+WAIT_PHASE_PREFIXES = ("lock-wait:", "barrier-wait:")
 DOCKER_CMD_TIMEOUT = 120         # perintah docker pendek (run/network/inspect/rm/down) —
                                  # tanpa batas, daemon yang tersendat menggantung run selamanya
 _PROGRESS = {"path": None, "version": "-", "slow_after": None}
 _PROGRESS_LOCK = threading.Lock()
 
 
-def progress_init(path, slow_after=None):
-    """Aktifkan log kemajuan ke `path` (dikosongkan dulu). None = nonaktif (no-op)."""
+def is_wait_phase(name):
+    """True untuk fase tunggu (wait-slots, keeper-wait, lock-wait:<e>, barrier-wait:<e>)."""
+    base = (name or "").split("#", 1)[0]
+    return base in WAIT_PHASES or base.startswith(WAIT_PHASE_PREFIXES)
+
+
+def progress_init(path, slow_after=None, truncate=True):
+    """Aktifkan log kemajuan ke `path`. None = nonaktif (no-op).
+
+    `truncate` True (default) mengosongkan file dulu; False (`--progress-append`, anak yang
+    dimulai ps-run-layer) mempertahankan baris yang sudah ditulis pemanggil (`wait-slots`).
+    """
     _PROGRESS["path"] = Path(path) if path else None
     _PROGRESS["slow_after"] = slow_after
     if path:
         try:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-            Path(path).write_text("", encoding="utf-8")
+            if truncate:
+                Path(path).write_text("", encoding="utf-8")
         except OSError:
             _PROGRESS["path"] = None
 
@@ -317,19 +332,108 @@ def progress_version(full_ver):
     _PROGRESS["version"] = full_ver or "-"
 
 
-def progress(token, phase_name="", detail=""):
-    path = _PROGRESS["path"]
+def progress_line(version, token, phase_name="", detail=""):
+    """Satu baris log kemajuan (tanpa newline) — format kontrak di komentar di atas."""
+    parts = [datetime.now().isoformat(timespec="seconds"), f"job={_JOB['id'] or '-'}",
+             f"pid={OWNER_PID}", f"run={RUN_ID}", f"v={version or '-'}", token, phase_name, detail]
+    return " ".join(p for p in parts if p)
+
+
+def progress_to(path, version, token, phase_name="", detail="", *, truncate=False):
+    """Tulis satu baris ke log `path` atas nama `version` — path & versi PER PANGGILAN.
+
+    Dipakai ps-run-layer, yang menulis log tiap versi yang diantre (`wait-slots`, `DONE`)
+    tanpa mengaktifkan log global proses. `truncate` = kosongkan file lalu tulis baris itu
+    saja. None = no-op; error tulis ditelan (log tak pernah menggagalkan uji).
+    """
     if not path:
         return
-    parts = [datetime.now().isoformat(timespec="seconds"), f"job={_JOB['id'] or '-'}",
-             f"pid={OWNER_PID}", f"run={RUN_ID}", f"v={_PROGRESS['version']}", token, phase_name, detail]
-    line = " ".join(p for p in parts if p)
+    line = progress_line(version, token, phase_name, detail)
     try:
-        with _PROGRESS_LOCK, open(path, "a", encoding="utf-8") as f:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with _PROGRESS_LOCK, open(path, "w" if truncate else "a", encoding="utf-8") as f:
             f.write(line + "\n")
             f.flush()
     except OSError:
         pass
+
+
+def progress_reset(path):
+    """Kosongkan log `path` (buat foldernya bila perlu). Error ditelan."""
+    if not path:
+        return
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with _PROGRESS_LOCK:
+            Path(path).write_text("", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def progress(token, phase_name="", detail=""):
+    progress_to(_PROGRESS["path"], _PROGRESS["version"], token, phase_name, detail)
+
+
+class wait_phase:
+    """Fase tunggu ke log `path` atas nama `version`: START, denyut ALIVE tiap
+    PROGRESS_HEARTBEAT, END <outcome>. TAK PERNAH SLOW (apa pun --slow-after).
+
+    `detail` boleh string atau callable tanpa argumen (dihitung ulang tiap denyut, mis.
+    "last pass 3s ago"); boleh diganti selama fase. `end(outcome)` menghentikan denyut,
+    MENUNGGU thread-nya selesai, lalu menulis END — jadi tak ada ALIVE sesudah END — dan
+    mengembalikan {seconds, outcome}; panggilan berikutnya mengembalikan hasil yang sama.
+    Dipakai juga sebagai context manager (exception -> outcome `cancelled`).
+    """
+
+    def __init__(self, path, version, name, detail=""):
+        self.path, self.version, self.name, self.detail = path, version, name, detail
+        self._stop = threading.Event()
+        self._thread = None
+        self._t0 = None
+        self.result = None
+
+    def _detail(self):
+        d = self.detail
+        if callable(d):
+            try:
+                d = d()
+            except Exception:  # noqa: BLE001 — detail log tak boleh mematikan denyut
+                d = ""
+        return d or ""
+
+    def _beat(self):
+        while not self._stop.wait(PROGRESS_HEARTBEAT):
+            elapsed = int(time.monotonic() - self._t0)
+            progress_to(self.path, self.version, "ALIVE", self.name,
+                        f"{elapsed}s {self._detail()}".rstrip())
+
+    def start(self):
+        self._t0 = time.monotonic()
+        progress_to(self.path, self.version, "START", self.name, self._detail())
+        if self.path:
+            self._thread = threading.Thread(target=self._beat, daemon=True)
+            self._thread.start()
+        return self
+
+    def end(self, outcome="ok"):
+        if self.result is not None:
+            return self.result
+        self._stop.set()
+        if self._thread:
+            # Berbatas: denyut yang tersangkut di FS macet tak boleh membekukan admisi
+            # (end() dipanggil di bawah slots.lock).
+            self._thread.join(timeout=PROGRESS_HEARTBEAT + 2)
+        seconds = time.monotonic() - (self._t0 if self._t0 is not None else time.monotonic())
+        progress_to(self.path, self.version, "END", self.name, f"{outcome} {int(seconds)}s")
+        self.result = {"seconds": round(seconds, 3), "outcome": outcome}
+        return self.result
+
+    def __enter__(self):
+        return self.start()
+
+    def __exit__(self, exc_type, exc, tb):
+        self.end("ok" if exc_type is None else "cancelled")
+        return False
 
 
 # --- Sink durasi fase (CAP-6) ---------------------------------------------------
@@ -381,6 +485,12 @@ def timing_activate():
     return sink
 
 
+def timing_current():
+    """Sink yang sedang aktif (None bila tak ada) — dibaca di tengah boot, mis. fail-fast
+    antar-engine ps-e2e-run yang menilai sel sebelum sink diambil."""
+    return _TIMING["sink"]
+
+
 def timing_deactivate():
     """Nonaktifkan sink aktif dan kembalikan sink itu (None bila tak ada yang aktif)."""
     sink, _TIMING["sink"] = _TIMING["sink"], None
@@ -409,8 +519,10 @@ class phase:
 
     def _beat(self):
         slow = _PROGRESS["slow_after"] or PROGRESS_SLOW_AFTER_PHASE.get(self.name, PROGRESS_SLOW_AFTER)
+        never_slow = is_wait_phase(self.name)
         while not self._stop.wait(PROGRESS_HEARTBEAT):
-            token = "SLOW" if time.monotonic() - self._t0 >= slow else "ALIVE"
+            token = ("SLOW" if not never_slow and time.monotonic() - self._t0 >= slow
+                     else "ALIVE")
             progress(token, self.name, f"{self._budget()} {self.detail}".rstrip())
 
     def __enter__(self):
@@ -465,7 +577,10 @@ LABEL_JOB = "psm.job"
 JOB_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,62}$")
 JOB_REGISTRY = Path(tempfile.gettempdir()) / "psm-jobs"
 JOB_STOP_GRACE = 60   # detik menunggu job membongkar dirinya sendiri sebelum SIGKILL
-_JOB = {"id": None, "entry_path": None}
+_JOB = {"id": None, "entry_path": None, "entry": None}
+# Kunci lintas proses (cell-contract.md > Config keys > psm_e2e_slots): `slots.lock` dipegang
+# ps-run-layer selama hitung-lalu-klaim slot. Di luar psm-jobs/ (yang *.json-nya entri proses).
+LOCK_DIR = Path(tempfile.gettempdir()) / "psm-locks"
 
 
 class JobStopped(BaseException):
@@ -506,6 +621,23 @@ def _job_unregister():
         pass
 
 
+def _write_entry_atomic(path, entry):
+    """Tulis entri registry secara atomik: temp `.<pid>.json.tmp` di folder yang SAMA (tak
+    pernah cocok `*.json`, jadi pembaca registry tak pernah melihat entri setengah jadi)
+    lalu `os.replace`. OSError merambat ke pemanggil."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.parent / f".{OWNER_PID}.json.tmp"
+    try:
+        tmp.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
 def job_register(job_id, *, module, layer, versions=""):
     """Aktifkan job untuk proses ini: label, nama, registry, penangkap SIGTERM.
 
@@ -518,10 +650,10 @@ def job_register(job_id, *, module, layer, versions=""):
              "module": module, "layer": layer, "versions": versions,
              "started": datetime.now().isoformat(timespec="seconds"),
              "progress_file": str(_PROGRESS["path"]) if _PROGRESS["path"] else None}
+    _JOB["entry"] = entry
     path = JOB_REGISTRY / job_id / f"{OWNER_PID}.json"
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+        _write_entry_atomic(path, entry)
         _JOB["entry_path"] = path
         atexit.register(_job_unregister)
     except OSError:
@@ -532,6 +664,25 @@ def job_register(job_id, *, module, layer, versions=""):
         pass  # bukan thread utama / platform tanpa SIGTERM — stop-job jatuh ke SIGKILL
     print(f"JOB {job_id}  (hentikan terarah: ps-flashlight-run.py --stop-job {job_id})",
           file=sys.stderr)
+
+
+def job_update(**fields):
+    """Tulis ulang entri registry MILIK proses ini dengan `fields` digabung (mis.
+    `slot_claims` ps-run-layer), atomik seperti job_register. Return True bila tertulis;
+    False bila job belum terdaftar atau tulis gagal (pemanggil memperingatkan, tak gagal)."""
+    entry = _JOB.get("entry")
+    if not _JOB.get("id") or entry is None:
+        return False
+    entry.update(fields)
+    path = JOB_REGISTRY / _JOB["id"] / f"{OWNER_PID}.json"
+    try:
+        _write_entry_atomic(path, entry)
+    except OSError:
+        return False
+    if _JOB.get("entry_path") is None:
+        _JOB["entry_path"] = path
+        atexit.register(_job_unregister)
+    return True
 
 
 def _registry_entries(job_id=None):
@@ -754,13 +905,17 @@ def _logs(container):
     return (r.stdout or "") + (r.stderr or "")
 
 
-def _compose_file_text(db_image, image_ref, ps_domain, module_dir, publish=None):
+def _compose_file_text(db_image, image_ref, ps_domain, module_dir, publish=None, *,
+                       slot_cost=None):
     """docker-compose ephemeral: mariadb (healthcheck) + flashlight (depends_on healthy).
 
     `publish` (opsional, mis. '8000:80') memetakan port HTTP flashlight ke host —
     dipakai pemanggil yang perlu menjangkau PS dari luar container (mis. Lapis 4
     browser E2E lewat Playwright). Default None = tak ada port terpublish (perilaku
     lama; uji phpstan cukup lewat `docker exec`).
+
+    `slot_cost` (keyword) = label `psm.slots=<n>` di service `ps:` SAJA (slot_labels) —
+    diberi hanya oleh ps-e2e-run; DB, network dan Lapis 2/5 tak pernah dihitung.
     """
     return (
         "services:\n"
@@ -779,7 +934,7 @@ def _compose_file_text(db_image, image_ref, ps_domain, module_dir, publish=None)
         f"      MYSQL_DATABASE: {DB_NAME}\n"
         "  ps:\n"
         f"    image: {image_ref}\n"
-        + _compose_labels_yaml(4) +
+        + _compose_labels_yaml(4, slot_labels(slot_cost)) +
         "    depends_on:\n"
         "      db:\n"
         "        condition: service_healthy\n"
@@ -821,6 +976,9 @@ LABEL_OWNER_HOST = "psm.owner-host"  # host penulis label; PID lokal tak bermakn
 # karena PID-nya kebetulan didaur-ulang proses lain.
 LABEL_OWNER_BOOT = "psm.owner-boot"  # boot-id kernel — beda boot = pemilik pasti sudah mati
 LABEL_OWNER_NS = "psm.owner-ns"      # inode PID namespace — beda ns = PID tak bisa dinilai
+# Biaya slot Lapis 4 (cell-contract.md > Config keys > psm_e2e_slots): HANYA di container PS
+# yang di-boot ps-e2e-run (`--slot-cost`). Dijumlah lintas SELURUH daemon oleh ps-run-layer.
+LABEL_SLOTS = "psm.slots"
 CLEANUP_FLAG = "--cleanup-orphans"   # disulih ke argparse & dikunci gerbang prosa (lihat test)
 RUN_ID = uuid.uuid4().hex[:12]
 OWNER_PID = os.getpid()
@@ -866,19 +1024,31 @@ def owner_labels():
     return lab
 
 
-def _label_flags():
-    """owner_labels() sebagai argumen CLI docker (`--label k=v` berulang)."""
+def slot_labels(slot_cost):
+    """Label `psm.slots=<cost>` untuk container PS SAJA, TERPISAH dari owner_labels().
+
+    Hanya proses yang menjalankan bring-up Lapis 4 (ps-e2e-run, `--slot-cost`, default 1)
+    yang memberi cost; Lapis 2/5 memanggil tanpa cost -> {} (container mereka tak pernah
+    dihitung). Hitungan slot sedaemon (daemon_slot_usage) menjumlah label ini.
+    """
+    if slot_cost is None:
+        return {}
+    return {LABEL_SLOTS: str(slot_cost)}
+
+
+def _label_flags(extra=None):
+    """owner_labels() (+ `extra`) sebagai argumen CLI docker (`--label k=v` berulang)."""
     flags = []
-    for k, v in owner_labels().items():
+    for k, v in {**owner_labels(), **(extra or {})}.items():
         flags += ["--label", f"{k}={v}"]
     return flags
 
 
-def _compose_labels_yaml(indent):
-    """owner_labels() sebagai blok `labels:` YAML pada indentasi tertentu."""
+def _compose_labels_yaml(indent, extra=None):
+    """owner_labels() (+ `extra`) sebagai blok `labels:` YAML pada indentasi tertentu."""
     pad = " " * indent
     out = f"{pad}labels:\n"
-    for k, v in owner_labels().items():
+    for k, v in {**owner_labels(), **(extra or {})}.items():
         out += f"{pad}  {k}: {json.dumps(v)}\n"
     return out
 
@@ -896,21 +1066,24 @@ def _project_name(full_ver):
     return f"{CONTAINER_PREFIX}-{_name_infix()}{v}-{uuid.uuid4().hex[:8]}"
 
 
-def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout, publish=None):
+def _bring_up_compose(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout, publish=None,
+                      *, slot_cost=None):
     with phase("bring-up", op_timeout, "compose") as ph:
         session, err = _bring_up_compose_inner(module_dir, full_ver, image_ref, db_image,
-                                               ps_domain, op_timeout, publish)
+                                               ps_domain, op_timeout, publish,
+                                               slot_cost=slot_cost)
         if err:
             ph.status = "gagal"
         return session, err
 
 
 def _bring_up_compose_inner(module_dir, full_ver, image_ref, db_image, ps_domain, op_timeout,
-                            publish=None):
+                            publish=None, *, slot_cost=None):
     proj = _project_name(full_ver)
     tmpdir = tempfile.mkdtemp(prefix="psm-fl-")
     compose_path = Path(tmpdir) / "docker-compose.yml"
-    compose_path.write_text(_compose_file_text(db_image, image_ref, ps_domain, module_dir, publish),
+    compose_path.write_text(_compose_file_text(db_image, image_ref, ps_domain, module_dir, publish,
+                                               slot_cost=slot_cost),
                             encoding="utf-8")
     session = {"mode": "compose", "project": proj, "compose_file": str(compose_path),
                "tmpdir": tmpdir, "ps_container": None}
@@ -933,11 +1106,12 @@ def _bring_up_compose_inner(module_dir, full_ver, image_ref, db_image, ps_domain
     return session, None
 
 
-def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout, publish=None):
+def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout, publish=None,
+                     *, slot_cost=None):
     with phase("bring-up", None, "manual") as ph:
         try:
             session, err = _bring_up_manual_inner(module_dir, image_ref, db_image, ps_domain,
-                                                  startup_timeout, publish)
+                                                  startup_timeout, publish, slot_cost=slot_cost)
         except subprocess.TimeoutExpired as e:
             # Sesi parsial (network/DB sudah dibuat) tetap dibongkar pemanggil lewat _teardown;
             # nama-namanya deterministik dari uid, jadi direkonstruksi di _MANUAL_PARTIAL.
@@ -951,7 +1125,8 @@ def _bring_up_manual(module_dir, image_ref, db_image, ps_domain, startup_timeout
 _MANUAL_PARTIAL = {}
 
 
-def _bring_up_manual_inner(module_dir, image_ref, db_image, ps_domain, startup_timeout, publish=None):
+def _bring_up_manual_inner(module_dir, image_ref, db_image, ps_domain, startup_timeout, publish=None,
+                           *, slot_cost=None):
     uid = uuid.uuid4().hex[:8]
     session = {"mode": "manual", "network": f"{CONTAINER_PREFIX}-{_name_infix()}net-{uid}",
                "db": f"{CONTAINER_PREFIX}-{_name_infix()}db-{uid}", "ps_container": f"{CONTAINER_PREFIX}-{_name_infix()}ps-{uid}"}
@@ -974,7 +1149,8 @@ def _bring_up_manual_inner(module_dir, image_ref, db_image, ps_domain, startup_t
     if not ok:
         return session, f"DB tak jadi healthy ({status})"
     ps = subprocess.run(
-        ["docker", "run", "-d", "--name", session["ps_container"], *_label_flags(),
+        ["docker", "run", "-d", "--name", session["ps_container"],
+         *_label_flags(slot_labels(slot_cost)),
          "--network", session["network"],
          "-e", f"PS_DOMAIN={ps_domain}", "-e", "MYSQL_HOST=db", "-e", "MYSQL_PORT=3306",
          "-e", f"MYSQL_USER={DB_USER}", "-e", f"MYSQL_PASSWORD={DB_PASSWORD}",
@@ -1210,6 +1386,47 @@ def cleanup_orphans():
         # tapi konsumen mesin harus bisa membedakan "bersih" dari "ada yang tak tergarap".
         result["status"] = "partial"
     return result
+
+
+def slot_cost_value(raw):
+    """Biaya slot yang sah (int >= 1) dari label/klaim, else None (dihitung 1, tampil `=?`)."""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw if raw >= 1 else None
+    if isinstance(raw, str) and re.fullmatch(r"[0-9]+", raw.strip()):  # ASCII saja
+        n = int(raw.strip())
+        return n if n >= 1 else None
+    return None
+
+
+def daemon_slot_usage():
+    """Jumlah `psm.slots` atas SEMUA container yang JALAN di daemon (satu `docker ps`).
+
+    Return (used, counted, error): `counted` = [{job, host, run, cost}] per container
+    berlabel (`cost` None bila label bukan int >= 1 — dihitung 1); `used` = jumlahnya.
+    `error` None, atau ekor kegagalan (stderr; teks exception pada timeout/OSError) — maka
+    used None & counted [] (pemanggil membacanya "cap penuh"). Container tanpa label tak
+    dihitung (skrip lama); yatim berlabel TETAP dihitung sampai dibersihkan.
+    """
+    fmt = "\t".join(f'{{{{.Label "{k}"}}}}' for k in (LABEL_SLOTS, LABEL_JOB, LABEL_OWNER_HOST,
+                                                     LABEL_RUN))
+    try:
+        r = subprocess.run(["docker", "ps", "--filter", f"label={LABEL_SLOTS}", "--format", fmt],
+                           capture_output=True, text=True, timeout=DOCKER_CMD_TIMEOUT)
+    except (subprocess.SubprocessError, OSError) as e:
+        return None, [], str(e) or type(e).__name__
+    if r.returncode != 0:
+        return None, [], (r.stderr or "").strip() or f"docker ps exit {r.returncode}"
+    counted = []
+    for line in (r.stdout or "").splitlines():
+        if not line.strip():
+            continue
+        parts = (line.split("\t") + ["", "", "", ""])[:4]
+        cost = slot_cost_value(parts[0])
+        counted.append({"job": parts[1].strip() or None, "host": parts[2].strip() or None,
+                        "run": parts[3].strip() or None, "cost": cost})
+    return sum(c["cost"] or 1 for c in counted), counted, None
 
 
 def run_one_version(module_dir, mod_name, full_ver, tag, *, orchestrator, db_image,

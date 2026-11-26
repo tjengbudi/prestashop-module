@@ -55,6 +55,7 @@ Deskripsi lengkap tiap skill + contoh pemakaian: [Referensi per skill](#referens
 | `psm_flashlight_startup_timeout` | Maks detik menunggu container `healthy` | `180` |
 | `psm_e2e_enabled` | Gerbang uji browser E2E psm-validate (Lapis 4): `true`/`false` | `true` |
 | `psm_e2e_browsers` | Engine Playwright untuk uji E2E, dipisah koma | `chromium,firefox` |
+| `psm_e2e_slots` | Cap slot uji E2E **sedaemon** Docker (`ps-run-layer.py --slots`): jumlah label `psm.slots` semua container E2E yang jalan, lintas run & sesi; bilangan bulat ≥ 1 | `6` |
 | `psm_modules_dir` | Folder tempat module PrestaShop kamu | `{project-root}/modules` |
 | `psm_reports_dir` | Output laporan validasi/optimasi | `{project-root}/_bmad-output/psm-validate` |
 
@@ -81,12 +82,12 @@ Menunjuk seluruh folder berarti pi juga melihat semua skill bmad di pohon itu, b
 
 **droid** belum disiapkan. Dia hanya memindai `<repo>/.factory/skills/`, `~/.factory/skills/`, dan folder kompat `.agent/skills/` — `.claude/skills/` tidak termasuk, jadi butuh symlink per-skill. Dua hambatan harus diuji lebih dulu:
 
-- **Routing subagent BYOK** ([Factory-AI/factory#1061](https://github.com/Factory-AI/factory/issues/1061)) — subagent droid dilaporkan lari ke Anthropic alih-alih model BYOK. `psm-validate` memakai subagent di **satu** tempat: empat reviewer lensa Lapis 3 (review adversarial). Paralelisme per-versi tak memakai subagent — itu milik `ps-run-layer.py --jobs`.
+- **Routing subagent BYOK** ([Factory-AI/factory#1061](https://github.com/Factory-AI/factory/issues/1061)) — subagent droid dilaporkan lari ke Anthropic alih-alih model BYOK. `psm-validate` memakai subagent di **satu** tempat: empat reviewer lensa Lapis 3 (review adversarial). Paralelisme per-versi tak memakai subagent — itu milik `ps-run-layer.py` (`--jobs` untuk Lapis 2/5, `--slots` untuk E2E).
 - **`droid exec --model` menolak model ID custom** ([#787](https://github.com/Factory-AI/factory/issues/787)) — `droid exec` adalah mode non-interaktif untuk run panjang.
 
 Keduanya bisa saja sudah diperbaiki di versi yang kamu pasang; keduanya belum diverifikasi di repo ini.
 
-> **Catatan subagent umum.** `psm-validate` memakai subagent untuk **satu** hal: Lapis 3, dipecah jadi **empat reviewer paralel, satu per lensa** (keamanan transaksi, cart/order/stock, lintas versi, performa). Yang dibeli bukan kecepatan, melainkan **konteks bersih**: peninjau yang sudah melihat hasil Lapis 1/2/4 cenderung membaca pindai bersih sebagai bukti sehat. Para reviewer hanya mengembalikan JSON, lalu orkestrator menggabungkannya sekali ke file lapis adversarial. Bila harness tak bisa men-spawn subagent, skill meninjau sendiri lewat fallback inline (empat lensa berurutan, ditulis per lensa) dan menyebutkan itu di ringkasan, jadi ia tetap jalan utuh, hanya dengan konteks yang diakui tak bersih. Kecepatan lintas-versi tak pernah lewat subagent: itu `ps-run-layer.py --jobs`.
+> **Catatan subagent umum.** `psm-validate` memakai subagent untuk **satu** hal: Lapis 3, dipecah jadi **empat reviewer paralel, satu per lensa** (keamanan transaksi, cart/order/stock, lintas versi, performa). Yang dibeli bukan kecepatan, melainkan **konteks bersih**: peninjau yang sudah melihat hasil Lapis 1/2/4 cenderung membaca pindai bersih sebagai bukti sehat. Para reviewer hanya mengembalikan JSON, lalu orkestrator menggabungkannya sekali ke file lapis adversarial. Bila harness tak bisa men-spawn subagent, skill meninjau sendiri lewat fallback inline (empat lensa berurutan, ditulis per lensa) dan menyebutkan itu di ringkasan, jadi ia tetap jalan utuh, hanya dengan konteks yang diakui tak bersih. Kecepatan lintas-versi tak pernah lewat subagent: itu `ps-run-layer.py` (`--jobs` untuk Lapis 2/5; untuk E2E slot sedaemon `--slots` / `psm_e2e_slots`).
 
 ---
 
@@ -352,7 +353,7 @@ Hanya ada dua arah, dan keduanya searah:
 
 Tiga workflow juga **mengarahkan ke `psm-scaffold` lalu berhenti** bila targetnya ternyata bukan module (`looks_like_module: false`): `psm-develop`, `psm-plan`, `psm-ideate`. Itu gerbang target — mereka menolak merancang di atas ketiadaan, alih-alih menghasilkan scan kosong yang menyerupai sukses.
 
-Di dalam dirinya sendiri, `psm-validate` mendelegasikan ke **empat** subagent (bukan skill): reviewer Lapis 3, satu per lensa, supaya lensa adversarialnya bekerja di konteks bersih. Konkurensi lintas-versi juga bukan urusan subagent — `ps-run-layer.py` mem-boot beberapa versi serentak sebagai subproses lewat `--jobs`, dan vonis tetap milik skrip.
+Di dalam dirinya sendiri, `psm-validate` mendelegasikan ke **empat** subagent (bukan skill): reviewer Lapis 3, satu per lensa, supaya lensa adversarialnya bekerja di konteks bersih. Konkurensi lintas-versi juga bukan urusan subagent — `ps-run-layer.py` mem-boot beberapa versi serentak sebagai subproses — lewat `--jobs` untuk Lapis 2/5, dan untuk E2E lewat slot sedaemon (`--slots`, default `psm_e2e_slots`) — dan vonis tetap milik skrip.
 
 ### 2. Skrip milik bersama (skill X menjalankan skrip milik skill Y)
 
