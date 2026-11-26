@@ -1,0 +1,116 @@
+[
+  {
+    "location": "SPEC.md > Capabilities > CAP-5 (warm container ownership) + Constraints (Job ID ownership)",
+    "issue": "Container ownership is tied to the label psm.owner-pid, which is the PID of the process that booted the container. --cleanup-orphans deletes anything whose owner PID is dead, and ps-run-layer.py creates one Job ID per invocation. A warm canary that survives between fix-loop iterations has no live owner process between invocations. So the first --cleanup-orphans call, from this session or any other session sharing the daemon, will delete it as an orphan. --stop-job (which SIGTERMs the owning process and then removes `psm.job=<id>`) has no process to signal. The phrase 'removed by --cleanup-orphans after its owner dies' is undefined when the owner is meant to die after every iteration.",
+    "implementation_impact": "The ownership model in ps-flashlight-run.py (owner-pid probe, job_start, cleanup_orphans, stop-job) cannot hold a warm container as written. Either the warm container gets reaped at random by parallel sessions, or the implementer invents an ad-hoc lease and weakens the anti-kill guarantees.",
+    "suggestion": "Define an explicit lease model for warm containers: a persistent Job ID reused across iterations, an owner identity that outlives single invocations (e.g. a lease file holding session ID and expiry, or a heartbeat label), what --cleanup-orphans treats as dead (lease expired), and how --stop-job behaves when no process is attached. Also add an idle TTL."
+  },
+  {
+    "location": "SPEC.md > CAP-5 success ('reinstalled module and a DB reset to the post-boot baseline')",
+    "issue": "A DB reset does not reset the container filesystem. ps-flashlight-run.py installs with `cp -r /ps-module-src /var/www/html/modules/$MOD_NAME`. If the target directory already exists, this copies into a nested `$MOD_NAME/ps-module-src` directory instead of replacing it. Files deleted from source also survive. Overrides written to /override, var/cache (class_index, Symfony container, Smarty compile), opcache, and uploaded or generated assets from the previous iteration all persist. 'Post-boot baseline' is also ambiguous: it could mean before or after module install. Layer 5 snapshots after install.",
+    "implementation_impact": "Warm iterations can run stale module code or stale caches. Findings can then appear or vanish because of residue rather than the patch, which breaks the stated guarantee that previous-iteration data cannot cause a finding.",
+    "suggestion": "Specify the full reset contract: when the DB snapshot is taken (pre-install), removal of the module dir before re-copy (rm -rf then cp), clearing var/cache, /override, and opcache (or restarting php-fpm), and a test proving that a file deleted from source is gone after a warm iteration."
+  },
+  {
+    "location": "SPEC.md > CAP-2 + tier-matrix.md tier 2 ('all versions × Firefox') + brownfield.md (per-version file naming)",
+    "issue": "Evidence is stored per version (`<module>-e2e-<ver>.json`), and ps-run-layer.py's merge_versions_field raises an error when one version appears twice with different content. Tier 2 runs Firefox for versions whose Chromium evidence came from tier 1, and CAP-4 writes partial runs. The spec never says where per-(version, browser) evidence lives or how a Firefox-only or failed-only run combines with existing Chromium or full evidence instead of overwriting it.",
+    "implementation_impact": "A Firefox-only tier 2 run will overwrite the tier 1 Chromium evidence for that version, so the gate can never assemble both browsers. If the implementer adds per-browser entries under one version key instead, --merge-only fails with the 'different content' conflict.",
+    "suggestion": "Define the evidence storage unit explicitly, either a per-(version, browser) file or a per-version file with a browser-keyed sub-map plus read-merge rules. Also define how merge_versions_field and --merge-only treat cells written by different runs."
+  },
+  {
+    "location": "SPEC.md > CAP-2 + Constraints ('Release-gate evidence comes only from cold boots with the full scenario set')",
+    "issue": "Freshness in ps-plan-layers.py is file mtime compared with the newest source mtime, plus the image tag. Evidence produced by a warm container or a failed-only run is written later than the source, so it looks fresh. The spec does not define which fields the evidence must record (boot kind cold/warm, scenario completeness full/partial, per-browser run timestamp) for the planner and the aggregate to reject it. A single file mtime also cannot express that the Chromium entry is older than the Firefox entry.",
+    "implementation_impact": "Without a defined schema, the planner may reuse warm or partial evidence as gate-grade, which is a silent honesty violation, or each script may invent its own marker and drift apart. The 'ready=false' test in the success signal has no field to assert against.",
+    "suggestion": "Add a schema section to the evidence contract with per-cell fields, e.g. `boot: cold|warm`, `scenario_set: full|partial`, `scenarios_run`, `run_at`, `tag`, `conclusive`. State that per-cell freshness compares run_at, not file mtime. State that plan and aggregate both reject anything other than cold+full."
+  },
+  {
+    "location": "SPEC.md > Success signal ('A clean release gate boots each version at most once') vs tier-matrix.md tiers 0–2",
+    "issue": "For a clean module the tier plan boots every version more than once. The canary gets a cold full run at the end of tier 0 and is booted again in tier 2 for Firefox. 1.7.8 and 8.1 are booted in tier 1 for Chromium and again in tier 2 for Firefox. Today, both browsers run in one boot per version with `--jobs 3` in parallel. The tiers are also strictly sequential. So the clean path does more boots and adds two serial barriers, which can make it slower than the status quo, against the Why.",
+    "implementation_impact": "The success signal cannot be met as literally stated, and the clean-path wall-clock may regress. Implementers have no rule for when skipping a re-boot is allowed.",
+    "suggestion": "Either restate the success signal as 'tier 2 boots each version at most once' and accept the extra boots with a CAP-6 comparison, or allow tier 1 to run both browsers on non-canary versions when tier 0 is clean so each version boots once. Then add an explicit acceptance criterion comparing the clean-path wall-clock with the current baseline."
+  },
+  {
+    "location": "SPEC.md > CAP-3 (fail-fast) + Assumptions ('in-flight cells finish')",
+    "issue": "ps-run-layer.py starts versions concurrently with `--jobs` defaulting to 3. Tier 1 has 2 cells and tier 2 has 3 versions, so every cell is already in flight when the first finding arrives and there are no 'unstarted cells' to stop. In-flight cells are allowed to finish. So the success claim that wall-clock is 'close to the failing cell's duration, not the full matrix' does not follow under the default configuration. The spec also does not say whether fail-fast operates inside a cell (stop remaining scenarios or the other browser in a CAP-7 pair) or how a cancel signal reaches separate child processes.",
+    "implementation_impact": "CAP-3 may be implemented as a no-op under the defaults, or it may be implemented by killing in-flight children, which contradicts the assumption and the orphan-safety rules. The acceptance test is ambiguous.",
+    "suggestion": "State the cell scheduling model (queue with cap N), define fail-fast at three levels (cross-cell, cross-browser within a boot, cross-scenario within a browser), specify the cancel mechanism between ps-run-layer and its children, and rewrite the success criterion so it holds when jobs < cells, plus a note on the expected no-gain case when jobs >= cells."
+  },
+  {
+    "location": "SPEC.md > CAP-3 success ('reported as not-run')",
+    "issue": "No representation exists for `not-run`. Unstarted versions in ps-run-layer write no per-version file, and --merge-only drops missing versions. The aggregate today reports 'versi tak ada di hasil e2e'. The spec does not say whether not-run is a new status in the layer JSON, a per-cell entry, or simply absence, nor how headless callers see it in their per-version verdict.",
+    "implementation_impact": "The aggregate, plan, and headless return may each treat not-run differently: as absent (rerun), as inconclusive, or as an infra error. Operators may also misread not-run versions as infra failures.",
+    "suggestion": "Define `not-run` as an explicit per-cell status with a reason (e.g. `fail-fast after <cell>`), written to the layer file. Specify that plan treats it as rerun and the aggregate as inconclusive, and add it to the headless return contract."
+  },
+  {
+    "location": "SPEC.md > CAP-2 + Constraints ('All target versions and both browsers remain mandatory') vs 'configured (version, browser)'",
+    "issue": "The required browser set has three possible sources: `psm_e2e_browsers` config, the `--browsers` flag, and the interactive scope narrowing in SKILL.md On Activation step 2. The spec says both browsers are mandatory but also says 'any configured (version, browser)'. If config lists only chromium, or the operator narrows on purpose, it is unclear whether ready can ever be true, or whether narrowing is still allowed via `--require`.",
+    "implementation_impact": "Implementers must guess whether the required-cell set comes from config, the flag, or a hard-coded {chromium, firefox}. That choice decides whether the bankwire Chromium-only case reproduces the bug or gets fixed.",
+    "suggestion": "Name the single source of the required browser set: the config value, which `--browsers` narrowing cannot shrink for the gate. State that narrowing only affects what runs, not what is required, and say how SKILL.md's interactive scope menu interacts with this."
+  },
+  {
+    "location": "SPEC.md > CAP-2 (per-cell conclusiveness)",
+    "issue": "Today a version's e2e is conclusive when at least one browser ran. Per-browser gaps go to `browser_notes`, and BO conclusiveness depends on a per-engine `bo_authed`. The spec requires 'fresh, conclusive, full-scenario' evidence per (version, browser) but never defines per-cell conclusiveness, e.g. Firefox launched but BO login failed in Firefox only, or one engine hit `launch_error`. brownfield.md flags only the freshness gap, not the conclusiveness gap in ps-aggregate.py e2e_layer.",
+    "implementation_impact": "The aggregate's version-level `conclusive` will keep passing a version where Firefox's BO assertions were all inconclusive, so ready can be true without real Firefox BO evidence.",
+    "suggestion": "Define per-cell conclusiveness: engine launched, module installed, bo_authed when the scenarios need BO, and every scenario in the full set evaluated. Require e2e_layer and compute_ready to evaluate per cell."
+  },
+  {
+    "location": "SPEC.md > CAP-2 + Constraints ('Headless callers keep their per-version verdict contract')",
+    "issue": "ps-plan-layers.py output (`rerun_matrix` entries of {layer, version}, with `all_reuse` as the gate) has no browser dimension. SKILL.md and run-phases.md tell the model to read `all_reuse` and never union booleans by hand. The spec does not say how the plan output changes to express 'Firefox rerun for 8.1' while the version stays 'fresh' for Chromium, or how callers then invoke a browser-scoped rerun.",
+    "implementation_impact": "Either the plan schema changes in a way that breaks existing readers, or the per-browser rerun is left for the model to derive by hand, reintroducing the manual-union failure the scripts were built to prevent.",
+    "suggestion": "Specify the new plan output shape, e.g. rerun_matrix entries gaining `browsers: [...]` and `reason`, with backward-compatible `all_reuse`. Add a mapping from rerun entries to the exact ps-run-layer invocation, e.g. `--versions V --browsers firefox`."
+  },
+  {
+    "location": "SPEC.md > CAP-1 / tier-matrix.md (who sequences tiers)",
+    "issue": "The spec never assigns tier sequencing to a component. It does not say whether the planner emits 'next tier', a new orchestrator script runs tiers 0→2, or the model follows prose in SKILL.md / run-phases.md. The skill's own design rule is that gate logic lives in scripts, not model judgment, and 'a tier starts only after the previous tier is clean' is exactly such gate logic.",
+    "implementation_impact": "Without an owner, tier promotion will likely be written as prose for the model to follow. It is then unenforceable and untestable ('no non-canary cell boots until the canary passes' has nothing to assert against), and headless callers may skip tiers.",
+    "suggestion": "Assign tier logic to a script: e.g. ps-plan-layers emits `tier`, `next_cells`, and `promotion_ready`, and ps-run-layer refuses non-canary cells unless the canary cell has cold+full clean evidence. Name that script in the companions and in a test."
+  },
+  {
+    "location": "tier-matrix.md > Rules ('A failure in tier 1 or tier 2 for version V returns the loop to tier 0, with V as the cell being fixed')",
+    "issue": "The return path is undefined. It is unclear whether V × Chromium becomes the warm cell, which implies a warm container for a non-canary version, or V × Firefox when the failure is Firefox-only. After fixing V, the patch stales the canary 9.1 evidence, and the spec does not say whether the canary must be re-proven cold before tier 1 resumes or V's cold run is enough. A fix for V can also break 9.1, and the spec does not say how that ordering avoids oscillation.",
+    "implementation_impact": "Implementers will produce inconsistent loops: some re-run the 9.1 canary after every V fix, some skip it. The 'tier 0 clean' precondition for tier 1 becomes ambiguous when V is not the canary.",
+    "suggestion": "Write the state machine explicitly: the failing cell becomes the 'focus cell' (version and browser), it gets a warm container, and promotion requires cold+full clean on the focus cell and then cold+full on the configured canary before tier 1. Also cover the Firefox-only failure case."
+  },
+  {
+    "location": "tier-matrix.md > tier 2 'plus any stale Chromium cell'",
+    "issue": "Tier 2 starts only after tier 1 is clean, and any source patch stales every cell through mtime. So a stale Chromium cell at tier 2 implies a patch after tier 1, which should send the loop back to tier 0, not into tier 2. The only other way to get a stale Chromium cell is an image-tag bump or config change, and the matrix does not cover it.",
+    "implementation_impact": "Implementers could run a patched module straight into tier 2 with only the stale Chromium cells refreshed, skipping canary and fan-out gating.",
+    "suggestion": "Either remove the clause or define exactly when it applies (e.g. a tag bump with no source change) and state that any source-mtime staleness at tier 2 resets to tier 0."
+  },
+  {
+    "location": "SPEC.md > CAP-4 (failed-only rerun)",
+    "issue": "'Scenarios that failed in a version's latest evidence' is underspecified. It does not say which browser's evidence (the cell is version × browser), whether inconclusive scenarios such as BO assertions after a failed login count as failed, or what happens when the latest evidence is itself a passing partial run (the failed set becomes empty and only smoke runs). It also does not cover a scenario file that was renamed or edited, or a failure in the universal smoke itself.",
+    "implementation_impact": "Repeated failed-only iterations can quietly lose track of the original failures. After one partial pass, the next iteration runs smoke only and declares the cell converged when the real scenario was never re-checked.",
+    "suggestion": "Key the failed set per (version, browser) and anchor it to the last full-scenario run, not the latest evidence. Include inconclusive scenarios. Match scenarios by name with a fallback to full when the set cannot be resolved, and record in the evidence which scenario set it was."
+  },
+  {
+    "location": "SPEC.md > CAP-7 (parallel browsers in one container)",
+    "issue": "The current code drives browsers in one process with the Playwright sync API, a shared mutable `ctx` dict (bo_authed, screenshot_dir, _shots), and a global progress-phase state (`fl.phase`, `progress_version`). Running engines concurrently needs threads, which sync Playwright does not support across threads without a separate instance per thread, or subprocesses, or async. The spec does not state the concurrency mechanism or how two concurrent `browser:<engine>` phases are logged (interleaved START/ALIVE/SLOW). It also does not say whether two simultaneous BO logins with the same admin account invalidate each other's sessions on 8.x/9.x.",
+    "implementation_impact": "A naive threaded implementation produces shared-state races in ctx and the progress log, and possible BO session clobbering. That yields false inconclusive or blocking findings, which breaks 'findings identical to a sequential run'.",
+    "suggestion": "Specify the mechanism (e.g. one subprocess or one Playwright instance per engine, each with its own ctx copy), per-engine progress lines, and per-engine admin credentials or a verified concurrent-session test. Make CAP-7 acceptance depend on resolving the open question on global-config scenarios."
+  },
+  {
+    "location": "SPEC.md > Constraints ('Concurrency ... respects one configurable cap')",
+    "issue": "The cap has no name, default, unit, or enforcement point. It is unclear whether it counts containers, browser processes, or both. ps-run-layer launches separate child processes per version, while CAP-7 browsers would run inside a child, so one cap spans two process levels. It also does not cover the warm canary container, which occupies the daemon the whole time. The cap is per invocation, but saturation comes from other sessions on the shared daemon, which the cap cannot see.",
+    "implementation_impact": "Implementers will either keep `--jobs` (containers only), so CAP-7 can double load unnoticed, or add a second flag, contradicting 'one cap'. The wait-healthy stalls the constraint is meant to prevent can still happen.",
+    "suggestion": "Name the cap (config key plus flag), define its unit (e.g. weighted slots: container = 1, extra browser = k), give a default, state that ps-run-layer is the single scheduler, and say whether the warm container counts against it."
+  },
+  {
+    "location": "SPEC.md > CAP-6 (phase durations)",
+    "issue": "The required phases (`bring-up`, `wait-healthy`, `install`, `browser:<engine>`) omit `pull`, `wait-http`, `warmup-bo`, and `teardown`, which the progress log already emits. warmup-bo and wait-http are boot cost on cold 1.7/8 containers. Leaving them out misattributes boot time, which undermines the stated purpose of seeing 'whether boot or browser driving dominates'. Under CAP-7, browser durations overlap, so a sum of phases no longer equals wall-clock, and the spec does not ask for a cell-level wall-clock.",
+    "implementation_impact": "The baseline the open question depends on will be skewed and cannot be reconciled with the observed waits.",
+    "suggestion": "Require every phase that emits START/END, plus a per-version wall-clock and per-tier wall-clock. Mark overlapping phases. Specify whether timings come from in-process timers or the progress log, since the progress log is truncated on every run."
+  },
+  {
+    "location": "SPEC.md > Assumptions ('Tiering applies equally to interactive and headless runs') + Constraints (headless contract)",
+    "issue": "Headless callers (psm-develop and others) call psm-validate once and expect a per-version verdict. Under tiering with fail-fast, a canary failure leaves the other versions not-run, which changes what callers receive. The callers' handling of inconclusive versus failed is not reviewed. The spec also does not say whether headless runs may create warm containers, and with no operator nobody stops them, which conflicts with headless.md's narrow stop rules.",
+    "implementation_impact": "Headless callers may treat not-run versions as blocked or as infra failures, or loop forever. Warm containers created headless leak on the shared daemon until some later cleanup.",
+    "suggestion": "State the headless behavior explicitly: no warm containers in headless mode (or a mandatory --stop-job at return), not-run listed in the return JSON, and a note in headless.md and the caller skills on how to interpret not-run."
+  },
+  {
+    "location": "SPEC.md > Assumptions ('The canary ... is configurable') + Constraints (concurrency cap) + CAP-5",
+    "issue": "The spec introduces new configuration (canary version and browser, concurrency cap, possibly warm-container TTL) but names no config keys, defaults in resolve-psm-config.py / psm-setup, or CLI flags. SKILL.md requires all settings to flow through the resolver and `--config`.",
+    "implementation_impact": "Each script may add its own flag with a different name and default. The plan and the run then disagree on which cell is the canary, which breaks the tier gate.",
+    "suggestion": "List the new keys (e.g. `psm_e2e_canary: 9.1:chromium`, `psm_e2e_concurrency`, `psm_e2e_warm_ttl`), their defaults, the resolver and psm-setup changes, and which scripts consume them."
+  }
+]

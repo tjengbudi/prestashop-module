@@ -1,0 +1,333 @@
+{
+ "run_id": "20261126-114047",
+ "round": 3,
+ "complete": true,
+ "lenses": {
+  "adversarial": {
+   "reported": 8,
+   "valid": true,
+   "count": 8
+  },
+  "edge-case": {
+   "reported": 14,
+   "valid": true,
+   "count": 14
+  },
+  "implementer": {
+   "reported": 16,
+   "valid": true,
+   "count": 16
+  }
+ },
+ "invalid": [],
+ "missing": [],
+ "unexpected": [],
+ "findings": [
+  {
+   "id": "adversarial-1",
+   "lens": "adversarial",
+   "location": "Design Notes > Interim orchestration (Fase 2: 'Then, without any all_reuse gate: today's --merge-only for Layers 2 and 5 ...')",
+   "issue": "Interim Fase 2 drops today's step that refreshes stale Layer 2/5 per-version files ('Segarkan tiap (lapis, versi) yang masih rerun'). The only E2E-like re-check it keeps is for e2e cells. It also removes the all_reuse gate on the Layer 2/5 --merge-only. Neither merge_only() in ps-run-layer.py nor ps-aggregate.py checks freshness: merge_only copies whatever per-version files exist, and the aggregate trusts the canonical JSON. Version-first convergence makes this case normal. A patch made in 9.1's Fase 1 loop stales 1.7.8's and 8.1's Layer 2/5 files, which already converged, and no rule reopens those loops: the contract's Phase 2 entry check and per-version `clean` are deferred. The stale files are then merged into canonical flashlight/scenario files and credited.",
+   "implementation_impact": "An implementer who follows the interim recipe writes run-phases.md so that Fase 2 merges stale Layer 2/5 evidence. `ready` can then be true while Layer 2 never ran against the patched source. This breaks the honesty law the spec's own Boundaries restate, and the gap is introduced by this slice: the all_reuse gate it removes was the only freshness guard on that merge.",
+   "suggestion": "In Fase 2, before the merges, run one `--per-version` plan call over the in-scope versions. Run every non-adversarial, non-e2e layer still in `per_version[V].rerun` (Layers 1/2/5 via the normal per-version commands), or send those versions back to Fase 1, and only merge once no in-scope version lists flashlight/scenario/static as rerun. Add a doc rule that a patch in any loop reopens every version whose Layer 1/2/5 files it staled (the interim equivalent of the contract's Phase 2 entry check)."
+  },
+  {
+   "id": "adversarial-2",
+   "lens": "adversarial",
+   "location": "Design Notes > Interim orchestration ('V's E2E loop ended ... while the plan's source_fingerprint equals the one printed by V's last E2E run this session')",
+   "issue": "The interim ends V's E2E loop after a single run whenever the source has not changed, whatever the run produced. Interactive infra fixes that do not touch the module therefore can never be retried in the session: confirming an image pull and rerunning with --allow-image-pull (SKILL.md Lapis 2/4 flow), running `playwright install firefox` after a `browser-unavailable` record, freeing a stalled Docker daemon after a `crash`/`errors` record, or retrying a flaky BO login (`inconclusive-steps`). The contract is looser: it ends the loop only on `skipped`, a `blocked-*` step (`blocked-infra` needs two infra results in one session), `psm_e2e_enabled` false, or `--require` without e2e.",
+   "implementation_impact": "The docs will tell the interactive orchestrator not to rerun E2E after Budi fixes the environment. The documented pull-confirmation flow is silently disabled for Layer 4, and the only way to retry is a dummy source edit or a new session. Both waste time, and the dummy edit also stales every other layer.",
+   "suggestion": "Limit the fingerprint-equality rule to runs whose records for V are all conclusive (pass/fail) or headless. For interactive runs with inconclusive records, allow one retry after an explicit environment fix (the interim stand-in for the contract's two-strike blocked-infra), and state explicitly that the --allow-image-pull rerun is allowed."
+  },
+  {
+   "id": "adversarial-3",
+   "lens": "adversarial",
+   "location": "Design Notes > Interim orchestration (Fase 2: 'an appended fail re-enters Fase 1 for that version (interactive)')",
+   "issue": "The loop-back is one clause, and the spec does not say where control returns after the re-entered Fase 1 loop ends. Open questions: is Fase 2 restarted from the top? Are the Layer 3 lenses respawned? They were spawned at Fase 2 start and may still be reviewing pre-patch source. Do the other versions' E2E cells, staled by the patch, run again? Do their Layer 2/5 files run again? The aggregate trusts `<module>-adversarial.json` with no freshness check. The contract's docs list explicitly requires 'Layer 3 spawned again after a loop-back' (adversarial-lens.md), and this spec omits it.",
+   "implementation_impact": "run-phases.md will either continue to the merge/aggregate step after the patch, which credits an adversarial review of the old source and stale Layer 2/5/E2E evidence of other versions, or loop in an undefined way. In both cases the docs and the contract disagree.",
+   "suggestion": "Add one sentence: after a Fase 2 loop-back, once the re-entered Fase 1 loop ends, restart Fase 2 from the top (re-plan, respawn Layer 3 unless the canonical plan reuses it, refresh stale Layers 2/5, rerun scoped e2e entries of versions whose E2E loop has not ended), and include the adversarial-lens.md 'respawn after loop-back' line in the docs task."
+  },
+  {
+   "id": "adversarial-4",
+   "lens": "adversarial",
+   "location": "Design Notes > Interim orchestration (Fase 1: 'V's loop ends when its rerun holds only adversarial/e2e ...')",
+   "issue": "The end condition looks only at freshness. Right after V's stale Layers 1/2/5 run, their per-version files are fresh, so `rerun` holds only adversarial/e2e and the stated condition is met even when those files contain blocking findings. 'Patch and repeat as today' is not part of the termination rule. The contract's `clean` also requires that no Layer 1/2/5 per-version file holds a blocking finding, and today's docs loop 'sampai bersih'. The same applies to E2E: a fail with an unchanged fingerprint marks the loop ended, so V exits Fase 1 failing unless someone patches.",
+   "implementation_impact": "An orchestrator that follows the literal rule moves to the next version, or to Fase 2, with known blocking Layer 2 or E2E failures unpatched. It spends the expensive Fase 2 boots on a module already known to fail, and the converge-per-version behavior the docs promise is lost.",
+   "suggestion": "Make the interim end condition: `rerun` holds only adversarial/e2e, AND V's fresh Layer 1/2/5 per-version files hold no blocking finding (judged from the files, or from ps-aggregate's layer functions as the contract's `clean` does), AND V has no scoped e2e entry with reason `fail` unless the operator declines to patch (record that decision in the report)."
+  },
+  {
+   "id": "adversarial-5",
+   "lens": "adversarial",
+   "location": "Tasks > ps-e2e-run.py; Design Notes > Record / Child output in history mode ('a missing per-cell field is stored null')",
+   "issue": "Today the child emits the version's tag as `tag` (not `image_tag`) and `scenario_notes` only at top level (not under `versions[V]`). The spec reads both as version-level child fields, yet its explicit ps-e2e-run task list (and the Boundaries bullet) enumerates many producer changes and omits these two. The shape check does not reject missing fields: it stores them as null. A null `image_tag` never equals the resolved tag, so every record is stale (`stale-tag`/`stale-source`). A null `scenario_notes` on a pass/fail record triggers `incomplete-record`. No task or AC tests a real child payload through to a passing gate-grade record. AC3 counts records only, and the plan/aggregate tests use hand-written records.",
+   "implementation_impact": "An implementer who follows the enumerated task can ship a runner whose records never become passing gate-grade. All tests pass and nothing errors, and every cell reads stale or inconclusive forever. This is hard to diagnose because ps-run-layer quietly stores nulls.",
+   "suggestion": "Add `image_tag` (renamed from `tag`, or emitted alongside) and per-version `scenario_notes` to the ps-e2e-run task explicitly. Add a test: a stub child emits a clean two-engine payload; ps-run-layer appends records; the plan reports no e2e rerun_matrix entry for those cells; the aggregate gives them `gate_grade: true` with reason null."
+  },
+  {
+   "id": "adversarial-6",
+   "lens": "adversarial",
+   "location": "Design Notes > Interim orchestration (Fase 1 iteration: run the stale layers, then 'if V has scoped e2e entries ... run ps-run-layer.py --layer e2e')",
+   "issue": "The interim runs V's E2E cells in the same iteration as its stale Layers 1/2/5, whatever their outcome, including when Layer 2 has just shown the install failing. The contract (Plan > Phase 1) runs the E2E step only once V is clean. The spec neither adopts that gate nor names its absence as a deliberate slice deferral.",
+   "implementation_impact": "Every dirty iteration spends a full PS+DB boot per version on E2E records that can only come out `install`-inconclusive or will be staled by the next patch. Combined with the fingerprint-based loop-ended rule, the E2E result recorded for the dirty state also suppresses a retry until a patch lands. This works against the slice's stated time-saving purpose.",
+   "suggestion": "Run the E2E step only once V's Layers 1/2/5 are fresh and free of blocking findings in that iteration (interim `clean`), or state explicitly that this gate is deferred to CAP-1 and accept the cost."
+  },
+  {
+   "id": "adversarial-7",
+   "lens": "adversarial",
+   "location": "Design Notes > Interim orchestration (E2E loop-ended state held 'for the rest of the session' by the orchestrator)",
+   "issue": "Deciding whether V's E2E loop has ended requires the LLM orchestrator to remember, per version and across a run that can last a day, the `source_fingerprint` printed by V's last E2E run and whether any run printed `skipped`. No script persists or derives this. Yet every record already carries `session` and `source_fingerprint`, and this slice makes `--session` mandatory on the plan without using it.",
+   "implementation_impact": "After context compaction or a long session, the orchestrator may forget the last fingerprint. It then either reruns cells that should not run (cost) or skips cells that should (unproven cells it believes are already handled). Neither failure shows up in any script output.",
+   "suggestion": "Derive it mechanically: V's E2E loop has ended when some configured cell of V has a history record whose `session` equals the current token and whose `source_fingerprint` equals the current one. Either the plan emits this per version (e.g. `per_version[V].e2e_ran_this_session`), which gives the required `--session` a use, or the docs tell the orchestrator to read it from the plan. Only the `skipped` flag would remain orchestrator memory."
+  },
+  {
+   "id": "adversarial-8",
+   "lens": "adversarial",
+   "location": "I/O & Edge-Case Matrix rows 'Chromium-only' and 'Newer fail' (aggregate ready=false); Tasks > tests ('add the I/O matrix rows')",
+   "issue": "These rows assert aggregate `ready=false` without fixing `--require` or the other layer inputs. The aggregate's default `--require` is every layer, so a fixture without flashlight/adversarial/scenario files gives `ready=false` regardless of E2E evidence. AC2 was tightened to `--require static,e2e` plus a conclusive static file, but the matrix rows the tests task says to add were not.",
+   "implementation_impact": "Tests written from these rows pass even when per-cell gating is broken, for example when a Chromium-only history or a pass-then-fail history would wrongly count as passing. They therefore do not guard the CAP-2 behavior they exist for.",
+   "suggestion": "Make every aggregate-side matrix row use the AC1 baseline (config 3x2, a conclusive static file for the three versions, `--require static,e2e`), and add the positive control: the same fixture with all six cells passing gives `ready=true`."
+  },
+  {
+   "id": "edge-case-1",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Design Notes > Runner interim, Stop) + I/O row 'Stopped' (line 48)",
+   "issue": "`--stop-job <job>` sends SIGTERM to every live process registered under the Job ID, in registry order (ps-flashlight-run.py stop_job). ps-run-layer passes its Job ID to every child (plan_children), so children are signalled too. A child can exit on that SIGTERM, with no output or a partial one, and ps-run-layer can reap it before its own stop handler runs. Under 'append each child's records as soon as it is reaped', that child then gets `crash` records (or inconclusive records from partial output). The spec does not say how ps-run-layer tells a stop-induced child exit apart from a crash.",
+   "implementation_impact": "The 'Stopped' row ('no crash for the rest') becomes a race. Spurious `crash` records go into the history and can feed the later blocked-infra two-record rule, and the I/O-row test is flaky.",
+   "suggestion": "State that once a stop is pending (own SIGTERM received, or a reaped child's returncode is 143 or -15), ps-run-layer appends nothing for that child or any later one. Alternatively, ps-run-layer checks a stop flag set by its handler before every append, and the handler is installed before any child is spawned."
+  },
+  {
+   "id": "edge-case-2",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Design Notes > Runner interim) + contract Runner > Output",
+   "issue": "The output line's `reason` field is never defined: not for `ran`, not for `skipped`, not for a child exit 2. The spec says the line is printed on a child exit 2 but gives no `e2e_status` value for it. Precedence is also open when outcomes combine in one run: a child reports `status: skipped` while another child exits 2 (is it exit 0 `skipped` or exit 2?), or a child exits 2 while a sibling appends `fail` (is `e2e_status` `ran`?).",
+   "implementation_impact": "The implementer has to invent the `reason` values and the precedence. The orchestrator's 'printed skipped → E2E loop ended' rule can then fire on a run that actually exited 2, or fail to fire, depending on the guess.",
+   "suggestion": "Add one precedence line, e.g. 'stop(143) > child exit 2 (exit 2, e2e_status ran, reason \"input-error after <ver>\") > appended fail (3) > any child skipped (0, skipped) > inconclusive (1) > 0'. Define `reason`: null for ran, the child's or docker_available's skip reason for skipped."
+  },
+  {
+   "id": "edge-case-3",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:94 (Design Notes > Interim orchestration, 'V's E2E loop ended')",
+   "issue": "V's E2E loop ends only on a printed `skipped`, a disabled or not-required E2E, or a plan fingerprint equal to the one 'printed by V's last E2E run'. A pre-spawn input error (exit 2, e.g. psm_reports_dir equal to the module root, a reserved passthrough flag, a fingerprint stat error) prints no output line by design, so it leaves no fingerprint to compare. Nothing says what the orchestrator does when an E2E run exits 2 with no line.",
+   "implementation_impact": "Following the docs literally, Fase 1 sees V still has scoped e2e entries and a loop that has not ended, so it reissues the same deterministic failing command forever, or the model improvises.",
+   "suggestion": "Add: 'An E2E run that exits 2 (with or without an output line) ends the E2E loop for the session; the orchestrator reports the stderr error, and every scoped cell stays unproven.'"
+  },
+  {
+   "id": "edge-case-4",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:28 (Headless config copy) + :94 (`<cfg>` = <psm_reports_dir>/psm-config.json) + :91 (Normalizer: unreadable config → exit 2)",
+   "issue": "SKILL.md step 1 allows the resolver to be absent ('Resolver absen? Pakai default kanonik skrip'). In that case `<psm_reports_dir>/psm-config.json` is never written. The interim commands still pass `--config <cfg>` to every plan, ps-run-layer and aggregate call, and an unreadable config file is exit 2. The headless copy also has no source file to copy 'verbatim'.",
+   "implementation_impact": "When the resolver is absent, every plan, E2E and aggregate call exits 2 and no verdict is produced at all, which the docs never describe. The headless copy step is undefined.",
+   "suggestion": "Specify the resolver-absent path. Either omit `--config` (script defaults are the configured set), or write a minimal JSON holding only `psm_target_versions`/`psm_e2e_browsers` (headless: the caller's values, else script defaults) and forward that."
+  },
+  {
+   "id": "edge-case-5",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:92 (Design Notes > Aggregate, versions[ver].reason for e2e_state fail)",
+   "issue": "`e2e_state` is `fail` when a cell's newest gate-grade record is `fail`. That cell's plan reason, however, is judged on its newest fresh record, which can be a newer non-gate-grade record: `inconclusive` (a later crash or browser-unavailable record), `not-run`, `warm-only` or `partial`. 'The first failing cell's reason (`fail`)' does not say whether this is the literal string `fail` or that cell's plan reason. `e2e_cells[...].reason` is defined as the plan reason, so the two fields can disagree. 'First' has no stated order for the fail case: browser order is given only for `inconclusive`.",
+   "implementation_impact": "The same failing cell can show `reason: fail` per version and `reason: inconclusive` in e2e_cells. Implementations and tests diverge on which value is right.",
+   "suggestion": "State: 'e2e_state fail → versions[ver].reason = \"fail\" (literal), taking the first cell in psm_e2e_browsers order whose newest gate-grade record is fail; that cell's e2e_cells reason is also \"fail\" whatever newer non-gate-grade record exists.' Or explicitly accept the divergence."
+  },
+  {
+   "id": "edge-case-6",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:93 (Design Notes > Timing, aggregate boots/browsers)",
+   "issue": "The shape of `e2e_phase_durations` is unspecified in these cases. (1) A configured version has no selected record (all cells missing or corrupt): is the key absent, or `{boots:{}, browsers:{}}`? (2) A selected record has null `phase_durations` or `wall_clock` (crash, browser-unavailable, written by ps-run-layer): is the `browsers[<engine>]` entry omitted, or `{phases: null}` or `{phases: {}}`? (3) `boot_wall_clock` is null on a record whose `boot_id` is set. (4) The unit and rounding of record `wall_clock` (finished_at − started_at) are not given, while phases use 3-decimal seconds.",
+   "implementation_impact": "Consumers (SKILL.md Vonis fields, tests) cannot assert a stable shape. A null `phases` can crash readers that iterate it.",
+   "suggestion": "Add: 'every configured version has an entry, `{boots:{}, browsers:{}}` when nothing is selected; a browsers entry exists only for a selected record whose phase_durations holds browser:<engine>; wall_clock values are seconds rounded to 3 decimals, null when unknown.'"
+  },
+  {
+   "id": "edge-case-7",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:25 ('--merge-only --layer e2e takes no --session') + :90 ('--merge-only --layer e2e takes only --module, --reports-dir, --config')",
+   "issue": "The spec says which flags the e2e report view takes, but not what happens when others are passed: `--session`, `--cells`, `--versions`, `--per-version`, `--jobs`, a passthrough after `--`. Exit 2 and silently ignoring them are both possible readings. The generic rule '--session with another layer → exit 2' does not cover layer e2e in merge-only mode.",
+   "implementation_impact": "Docs and tests may pass `--versions` or `--session` from habit (today's merge-only uses `--versions <semua>`). The behavior then depends on the implementer's guess, and a silently ignored `--versions` could suggest that the view was narrowed.",
+   "suggestion": "State: '--merge-only --layer e2e with any of --session, --cells, --versions, --per-version, or passthrough → exit 2 naming the allowed flags' (or 'ignored with a stderr note')."
+  },
+  {
+   "id": "edge-case-8",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Runner interim input errors: --versions / --cells parsing)",
+   "issue": "A repeated version in `--cells` is exit 2, but `--versions 9.1,9.1` (a duplicate), an empty item (`9.1,,8.1`, a trailing comma) and whitespace around items are not covered for layer e2e. 'A --versions entry must equal a configured string' does not say whether items are stripped first. The normalizer lowercases config browsers, but nothing says whether `--cells 9.1:Chromium` or `9.1: chromium` is normalized or rejected.",
+   "implementation_impact": "A duplicate `--versions` entry could spawn two children for one version, appending two records per cell from concurrent boots, or be deduped silently. The case handling of `--cells` may differ from the config's.",
+   "suggestion": "Add: '--versions items are stripped; an empty item or a duplicate is exit 2 (as for --cells); --cells browsers are stripped and lowercased like config browsers before the configured-set check.'"
+  },
+  {
+   "id": "edge-case-9",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:91 (Design Notes > Normalizer input)",
+   "issue": "Only 'a comma-separated string or a list of strings' and 'absent/null → default' are defined. Other inputs are not: a non-string JSON value (`\"psm_target_versions\": 9.1`, the list `[9.1, 8.1]`, a boolean), an empty string `\"\"`, and empty items (`\"9.1,,8.1\"`, `\"chromium,\"`). An empty string could be read as an empty list (exit 2) or as absent (the default).",
+   "implementation_impact": "A config with numeric versions written by hand, or a resolver emitting \"\" for an unset key, gets inconsistent treatment across plan, runner and aggregate, or crashes with a TypeError instead of exit 2.",
+   "suggestion": "Add: 'a value that is neither a string nor a list of strings → exit 2; empty items after stripping are dropped; a value with no non-empty item (including \"\") is the empty list → exit 2.'"
+  },
+  {
+   "id": "edge-case-10",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:88 (Design Notes > Record, timestamps) + contract Evidence record > Storage",
+   "issue": "The reader's line rules leave three cases open. (1) Whether the empty segment after the final `\\n`, or a blank or whitespace-only line, counts as a corrupt line. If it does, every history whose last record ends in `\\n` reads as `corrupt-history`. (2) Whether a naive `started_at` with no offset counts as UTC or as corrupt. (3) Whether a valid ISO timestamp with a non-UTC offset (`+07:00`) counts as corrupt. The spec only adds acceptance of `Z` and of missing fractional seconds.",
+   "implementation_impact": "A naive splitting reader marks every cell `corrupt-history`. Records written or edited by hand in tests are classified inconsistently.",
+   "suggestion": "Add: 'blank and whitespace-only lines are ignored (neither records nor corrupt); started_at must carry offset +00:00 or Z; a naive or other-offset timestamp makes the line corrupt.'"
+  },
+  {
+   "id": "edge-case-11",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:70 (Tasks > ps-plan-layers.py read_history) + :92 (Aggregate, cell with no valid record)",
+   "issue": "Reading a history can fail at the OS level: permission denied, the path is a directory, an I/O error, or a dangling symlink. The spec does not say whether that is exit 2 naming the path (like the fingerprint stat rule), `corrupt-history`, or `missing`.",
+   "implementation_impact": "An implementation that treats it as `missing` hides a broken reports dir behind a plausible rerun reason. One that lets the exception escape gives a traceback instead of exit 2.",
+   "suggestion": "Add: 'a history that exists but cannot be opened or read (not ENOENT) is an input error, exit 2 naming the path, in plan, ps-run-layer, merge-only and aggregate alike.'"
+  },
+  {
+   "id": "edge-case-12",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Runner interim, --cells `<ver>:<browser>[+<browser>]`) + :27 (ps-e2e-run.py --engines)",
+   "issue": "The order of browsers inside one cell token (`9.1:firefox+chromium`) is unspecified. The spec does not say whether the child gets `--engines` in token order or in `psm_e2e_browsers` order, so the sequential drive order, the `#n`/timestamp sequence and the order of `appended` in the output line are all open.",
+   "implementation_impact": "The same logical run gives a different engine order and a different `appended` list depending on how the token was typed, so tests that assert `appended` or timing order break nondeterministically across implementations.",
+   "suggestion": "State: 'ps-run-layer reorders each cell's browsers into psm_e2e_browsers order before passing --engines; appended lists cells in numeric version order, then psm_e2e_browsers order.'"
+  },
+  {
+   "id": "edge-case-13",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:27 (Boundaries > ps-e2e-run.py --engines)",
+   "issue": "`ps-e2e-run.py --engines` validation is not specified: an empty value, an unknown engine, a duplicate, an engine outside the config's `psm_e2e_browsers`. Nor is the interaction with an explicit `--browsers` in a direct run. The spec says only that the normalizer replaces the `parse_browsers` fallback for browsers.",
+   "implementation_impact": "A direct or mis-wired call with `--engines webkitx` or `--engines ''` may silently fall back to defaults or drive zero engines, producing child output whose cells do not match what ps-run-layer admitted.",
+   "suggestion": "Add: '--engines goes through the shared normalizer (exit 2 on empty, unknown or numerically duplicate input); when present it overrides --browsers and the config; no configured-set check in the child.'"
+  },
+  {
+   "id": "edge-case-14",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:94 (Interim orchestration, Fase 2 'an appended fail re-enters Fase 1 for that version (interactive)')",
+   "issue": "After a Fase 2 E2E `fail` sends the run back to Fase 1 for version V, the spec does not say what comes after V's Fase 1 loop ends. Does Fase 2 run again in full (new plan, Layer 3 re-spawned or reused, a new grouped E2E call), or only the wrap-up? The wrap-up ('Then, without any all_reuse gate…') reads as if it runs right after the grouped call, so it is unclear whether it runs before the re-entry, after it, or both.",
+   "implementation_impact": "The model may run the merge-only and aggregate twice, skip the second Fase 2 E2E pass for other versions whose fingerprint the patch changed, or never return to the wrap-up, which leaves no final verdict.",
+   "suggestion": "Add: 'after a re-entered Fase 1 loop ends, Fase 2 runs again from its plan call (Layer 3 per plan reuse); the wrap-up runs only once the grouped E2E call appends no fail or every remaining version's E2E loop has ended.'"
+  },
+  {
+   "id": "implementer-1",
+   "lens": "implementer",
+   "location": "Design Notes > Interim orchestration (Fase 1: 'V's loop ends when its `rerun` holds only `adversarial`/`e2e` (contract `phase1_reuse` read off the list) and ...')",
+   "issue": "The interim end rule changes the contract's meaning. The contract ends V's Phase 1 loop when V is **clean**: `phase1_reuse` true, AND none of V's per-version Layer 1/2/5 files holds a blocking finding, AND a Layer 2/5 run that reported `skipped` counts as clean (Plan > Phase 1). The spec keeps only the `rerun`-list half. Two cases break. (a) A fresh per-version Layer 1/2/5 file that holds blocking findings is `reuse: true`, so `rerun` drops that layer and the loop 'ends' with the blockers unfixed. That also contradicts 'patch and repeat as today' (today: 'ulangi ... sampai bersih'). (b) With Docker absent, ps-run-layer never writes skip payloads to disk (`if not (payload.get(\"versions\") or {}): continue` in main). So `flashlight` and `scenario` stay in `per_version[V].rerun` forever, and the loop never ends, even though the E2E side ends through the `skipped` rule.",
+   "implementation_impact": "The docs writer has to choose between the literal rule (an infinite loop when Docker is absent, and an early exit while blockers remain) and inventing a 'clean' judgment that the slice defers (`phase1_reuse`/`clean` are not emitted). Two writers would produce different SKILL.md/run-phases.md loops.",
+   "suggestion": "Add an interim clean rule to the Fase 1 end condition: V's loop ends when its `rerun` holds only `adversarial`/`e2e`, and the orchestrator finds no blocking finding in V's per-version Layer 1/2/5 files (read as today), and a Layer 2/5 run that printed 'tak dijalankan'/skipped this session counts as done for that layer. Alternatively, have the plan emit `per_version[V].clean` now."
+  },
+  {
+   "id": "implementer-2",
+   "lens": "implementer",
+   "location": "Design Notes > Aggregate ('`versions[ver].reason`: `e2e_state` `fail` → the first failing cell's reason (`fail`)')",
+   "issue": "Two different sets go by 'failing'. `e2e_state` is `fail` when a configured cell's newest **gate-grade** record is `fail` (contract Aggregate). The Plan > Derivation predicate 'failing' that this slice imports also counts stale cold full fails, and those do not make `e2e_state` fail. Separately, a cell's plan reason comes from its newest **fresh** record. Take cold fail, then warm pass, or cold fail, then a `not-run` or crash record: the newest gate-grade record is `fail`, but the plan reason is `warm-only`, `not-run` or `inconclusive`, not `fail`. So the parenthetical '(`fail`)' can disagree with the reason the rule computes.",
+   "implementation_impact": "An implementer can't tell whether `versions[ver].reason` is the literal string `fail`, the plan reason of a cell whose newest gate-grade record is `fail`, or the reason of the first cell under the Plan 'failing' predicate. Tests on `versions[ver].reason` for these histories would be written to different expectations.",
+   "suggestion": "Pin it to one rule. For example: `e2e_state` `fail` → `reason` = `fail` (literal). Then, if the cell is needed, name it as the first cell in `psm_e2e_browsers` order whose newest gate-grade record is `fail`."
+  },
+  {
+   "id": "implementer-3",
+   "lens": "implementer",
+   "location": "Boundaries > Always (Aggregate: `--config`, `--tag-map`/`--extra-tag-map`) vs cell-contract.md > Config keys > Image tag",
+   "issue": "The contract resolves the tag in plan, runner and aggregate as `resolve_tag(parse_tag_map(--tag-map, else psm_flashlight_tag_map; --extra-tag-map), version)`. 'Config keys' is not among the contract sections the spec implements. The spec covers the plan (it keeps `apply_config_file`, which maps `psm_flashlight_tag_map` → `tag_map`) and the runner (Design Notes: its own key map reads `psm_flashlight_tag_map`). For the aggregate it names only the new `--tag-map`/`--extra-tag-map` flags. It never says the aggregate also reads `psm_flashlight_tag_map` from `--config`.",
+   "implementation_impact": "A literal implementation reads only the flags. In the documented interim aggregate command (`--config <cfg>` with no `--tag-map`), a project with a custom `psm_flashlight_tag_map` then resolves the default tags in the aggregate. Every record reads `stale-tag` there while the plan reads it fresh, and `ready` can never become true.",
+   "suggestion": "Add to the Aggregate bullet: the tag is resolved as `--tag-map`, else `--config` `psm_flashlight_tag_map`, then `--extra-tag-map` applied on top (same as plan and runner). Add a test with a non-default tag map supplied only through `--config`."
+  },
+  {
+   "id": "implementer-4",
+   "lens": "implementer",
+   "location": "Tasks > ps-flashlight-run.py ('move `SUPPORTED_ENGINES` and the default version/browser lists (drift test reads them there)')",
+   "issue": "The spec doesn't name the moved constants and doesn't say which test changes. The drift checks in tests/test-ps-flashlight-run.py read `DEFAULT_BROWSERS` from ps-e2e-run.py with `_literal_const`, which raises AssertionError when the name is missing. They read each script's `--versions` default with `_argparse_default`, which resolves only an `ast.Constant` or a same-file `ast.Name`. A default written as `fl.DEFAULT_...` is an `ast.Attribute`, so it returns None and is reported as drift for ps-e2e-run.py and ps-plan-layers.py. 'Drift test reads them there' could mean the test already does this (it doesn't) or that the test must be changed (unstated).",
+   "implementation_impact": "Moving the lists as told breaks the existing drift checks. The implementer must pick constant names and either rewrite the drift test or keep duplicate literals, which defeats the move.",
+   "suggestion": "Name the constants (e.g. `DEFAULT_TARGET_VERSIONS`, `DEFAULT_E2E_BROWSERS` in ps-flashlight-run.py). State that test-ps-flashlight-run.py's drift checks read them from ps-flashlight-run.py, and that `_argparse_default` learns to resolve `fl.<NAME>` attributes, or that each script's argparse default stays a same-file literal or constant checked against the moved one."
+  },
+  {
+   "id": "implementer-5",
+   "lens": "implementer",
+   "location": "Tasks > docs (SKILL.md 'Lapis 4' paragraph) / Design Notes > Interim orchestration",
+   "issue": "Today SKILL.md's Lapis 4 visual review runs `ps-e2e-run.py ... --screenshot-dir <psm_reports_dir>/e2e-shots` directly and reviews those screenshots. In this slice direct output is never evidence. None of the interim Fase 1/2 `ps-run-layer.py --layer e2e` commands carries `-- --screenshot-dir`. The contract's interim-free visual-review flow (tier-matrix Visual review, `visual-pending`) is not in scope. The spec asks for the Lapis 4 paragraph to be rewritten but never says where the screenshots for visual review come from.",
+   "implementation_impact": "The docs writer must guess between three options: keep a separate direct run, which costs one extra cold boot per version just for screenshots; add `-- --screenshot-dir` to the history-mode runs; or drop visual review for now. Each choice changes cost and what the orchestrator reviews.",
+   "suggestion": "Say it in the Interim orchestration: interactive runs pass `-- --screenshot-dir <psm_reports_dir>/e2e-shots` to every `ps-run-layer.py --layer e2e` call, and the visual review reads the run folders from the aggregate's `e2e_screenshot_dir`. Direct `ps-e2e-run.py` runs stay for the quickstart probe only."
+  },
+  {
+   "id": "implementer-6",
+   "lens": "implementer",
+   "location": "Design Notes > Interim orchestration ('`<cfg>` = `<psm_reports_dir>/psm-config.json`') and Boundaries > Always (Headless config copy: 'copies the resolved `<psm_reports_dir>/psm-config.json` verbatim')",
+   "issue": "SKILL.md On Activation step 1 allows 'Resolver absen? Pakai default kanonik skrip'. In that case `psm-config.json` is never written. Every interim command passes `--config <cfg>`, and the headless copy is defined as a verbatim copy of that file. The spec doesn't cover the missing-file case.",
+   "implementation_impact": "Following the docs literally, plan, ps-run-layer and aggregate exit 2 on an unreadable `--config`, and headless has nothing to copy. Docs writers will improvise either 'omit `--config`' (the script defaults, which in headless break the caller's narrowed set) or 'write a minimal JSON'.",
+   "suggestion": "Add one sentence: when the resolver is absent, the orchestrator writes `<psm_reports_dir>/psm-config.json` holding only `psm_target_versions` and `psm_e2e_browsers` (script defaults), so `<cfg>` and the headless copy always exist."
+  },
+  {
+   "id": "implementer-7",
+   "lens": "implementer",
+   "location": "Tasks > tests / I/O rows 'Crash child', 'Child exit 2', 'Stopped' / AC3",
+   "issue": "Today's CLI tests replace `mod._spawn` with a fake that returns an exit code synchronously, and `execute()` submits every child to a ThreadPoolExecutor at once. The new runner starts children itself, reaps them in completion order, stops starting after a child exit 2, appends after each reap, and checks `fl.docker_available()` before spawning. The spec names no test seam for any of this. On a host without Docker, every history-mode CLI test (AC3, crash, child exit 2, probe drop) would print `skipped` and append nothing unless `docker_available` is stubbed. The 'Stopped' row (exit 143, records only for children that already exited) doesn't say how a test delivers the stop.",
+   "implementation_impact": "The implementer has to design the spawn/reap seam and the stubs alone. Without a stub, the suite passes or fails depending on whether the host has Docker. The Verification command ('no FAILED line') is then not reproducible.",
+   "suggestion": "State the seam: an injectable spawn function returning a handle (pid, poll/wait, output path) used by the reaping loop; tests stub `fl.docker_available` to True (and False for the skipped case); the Stopped test raises `fl.JobStopped` from the fake reaper after the first child is reaped and asserts exit 143, one version's records and no output line."
+  },
+  {
+   "id": "implementer-8",
+   "lens": "implementer",
+   "location": "Design Notes > Runner interim ('`--merge-only --layer e2e` takes only `--module`, `--reports-dir`, `--config` ... the view overwrites a legacy `<module>-e2e.json`')",
+   "issue": "The spec gives no exit code for the e2e report view. Today `merge_only` derives its exit code from `pass` and missing versions (1 when no per-version files exist). The view has no `pass` and is never evidence. Three cases are open: zero records anywhere, a write failure, and extra flags such as `--versions`, `--jobs` or `--session` ('takes only'). `--jobs` has an argparse default, so it can't be detected without inspecting argv.",
+   "implementation_impact": "Fase 2's wrap-up runs this command right before the aggregate. If an orchestrator treats a non-zero exit as failure, it could stop the wrap-up. Tests can't assert an exit code.",
+   "suggestion": "Specify: exit 0 after writing the view (including when every cell is `null`), exit 2 on input errors (an explicit `--versions`/`--cells`/`--session`/passthrough, a bad config) or a write failure; `--jobs`/`--verbose` are ignored."
+  },
+  {
+   "id": "implementer-9",
+   "lens": "implementer",
+   "location": "Boundaries > Always ('prints the Runner > Output JSON line') / cell-contract.md > Runner > Output",
+   "issue": "The output line has a `reason` key, but neither the spec nor the contract says what it holds. Is it null on `ran`? On `skipped`, is it the ps-run-layer docker message or the child's `reason` string, and which child's when several reported skipped? And for a post-spawn exit 2, what does the line carry?",
+   "implementation_impact": "The docs and the orchestrator read this line. Tests asserting the exact line would be written to different values.",
+   "suggestion": "Pin it: `reason` = null for `ran`; for `skipped`, 'docker unavailable' from ps-run-layer's own check, else the first skipped child's `reason` in completion order; for exit 2, `e2e_status` `ran` with `reason` naming the version whose child exited 2."
+  },
+  {
+   "id": "implementer-10",
+   "lens": "implementer",
+   "location": "Boundaries > Always (Aggregate list) vs cell-contract.md > Aggregate (record-selection bullet: `e2e_browsers_run`, `layers_run.e2e`, `e2e_screenshot_dir`, `e2e_smoke_only`)",
+   "issue": "The spec lists the aggregate pieces it builds but leaves out the other E2E fields the contract derives from selected records. They have to be rebuilt anyway, because the `--e2e` file is gone. `e2e_screenshot_dir` = 'the distinct run folders of the selected records' `screenshots`' is underspecified. Records carry no `screenshot_dir` (the Fields whitelist drops it), so the run folder must be inferred from each screenshot path (`<base>/run-<ts>/<ver>/<file>`). Today `e2e_smoke_only`, `e2e_browsers` and `e2e_browsers_run` are emitted only when `e2e_ran`, and the spec doesn't say whether that condition becomes 'some configured cell has a record'.",
+   "implementation_impact": "These fields feed SKILL.md 'Vonis dan output' and the headless return (`e2e_smoke_only`, `layers_run`). Without a rule, the implementer guesses how to derive the path and when each field is emitted.",
+   "suggestion": "State explicitly that the remaining contract Aggregate fields are in scope. Define `e2e_screenshot_dir` as the distinct `parents[1]` (run folder) of the selected records' screenshot paths, an empty list or absent when none. Say `e2e_smoke_only`/`e2e_browsers`/`e2e_browsers_run` are emitted when `layers_run.e2e` is true."
+  },
+  {
+   "id": "implementer-11",
+   "lens": "implementer",
+   "location": "Boundaries > Always (`ps-e2e-run.py`: 'exit 3 on any failing cell')",
+   "issue": "The spec adds exit 3 but doesn't restate the 0/1 split. Today, a version where one engine launch-fails (or is dropped by the probe) and the other passes gives `r[\"pass\"] = True`, so the exit is 0. The contract says 0 only when 'every driven cell passes', and 1 'otherwise (infra failure or inconclusive cell)'. A launch-error cell is inconclusive, and it did enter its `browser:<engine>` phase.",
+   "implementation_impact": "Direct runs (the quickstart probe, Lapis 4) and test-ps-e2e-run.py's exit-code assertions depend on this. Implementers will differ on whether the case keeps exit 0 or becomes exit 1.",
+   "suggestion": "Add: exit 0 only when every cell the child emits is `pass`; any emitted inconclusive cell (launch error, boot or install failure) → 1; probe-dropped engines alone do not change the exit code (or do, but say which)."
+  },
+  {
+   "id": "implementer-12",
+   "lens": "implementer",
+   "location": "Tasks > ps-e2e-run.py ('per-engine findings/inconclusive/assertions/notes/console/screenshots ... `scenarios_run`')",
+   "issue": "Per-cell field types are not pinned. `console_errors` is an int count at version level today, while the per-scenario data is a list, and the contract Fields don't say which. It is unclear whether `scenarios_run` ('spec `name` list') includes `psm-universal-smoke`, which is builtin, not a spec. For a launch-error cell, `scenarios_run`, `authored_assertions` and `findings` could be `[]`/0 or `null` ('null for fields no engine produced').",
+   "implementation_impact": "Records from different implementations stay valid but differ. The incomplete-record rule makes `authored_assertions: null` matter only on pass/fail, but tests on the child shape and the aggregate's `e2e_cells` would assert different values.",
+   "suggestion": "Pin these: `console_errors` = int count for that engine; `scenarios_run` = names actually driven including `psm-universal-smoke` first; a launch-error cell has `scenarios_run: []`, `findings: []`, `inconclusive: []`, `authored_assertions: 0`."
+  },
+  {
+   "id": "implementer-13",
+   "lens": "implementer",
+   "location": "Design Notes > Normalizer input ('a comma-separated string ... or a list of strings') vs ps-plan-layers.py `--versions` filled by `apply_config_file`",
+   "issue": "The normalizer accepts a YAML list for `psm_target_versions`, and resolve-psm-config.py passes a list through unchanged when config.yaml holds one. The plan still fills `--versions` through `fl.apply_config_file`, which copies the raw list into `args.versions`. `main` then calls `args.versions.split(\",\")`, which raises AttributeError and exits with a traceback, not exit 2. The spec doesn't say whether the plan's `--versions` (run scope) also goes through the normalizer, though it does say 'a plan `--versions` entry that is not exactly a configured string is exit 2'.",
+   "implementation_impact": "List support works for the configured set but crashes the plan's run-scope path for the same config. The implementer must decide whether to normalize `--versions` too.",
+   "suggestion": "State that the plan's `--versions` (explicit or filled from config) is parsed with the same normalizer before the configured-string check, or that `apply_config_file` joins list values with ','."
+  },
+  {
+   "id": "implementer-14",
+   "lens": "implementer",
+   "location": "Design Notes > Child output in history mode ('The probe-drop note is keyed to the dropped engine, so it lands in no emitted cell') and Record ('Version-level child fields ... go into every record of that version, `browser-unavailable` included')",
+   "issue": "The note keyed to the dropped engine is the only explanation of why that engine never ran. ps-run-layer writes the dropped engine's `browser-unavailable` record, but `browser_notes` is per-cell and isn't in the list of version-level fields copied in. The spec doesn't say whether that record carries the keyed note or `browser_notes: null`.",
+   "implementation_impact": "The operator-facing explanation (e.g. 'run playwright install firefox') either appears in `e2e_cells` or silently disappears, depending on the implementer.",
+   "suggestion": "Say that ps-run-layer copies the child's note for the dropped engine (from a version-level `browser_notes` map keyed by engine) into that engine's `browser-unavailable` record, else `[]`."
+  },
+  {
+   "id": "implementer-15",
+   "lens": "implementer",
+   "location": "Design Notes > Interim orchestration (Fase 2: 'an appended `fail` re-enters Fase 1 for that version (interactive)') vs 'V's E2E loop ended ... while the plan's `source_fingerprint` equals the one printed by V's last E2E run'",
+   "issue": "Right after the Fase 2 run appends a `fail`, the fingerprint is unchanged, so V's E2E loop counts as ended. If Fase 1 for V checks its end condition before the operator patches, it ends at once and Fase 2 resumes with the failure still in place. The spec doesn't fix the order inside a re-entered Fase 1 iteration (patch first, or plan first).",
+   "implementation_impact": "The docs can describe a re-entry that is a no-op, or a loop that requires a patch before re-planning. Two readings lead to different operator flows.",
+   "suggestion": "Add: on re-entry after a Fase 2 `fail`, the first Fase 1 iteration for V starts with the operator's patch (or the 'stop' choice), then re-plans."
+  },
+  {
+   "id": "implementer-16",
+   "lens": "implementer",
+   "location": "I/O matrix row 'Bad config' / Design Notes > Runner interim ('Configured-set validation ... apply to layer `e2e` only')",
+   "issue": "The row lists `webkitx`, `9.1`+`9.1.0`, an empty list and a non-dotted version → exit 2, but doesn't say which entry points must reject them: plan, `ps-run-layer --layer e2e`, `--merge-only --layer e2e`, aggregate, and direct `ps-e2e-run.py --browsers`. Meanwhile `ps-run-layer` for flashlight/scenario must forward the same bad config without validating it.",
+   "implementation_impact": "The test task can satisfy the row by testing the normalizer function once, or by testing every CLI. Coverage of the runner's 'e2e only' scoping stays untested either way.",
+   "suggestion": "List the CLIs the row covers (plan, run-layer e2e, merge-only e2e, aggregate, ps-e2e-run `--browsers`), and add one assertion that `--layer flashlight` with the same config does not exit 2."
+  }
+ ],
+ "duplicates_removed": [],
+ "clusters": []
+}

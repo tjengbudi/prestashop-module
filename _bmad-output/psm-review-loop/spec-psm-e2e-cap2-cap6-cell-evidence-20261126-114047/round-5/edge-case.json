@@ -1,0 +1,62 @@
+[
+ {
+  "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:94 (Design Notes > Interim orchestration, 'V's E2E step is due' vs 'Interactive infra retry')",
+  "issue": "After a run that leaves an infra reason, V's step is not due: a run of V already printed the current fingerprint. The 'one more run on the same fingerprint' retry contradicts that predicate. The spec does not say how the retry enters the Fase 1 or Fase 2 loop, which cells it drives (only the infra cells or all scoped entries of V), or what happens when Budi does not fix the environment. That last case is not in the 'E2E loop ended' list.",
+  "implementation_impact": "Following the due predicate, the Fase 1 loop ends and the Fase 2 wrap-up runs before any retry, so the retry never happens. Or each implementer invents a different retry trigger and scope.",
+  "suggestion": "State that after an infra result, V's step counts as due once more (retry pending) until Budi confirms the fix or declines. A decline ends the E2E loop. The retry drives V's scoped entries whose reason is infra, as --cells."
+ },
+ {
+  "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:94 (Interim orchestration, 'E2E loop ended ... stopped (exit 143)') + :75 (docs task for headless.md) vs references/headless.md (silent log -> --stop-job -> return blocked)",
+  "issue": "When headless stops its own E2E job under the silent-log rule, two rules apply. Interim orchestration says the E2E loop ends and the run continues to the Fase 2 wrap-up and aggregate. Today's headless.md says return `blocked` at once. The headless.md changes listed in the docs task do not settle this, and the contract's complete/blocked rule is deferred.",
+  "implementation_impact": "Headless callers get `blocked` with no aggregate in some implementations and `complete` with ready=false in others. psm-develop and psm-cross-version branch on `status`.",
+  "suggestion": "Add to the headless.md bullet: 'a stopped E2E job (exit 143) ends the E2E loop; the wrap-up and aggregate still run; the return is <blocked|complete> with ready=false (interim until the contract's complete/blocked rule)'."
+ },
+ {
+  "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Runner interim, 'Stop ... records already appended stay, nothing for in-flight or unstarted') vs :48 (I/O row Stopped, 'records only for children that already exited')",
+  "issue": "A child can exit normally and be reaped, then --stop-job arrives before its records are appended. Design Notes say only already-appended records stay. The I/O row says records exist for every child that already exited. The spec also does not say whether appends running in reaper threads may continue after the main thread handles JobStopped.",
+  "implementation_impact": "Finished cells' evidence is lost or kept depending on the implementation. A daemon reaper thread killed at interpreter exit can leave a half-written line, which then makes the history `corrupt-history`.",
+  "suggestion": "Pick one rule and state it: on JobStopped, append the records of every child already reaped with output, then exit 143 (or append none of them). Perform appends only in the main thread, or join the reaper threads before returning 143."
+ },
+ {
+  "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Runner interim, 'A child exit 2 -> no further child starts ... exit 2') + :94 (child-originated exit 2 ends the E2E loop)",
+  "issue": "Children run as `uv run ps-e2e-run.py`. uv itself exits 2 on its own errors, for example a PEP 723 dependency that cannot be resolved offline. The spec treats every child exit 2 as a child input error. It does not separate a launcher failure from ps-e2e-run's own exit 2.",
+  "implementation_impact": "An environment failure, which should be an infra `crash`, ends the E2E loop for the whole session. Nothing is appended and the report calls it an input error. The interactive infra retry never applies.",
+  "suggestion": "Define the signal: count exit 2 as a child input error only when the script itself reported it (for example a marker line on stderr, or a sentinel output file written before exit 2). Any other exit 2 is treated as `crash` for the admitted cells."
+ },
+ {
+  "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Runner interim, 'psm_reports_dir equal to the module root', screenshot-dir 'inside the module') + Boundaries:24 (Fingerprint excludes a reports dir strictly inside the module)",
+  "issue": "The spec does not say how reports-dir and screenshot-dir paths are canonicalized for the 'strictly inside', 'equal to the module root' and 'inside the module' tests. Cases: relative paths, a trailing slash, `..`, or a reports dir reached through a symlink that resolves inside the module. The fingerprint walk resolves only the module root with realpath. Plan, runner and aggregate may also receive the same directory spelled differently.",
+  "implementation_impact": "If the exclusion compares unresolved strings, history files under the module enter the fingerprint. Every append then changes the fingerprint, so plan and runner never agree. Every record reads stale-source and V's E2E step stays due forever, which loops the interactive E2E runs.",
+  "suggestion": "Compare os.path.realpath(reports_dir) and realpath(screenshot_dir) against realpath(module) in all three scripts. Exclude the realpath'd reports dir during the walk. Add a test where the reports dir is given relative or through a symlink."
+ },
+ {
+  "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Runner interim, 'a passthrough --screenshot-dir inside the module but outside psm_reports_dir' -> exit 2)",
+  "issue": "The check is stated only for `--screenshot-dir`. Today split_screenshot_dir recognizes only the exact `--screenshot-dir X` and `--screenshot-dir=X` forms. A prefix abbreviation such as `--screenshot X` or `--scree=X` passes through untouched and unstamped, and the child's argparse accepts it.",
+  "implementation_impact": "Screenshots are written inside the module without being detected. That changes the fingerprint after every run, so the run's own records go stale and the step is due again (a self-staling loop). It also bypasses the single per-run screenshot folder.",
+  "suggestion": "Before the check, detect abbreviations (>= 4 chars, a prefix of --screenshot-dir) the same way as RESERVED_PASSTHROUGH, and either normalize them to --screenshot-dir or reject them with exit 2."
+ },
+ {
+  "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (ps-run-layer resolves tags; contract Config keys: 'ps-run-layer takes both flags from its passthrough') + :94 (run outcomes classified only as fail / infra)",
+  "issue": "The spec does not say how ps-run-layer extracts --tag-map and --extra-tag-map from the passthrough: `=value` forms, prefix abbreviations the child accepts (for example `--tag`), or a repeated flag. It also gives no interim outcome when a run leaves V's entries with a reason other than fail or infra, such as stale-tag, not-gradeable or scenario-notes.",
+  "implementation_impact": "When ps-run-layer misreads the tag, its crash and browser-unavailable records carry a tag different from the child's and the plan's, so the plan reports stale-tag instead of inconclusive. The interim loop does not treat stale-tag as infra, so the step is not due, the loop ends quietly, and the cell stays unproven with no retry or explanation.",
+  "suggestion": "Parse the passthrough tag flags with the child's own argparse definitions (parse_known_args on a parser that holds only --tag-map and --extra-tag-map, allow_abbrev matching the child). Add to the interim: any other post-run reason is reported to Budi, naming the cell and reason, with no rerun on the same fingerprint."
+ },
+ {
+  "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:28 (Headless config copy, 'resolver defaults when it passes none') + :94 ('resolver absent: the orchestrator writes {} there')",
+  "issue": "When the resolver is absent, the copy's source is `{}` and there are no resolver defaults. The spec does not say what headless writes for psm_target_versions and psm_e2e_browsers when the caller passes no versions or browsers. Choices: leave the keys out (script defaults), or write DEFAULT_TARGET_VERSIONS and DEFAULT_E2E_BROWSERS. The spec also does not say whether `<psm_reports_dir>` is created before the copy is written.",
+  "implementation_impact": "The copy may hold empty strings, which the normalizer rejects with exit 2 so headless returns blocked, or it may hold arbitrary values. Writing the copy into a missing reports dir fails before the first plan call.",
+  "suggestion": "State: 'resolver absent and caller passes none: omit the key (script defaults apply); create <psm_reports_dir> if missing before writing psm-config.json and the copy'."
+ },
+ {
+  "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Runner interim, 'fl.docker_available() false before spawning -> skipped' and 'fingerprint before spawn'; output line carries source_fingerprint)",
+  "issue": "The spec does not fix the order of the Docker check and the fingerprint walk. So it does not say whether a Docker-skipped run prints a computed fingerprint or null, or whether a stat error found during the walk on a Docker-less host gives exit 2 or `skipped`.",
+  "implementation_impact": "The output line schema varies, and so do tests on the skipped line. A host without Docker may exit 2 on a stat error where another implementation reports skipped and ends the loop.",
+  "suggestion": "Fix the order: validate input, then compute the fingerprint (exit 2 on a stat error), then check Docker. The skipped line always carries the computed source_fingerprint."
+ },
+ {
+  "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (`--merge-only --layer e2e` takes only --module, --reports-dir, --config; listed exit-2 flags)",
+  "issue": "The list of flags that give exit 2 leaves out --job-id and --verbose, so for those the 'takes only' rule and the explicit list disagree. The spec also does not say whether --config, now a ps-run-layer flag for every layer, is accepted or rejected with --merge-only for Layers 2 and 5, where no child receives it.",
+  "implementation_impact": "The wrap-up commands in the docs may pass --config to every merge-only call. Some implementations will exit 2 on that and abort the wrap-up before the aggregate runs.",
+  "suggestion": "Enumerate the cases: with --merge-only (any layer), --config is accepted (validated only for e2e), --verbose is accepted, --job-id is ignored or rejected with exit 2."
+ }
+]

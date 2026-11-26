@@ -1,0 +1,74 @@
+[
+  {
+    "location": "cell-contract.md > Runner > Output; Evidence record > Storage; Plan step 3",
+    "issue": "Some children report status skipped (or exit 2) while others run, so the run reports `ran` but appends no record for the skipped children's cells.",
+    "implementation_impact": "Those cells get no new record, so the plan derives the same step again. blocked-infra counts records and never fires, so the orchestrator can loop forever.",
+    "suggestion": "Append an inconclusive record (e.g. reason `skipped-mixed` / `child-input-error`) for every admitted cell whose child left none when e2e_status is `ran`, or end the E2E loop on a mixed skip."
+  },
+  {
+    "location": "cell-contract.md > Plan > Phase 1, Phase 2 entry; Headless",
+    "issue": "A headless run with a blocking Layer 1/2/5 finding: the loop 'counts as clean', but the plan's `per_version[V].clean` stays false.",
+    "implementation_impact": "It is unclear whether the tier-0 E2E step runs ('only once V is clean'), and the Phase 2 entry check fails every time. Headless either never runs E2E or re-enters the loops without end.",
+    "suggestion": "State that headless uses its own done-once flag for the E2E gate and skips the Phase 2 entry check, or that a headless version with blocking L1/2/5 findings goes to the stop-convergence wrap-up, with the reason reported."
+  },
+  {
+    "location": "cell-contract.md > Aggregate (`--session`, `reached`); Headless return; Docs to update (psm-optimize)",
+    "issue": "Every cell of a version already has fresh passing gate-grade evidence from an earlier session, so this headless call appends no record for it.",
+    "implementation_impact": "That version gets `reached: false` and the reason `not reached: stopped at done` despite e2e_state pass. psm-optimize then reports a proven version as not comparable.",
+    "suggestion": "Set `reached` true when every configured cell of the version has passing gate-grade evidence, whatever its session, and add 'not reached' only when the version lacks it."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers > Slots; Identical findings",
+    "issue": "The `--sequential-browsers` fallback runs engines one after another in one container (brownfield: shared DB). No reset between engines is specified.",
+    "implementation_impact": "The second engine sees the first engine's DB and file residue, while the parallel confirmation rerun starts from a reset snapshot. Findings can differ, which makes the identical-findings test and fallback verdicts unreliable.",
+    "suggestion": "Specify whether the sequential fallback resets to a post-warmup-bo snapshot before each engine after the first, as the rerun-seq pass does, or state that the residue is accepted and exclude it from the identical-findings comparison."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers > Parallel-only failures",
+    "issue": "`snapshot-db` fails, or no pass needed a reset: it is not said which cells become `parallel-unconfirmed`.",
+    "implementation_impact": "Engines without findings, and engines that need the BO-login fallback pass (whose first pass is discarded), have no defined record when the snapshot is missing. Implementations will differ on pass vs inconclusive.",
+    "suggestion": "Define this: when the snapshot fails, cells with no findings and no BO fallback keep their parallel result, a BO-fallback engine gets inconclusive reason parallel-unconfirmed, and say whether the run then continues in parallel or drops to sequential."
+  },
+  {
+    "location": "cell-contract.md > Configured cells; Plan > Run scope",
+    "issue": "The plan's `--versions`/`--browsers` run scope names a value outside the configured set, e.g. `8.1.0` vs `8.1`, or an unconfigured `webkit`.",
+    "implementation_impact": "An exact-string filter leaves e2e_next_cells empty, so a typo silently becomes `blocked-by-scope` and ends the E2E loop for the session instead of failing fast.",
+    "suggestion": "Make a scope version or browser that does not exactly match a configured value an input error (exit 2), the same as for `--cells` and the canary."
+  },
+  {
+    "location": "cell-contract.md > Runner > Input errors",
+    "issue": "A browser is repeated inside one version's `--cells` list, e.g. `9.1:chromium+chromium`.",
+    "implementation_impact": "Only a repeated version is an error. A repeated engine could cost 2 slots, spawn two workers for one engine that write one history line twice, and race on the BO lock and screenshots.",
+    "suggestion": "Make a repeated engine inside one `--cells` entry exit 2, or dedupe it through the shared normalizer before the cost is computed."
+  },
+  {
+    "location": "cell-contract.md > Runner > Output, Fail-fast",
+    "issue": "One child exits 2 while other cells are queued or in flight in a multi-version run.",
+    "implementation_impact": "It is unspecified whether queued cells still start, get `not-run`, or get no record. The overall exit 2 can hide `fail` records already appended by other children.",
+    "suggestion": "Treat a child exit 2 like fail-fast: start no queued cell, give each a not-run record with reason `input-error after <ver>`, let in-flight children finish, then exit 2."
+  },
+  {
+    "location": "cell-contract.md > not-run (CAP-3) progress-log rule; Warm container > Teardown / --stop-job",
+    "issue": "`--stop-job` (exit 143), or a child exit 2, arrives before some queued versions reach `wait-slots`.",
+    "implementation_impact": "Those versions' progress logs are not truncated, so they still hold an earlier run's lines. The stall rule and log-based CAP-5/CAP-3 assertions can read stale phases as this run's.",
+    "suggestion": "For every version of the run that never reached wait-slots, truncate its progress log and write `DONE rc=stopped` (or the exit reason), as the not-run rule already does."
+  },
+  {
+    "location": "cell-contract.md > Evidence record > Newest / latest",
+    "issue": "`started_at` wall-clock order inverts across processes after a WSL2 clock jump, e.g. on host resume or a time resync.",
+    "implementation_impact": "An older pass can rank newer than a later fail. That flips 'newest gate-grade', failing/focus derivation and divergence, so ready=true could rest on an outdated pass.",
+    "suggestion": "Break order by append position in the history file (line order under LOCK_EX), or by a monotonic per-file sequence number written with each record, instead of by `started_at` alone."
+  },
+  {
+    "location": "cell-contract.md > Evidence record > Entry points (`--merge-only --layer e2e` view)",
+    "issue": "The report view is written 'for every configured cell', but a configured cell may have no history record.",
+    "implementation_impact": "The view's shape for a missing cell is undefined. It could be omitted, `null`, or crash the writer, and report readers may show a missing cell as absent rather than unproven.",
+    "suggestion": "Specify `cells[ver][browser] = null`, or a stub `{state: null, reason: \"missing\"}`, when the cell has no valid record, including the corrupt-history case."
+  },
+  {
+    "location": "cell-contract.md > Evidence record > Storage",
+    "issue": "Histories are append-only with no retention or rotation, and every plan or aggregate call reads every line of every configured cell.",
+    "implementation_impact": "Histories grow without bound across sessions. Plan call latency grows, and a corrupt tail stays until the next valid append.",
+    "suggestion": "Define a retention rule that keeps at least the newest gate-grade record and the newest record per (fingerprint, session) per cell, or state explicitly that there is no rotation."
+  }
+]

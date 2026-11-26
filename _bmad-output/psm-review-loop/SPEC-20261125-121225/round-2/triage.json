@@ -1,0 +1,81 @@
+{
+ "round": 2,
+ "critical_high": 66,
+ "fixed": 57,
+ "escalated": 9,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261125-121225.r2-q1",
+   "finding": "Fase 1 per versi tak pernah selesai untuk versi non-canary: E2E-nya baru jalan di tier 1 (Fase 2), jadi all_reuse per versi tak pernah true. Urutan tier 0 vs Lapis 1/2/5 belum ditentukan.",
+   "options": [
+    "Fase 1 per versi hanya menggerbang Lapis 1/2/5; E2E tier 0 jalan di loop versi canary; Fase 2 mulai saat semua versi bersih + e2e_step=gate",
+    "Tier 0 baru jalan setelah Lapis 1/2/5 bersih di semua versi",
+    "Tiap patch: canary E2E dulu, baru lapis lain"
+   ],
+   "recommended": "Opsi 1",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r2-q2",
+   "finding": "Cakupan dipersempit (flag/menu scope, mis. hanya 8.1) bentrok dengan aturan 'orkestrator jalankan persis e2e_next_cells' saat plan butuh sel di luar cakupan (mis. canary 9.1×Chromium).",
+   "options": [
+    "Cakupan jadi filter e2e_next_cells; bila kosong, plan lapor e2e_step blocked-by-scope + sel yang dibutuhkan, tak ada yang dijalankan",
+    "E2E abaikan penyempitan, selalu ikut plan",
+    "Jalankan sel sempit di luar urutan tier"
+   ],
+   "recommended": "Opsi 1",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r2-q3",
+   "finding": "psm_e2e_slots dihitung untuk apa (seluruh host atau pemanggilan ini) dan apa yang terjadi saat slot penuh belum ditentukan; --jobs untuk layer e2e juga belum jelas.",
+   "options": [
+    "Seluruh host: semua job E2E hidup (cold+warm, semua sesi); penuh -> tunggu dengan baris ALIVE wait-slots sampai startup timeout, lalu sel inconclusive no-slots; --jobs di e2e = exit 2",
+    "Hanya pemanggilan ini + keeper warm milik sesi ini",
+    "Seluruh host, tunggu tanpa batas"
+   ],
+   "recommended": "Opsi 1",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r2-q4",
+   "finding": "Pada module bersih, versi canary boot 3× (focus warm, cold-canary, lalu tier 1 untuk Firefox) — lebih lambat dari sekarang (1×).",
+   "options": [
+    "Run canary pertama langsung cold+full bila belum ada catatan gagal; warm baru dipakai setelah ada kegagalan (9.1 jadi 2 boot)",
+    "cold-canary sekalian jalankan semua browser versi canary (mengubah keputusan r1-q1)",
+    "Keduanya",
+    "Biarkan"
+   ],
+   "recommended": "Opsi 1",
+   "oscillation": false
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "cell-contract.md > Parallel browsers (lock)",
+   "issue": "Lock tak menutup rantai requires: BO scenario engine lain bisa mengubah state di antara prasyarat dan dependen FO-only (edge-10)."
+  },
+  {
+   "location": "cell-contract.md > Config keys",
+   "issue": "psm_e2e_slots non-integer dan psm_e2e_warm_ttl <1/non-integer belum punya penanganan input (edge-21)."
+  },
+  {
+   "location": "tier-matrix.md / cell-contract.md Runner",
+   "issue": "Patch di tengah gerbang (temuan Lapis 3) tak menghentikan sel tier 1 yang masih antre; usulan berhenti saat fingerprint berubah = perluasan scope (edge-26)."
+  },
+  {
+   "location": "SPEC.md CAP-3 / cell-contract.md Runner",
+   "issue": "Dengan default slots 6, fail-fast tak pernah memotong apa pun di tier 1; doc sudah menyatakannya, penghematan datang dari tiering (implementer-17)."
+  },
+  {
+   "location": "cell-contract.md Freshness",
+   "issue": "image_tag tanpa digest dan vendor/ di luar fingerprint (adversarial-6 sebagian) — perluasan, perilaku lama."
+  },
+  {
+   "location": "cell-contract.md Headless",
+   "issue": "Headless loop-back boot V dua kali berturut (focus cold lalu cold-version); gabung = ubah keputusan r1-q2 (adversarial-15 bagian 3)."
+  }
+ ]
+}

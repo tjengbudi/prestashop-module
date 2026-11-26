@@ -1,0 +1,116 @@
+[
+  {
+    "location": "cell-contract.md:24,41 (Gate-grade; Plan step 4 cold-canary) + tier-matrix.md:18",
+    "issue": "A cell can be fresh, conclusive, cold, full and `state: pass` but still not passing gate-grade for a reason a rerun cannot change: `authored_assertions` is 0 (no authored specs), `scenario_notes` is non-empty (an invalid spec), `browser_notes` is non-empty, or a deterministic BO login failure leaves `inconclusive` non-empty. Persistent infra causes behave the same way: a missing image without pull permission, or `no-slots` on a busy host. For the canary, step 4 picks `cold-canary` again (it lacks passing gate-grade, has no fresh fail, and has a fresh pass). For other cells, `gate` re-emits the same cells. The spec has no retry bound and no terminal step for this.",
+    "implementation_impact": "An interactive run cold-boots the same cell forever, or the orchestrator has to improvise a stop rule. Neither the plan nor the tests can show where the loop ends.",
+    "suggestion": "Add a terminal step such as `e2e_step: blocked-non-retryable` with the cause (`smoke-only`, `scenario-notes`, `browser-notes`, `bo-auth`, `image-missing`, `no-slots`). Emit it when the newest gate-grade-eligible record is fresh and its failure cause is one a rerun cannot change, or after N identical inconclusive outcomes on the same fingerprint. It ends the E2E loop the same way `skipped` does, and `ready` stays false."
+  },
+  {
+    "location": "cell-contract.md:37 (Focus cell derivation)",
+    "issue": "Focus cell = \"the failing cell from the newest run\". Some runs contain no failing cell while another cell, from an older run, is still failing. Example: tier 1 fails at V1:firefox and V2:chromium. The loop-back fixes V1, and the `cold-version` run for V1 passes. V2:chromium is still failing (its fail is stale but still the newest cold full conclusive record), but the newest run has no failing cell. \"No failing cell → the canary\" does not apply, because a failing cell exists. Also, \"newest run\" is never defined (by `run_id`? by max `started_at` of the run?).",
+    "implementation_impact": "The focus cell is undefined. `gate` and `cold-canary` are both blocked because a cell is failing, so step 3/5 has no input, and different implementations pick different cells or crash.",
+    "suggestion": "Define focus as: the failing cell whose failing record is newest (by `started_at`, then `run_id`); ties broken by `psm_target_versions` order, then `psm_e2e_browsers` order. Define \"run\" as the set of records sharing a `run_id`. Add a test with two failing cells from different runs."
+  },
+  {
+    "location": "cell-contract.md:16,29 (Fields `started_at`/`finished_at` = this cell's engine start and end; not-run; no-slots)",
+    "issue": "`started_at` is defined as the engine start time, but many records have no engine start: `not-run`, `no-slots`, boot or install failures before any engine launched, `skipped_image`, and `skipped_browser`. \"Newest\" ordering, failing/recorded-failure detection, and the plan's `not-run` reason all key on `started_at`.",
+    "implementation_impact": "These records either lack the ordering key or get an arbitrary time. A `not-run` or boot-failure record may then sort older than the previous record, which hides it, or newer, which masks the previous record. Plan reasons become wrong.",
+    "suggestion": "For records whose engine never started, set `started_at` to the time the cell was queued or admitted, and set `finished_at` to the time its record was written. Document this, and add a test that a `not-run` record written after a pass is the newest record."
+  },
+  {
+    "location": "cell-contract.md:14,51 (Storage: ps-run-layer appends records after the child exits)",
+    "issue": "The spec does not say what is appended when no record is produced. Cases: a child that crashes (`rc=crash`, no output JSON); a child stopped via `--stop-job` (`DONE rc=stopped`); ps-run-layer itself killed after children exit but before it appends; and an engine dropped by the binary probe (`probe_missed`), which is never driven and so is never a \"cell the run drove\".",
+    "implementation_impact": "A stopped or crashed cell leaves no trace. The newest record stays an older one (possibly a fresh pass), which conflicts with the constraint that a stopped cell is never reported as a pass. A permanently missing browser binary produces no record, so the plan reruns that cell forever.",
+    "suggestion": "Require ps-run-layer to append, for every cell it admitted, an `inconclusive` record with `reason` set to `crash`, `stopped`, or `browser-binary-missing` whenever the child produced no per-cell result. Write it from a `finally`/signal handler, and write the `stopped` record before teardown completes."
+  },
+  {
+    "location": "cell-contract.md:21 (State rule) vs ps-e2e-run.py probe_missed/browser_notes",
+    "issue": "The state rule is: inconclusive if `errors`, `install.ok`, or `launch_error`; else fail if findings; else pass. An engine that failed the binary probe has none of these fields set. If ps-run-layer emits a record for it, that record derives `state: pass, conclusive: true`. `browser_notes` is also not listed among the version-level fields copied per cell, so it is unspecified whether the note lands on the missing engine's cell or the driven one.",
+    "implementation_impact": "A never-driven browser gets `state: pass` and `conclusive: true`. That can satisfy step 3 (`cold-version`: a fresh pass of any grade) and corrupts the CAP-3 and headless `e2e_state` reporting.",
+    "suggestion": "Add to the state rule: an engine not driven, whether probe-missed or skipped_browser, is `inconclusive` with `reason: browser-binary-missing`. Make `browser_notes` per cell, attached to the engine it names."
+  },
+  {
+    "location": "tier-matrix.md:20 + cell-contract.md:44 (Phase 1 loops; Phase 2 starts when every version's loop has ended)",
+    "issue": "The spec does not set the order of the per-version Phase 1 loops, and does not re-check canary readiness when they end. If the canary version's loop ends at `gate` and a later version's Phase 1 loop then patches source, the canary evidence goes stale. Every loop has still \"ended\", so Phase 2 starts while the plan's `e2e_step` is `cold-canary` (tier 0), not `gate`.",
+    "implementation_impact": "Phase 2 meets a tier 0 step that no Phase 1 loop hosts. The orchestrator either runs tier 0 inside Phase 2 (contradicting the tier-matrix) or stalls. Layer 3 may also spawn on a source that is about to change.",
+    "suggestion": "Either require the canary version's loop to run last, or define the Phase 2 entry check as: plan `e2e_step` ∈ {gate, done}. Otherwise re-enter the hosting Phase 1 loop for the canary (or focus) version before starting Phase 2."
+  },
+  {
+    "location": "cell-contract.md:45 + SKILL.md Lapis 4 (`psm_e2e_enabled`, `--require` without e2e)",
+    "issue": "Only E2E `skipped` (no Playwright/Docker) and `blocked-by-scope` end the E2E loop. When `psm_e2e_enabled` is false, or the gate is narrowed via `ps-aggregate --require` without `e2e`, the plan still emits `focus`/`gate` steps. The hosting Phase 1 loop then never sees `gate`/`done`.",
+    "implementation_impact": "The canary version's Phase 1 loop never ends, so Phase 2 never starts. Alternatively the orchestrator runs E2E that the operator disabled.",
+    "suggestion": "Have the plan emit `e2e_step: disabled` (tier n/a, `e2e_next_cells` empty) when `psm_e2e_enabled` is false or e2e is not required. List it with `skipped`/`blocked-by-scope` as a step that ends the E2E loop and releases the hosting Phase 1 loop."
+  },
+  {
+    "location": "cell-contract.md:42,111 (Plan step 5 `e2e_scenarios: failed-only`; Headless)",
+    "issue": "Headless runs never use warm, but the spec does not say whether a headless `focus` step with a recorded failure honors `e2e_scenarios: failed-only`. A cold failed-only run gives partial evidence, which is never clean, so headless returns right after it. A recorded failure may come from a stale record of an earlier session.",
+    "implementation_impact": "A headless caller gets `inconclusive` even when the fix worked, and needs a second call to obtain cold full canary evidence. Implementations may also differ on whether headless passes `--scenarios-from-failed`.",
+    "suggestion": "State that in headless runs the plan (or orchestrator) forces `e2e_scenarios: full` for `focus` steps, so every headless step produces gate-grade evidence. Add a test: headless with a stale canary fail runs cold full."
+  },
+  {
+    "location": "cell-contract.md:112 (Headless `versions.<ver>.e2e_state`) + :37 (failing uses fresh or stale records)",
+    "issue": "`fail` is reported when any configured cell of the version is failing, and failing includes stale records. A headless run that stops at the canary step will therefore report, for example, 1.7.8 as `fail` from a fail record made on older source that this run never re-tested.",
+    "implementation_impact": "Headless callers (psm-develop, psm-cross-version) try to fix a version-specific bug that may already be gone, instead of seeing `inconclusive`/`not reached`.",
+    "suggestion": "Report `fail` only when a fresh cold full conclusive record is `fail`. Report a stale failing cell as `inconclusive` with `reason: stale-fail` (plus `not reached: stopped at <step>` when the run did not get to it)."
+  },
+  {
+    "location": "cell-contract.md:105-106 (`psm_e2e_slots` host-wide admission)",
+    "issue": "Admission counts live slots from the registry and then starts the cell. Nothing makes count-then-register atomic across ps-run-layer processes or sessions. The spec also does not say whether the registry is shared when sessions resolve `tempfile.gettempdir()` differently (different `TMPDIR`).",
+    "implementation_impact": "Two sessions admitted at the same moment can both see free slots and exceed the cap. That causes exactly the `wait-healthy` stalls the cap exists to prevent.",
+    "suggestion": "Admit under an exclusive `flock` on `<registry>/slots.lock`: count, then write this job's slot claim, then release. Pin the registry root to a fixed path (e.g. `/tmp/psm-jobs`, not `$TMPDIR`-dependent), or document that sessions with a different TMPDIR are not counted."
+  },
+  {
+    "location": "cell-contract.md:51,106 (Fail-fast vs `wait-slots`)",
+    "issue": "The spec does not say whether a cell waiting in `wait-slots` counts as started when fail-fast triggers. It also does not say which record wins when both apply (`not-run` or `no-slots`).",
+    "implementation_impact": "A waiting cell may still boot after a blocking failure, which contradicts CAP-3's success criterion of no `bring-up` for queued cells. Or it may get an inconsistent reason.",
+    "suggestion": "Define: a cell that has not yet been admitted (including one in `wait-slots`) is unstarted. On fail-fast, cancel its wait and write `state: not-run`, `reason: fail-fast after <v>:<b>`."
+  },
+  {
+    "location": "cell-contract.md:59,61 (Warm attach / pre-iteration check)",
+    "issue": "`--use-warm auto` looks up the registry, and the pre-iteration check inspects only the container (running, healthy, tag, module path, version). It never checks that the keeper process is alive. A keeper that crashed can leave a healthy container whose `psm.owner-pid` is dead.",
+    "implementation_impact": "An iteration may attach to an orphan that `--cleanup-orphans` can delete mid-run. Its slot is no longer counted as live, and no TTL teardown ever happens.",
+    "suggestion": "Add to the pre-iteration check: the keeper PID is alive (same identity verification as `--stop-job`). If it is not, run `--cleanup-orphans` for that job, cold-boot, and log `keeper-dead`."
+  },
+  {
+    "location": "cell-contract.md:58,63 (One keeper per (module path, version); teardown when the focus cell changes or the loop ends)",
+    "issue": "A keeper is keyed by (module path, version) only. Two sessions validating the same module reuse one keeper. When the focus cell changes or the loop ends, either session tears it down via `--stop-job`, even though the other session started it or is still using it.",
+    "implementation_impact": "One session kills a container the other session depends on. This breaks the rule to stop only jobs you started, and causes spurious cold boots or inconclusive iterations in the other session.",
+    "suggestion": "Either key keepers by (module path, version, orchestrator session id) and never reuse across sessions, or reference-count users in `session.json` and let a session tear the keeper down only when it is the last user."
+  },
+  {
+    "location": "cell-contract.md:62 (Reset per iteration: reset-opcache reloads PHP-FPM/Apache, then copy+install)",
+    "issue": "After the web server reloads, the spec does not say whether a warm iteration runs `wait-http`/`warmup-bo` before driving. CAP-5 forbids only `bring-up` and `wait-healthy`.",
+    "implementation_impact": "The first navigation can hit a reloading server or an uncompiled BO login. That causes flaky inconclusive steps or false findings in warm iterations only.",
+    "suggestion": "Specify that a warm iteration runs `wait-http` (and `warmup-bo` when any scenario needs BO) after `reset-opcache` and install, and records them in `boot_phases`."
+  },
+  {
+    "location": "cell-contract.md:22 (Fresh: fingerprint skips paths matched by `ss.is_skipped`)",
+    "issue": "`SKIP_DIRS` = {vendor, node_modules, .git}, so a change under the module's shipped `vendor/` (composer update/patch) does not change `source_fingerprint`. The installed module copied into the container does include vendor.",
+    "implementation_impact": "After a dependency change, gate-grade passes recorded on the old vendor code stay fresh, so `ready` can be true for code that was never E2E-tested.",
+    "suggestion": "Include `vendor/` (but not `.git`/`node_modules`) in the fingerprint, or fingerprint exactly the file set that install copies into the container."
+  },
+  {
+    "location": "cell-contract.md:14 (append-only `.jsonl` history read by plan and aggregate)",
+    "issue": "The spec does not say how to handle a malformed or truncated line (a crash mid-append, concurrent appends from two sessions on the same reports dir, or a manual edit). It also does not say whether appends are atomic.",
+    "implementation_impact": "One bad line can crash the plan and aggregate (blocking every run), or be silently dropped. If the dropped line was the newest fail, an older pass becomes current.",
+    "suggestion": "Append each record with a single `write()` under an `flock` on the history file. When reading, skip an unparsable line, surface it in `e2e_cells[..].reason` as `corrupt-history`, and treat that cell as not passing gate-grade until a newer valid record exists."
+  },
+  {
+    "location": "cell-contract.md:8,14,104 (Normalizer; history file name `<module>-e2e-<ver>-<browser>.jsonl`; `psm_e2e_canary`)",
+    "issue": "The normalizer defines ordering but not equality. `9.1` and `9.1.0` (or a canary `9.1.0:chromium` against target `9.1`) are not stated to be duplicates or equal. History file names are keyed by the raw version string.",
+    "implementation_impact": "The same version can split across two history files, or be rejected as a canary outside the configured cells. Evidence then disappears from freshness checks.",
+    "suggestion": "Define numeric equality (trailing `.0` components ignored, or exact string required). Write history files under the normalized canonical string, and reject or normalize non-canonical forms with exit 2."
+  },
+  {
+    "location": "cell-contract.md:107 (`psm_e2e_warm_ttl`)",
+    "issue": "No validation is defined for `psm_e2e_warm_ttl` (0, negative, non-integer). By contrast, `psm_e2e_slots` has an explicit lower bound and exit 2.",
+    "implementation_impact": "TTL 0 or a negative value may tear the keeper down at once, causing a cold boot every iteration. A non-integer may crash the detached keeper with no visible error.",
+    "suggestion": "Require an integer ≥ 1, and make anything else an input error (exit 2), validated by `resolve-psm-config.py` and by `ps-e2e-run.py --keep-warm` before it detaches."
+  },
+  {
+    "location": "cell-contract.md:91,93 (CAP-6 `boot_phases` keyed by `boot_id`; aggregate counts each `boot_id` once)",
+    "issue": "Warm iterations reuse the keeper's boot, but each iteration has its own `reset-db`/`reset-files`/`reset-opcache` durations in `boot_phases`. The spec does not say whether a warm iteration gets a new `boot_id` or shares the keeper's.",
+    "implementation_impact": "If iterations share the keeper's `boot_id`, deduplication collapses them, so the reported fix-loop timings show only one iteration's reset cost or a mix.",
+    "suggestion": "Give each warm iteration its own `boot_id` (e.g. `<keeper-boot-id>#<n>`) that holds only the reset and install phases, and state that bring-up phases stay under the keeper's boot."
+  }
+]

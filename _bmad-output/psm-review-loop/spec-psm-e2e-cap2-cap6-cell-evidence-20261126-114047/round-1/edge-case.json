@@ -1,0 +1,116 @@
+[
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:32 (Never: headless config copy) vs :24 (Configured cells, aggregate --config)",
+    "issue": "Headless config copy is deferred, but configured cells now come only from --config. The spec does not say what headless callers (psm-develop, psm-cross-version, psm-scaffold, psm-optimize) pass in this slice when they narrow versions or browsers.",
+    "implementation_impact": "A headless call for one version gets ready=false from cells it never asked for. An aggregate call that still passes the caller's --versions hits the new exit 2 for a --versions that differs from config. Either way the per-version verdict contract of the headless callers breaks.",
+    "suggestion": "State the interim headless rule. Either pull the config-copy step into this slice, or say that headless keeps its current behavior and never passes --versions to the aggregate, and spell out which configured set applies."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:32 (Never: e2e_step/e2e_next_cells/run scope) and :69 (docs: Fase 1/2 e2e commands)",
+    "issue": "e2e_step and e2e_next_cells are deferred, yet the docs task rewrites the Fase 1/2 E2E commands. The spec never says how the orchestrator turns the new per-cell rerun_matrix entries into a --cells or --versions argument.",
+    "implementation_impact": "SKILL.md and run-phases.md will say something the scripts do not decide. The orchestrator may pick cells by judgment, rerun browsers that already pass, or pass an argument the new rules reject (--per-version).",
+    "suggestion": "Give the interim rule. For example: group the layer-e2e rerun_matrix entries by version into --cells <ver>:<b>[+<b>] (one invocation, default --jobs), and use no other source of cells."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:26 (layer e2e input errors) vs cell-contract.md Runner > Input errors",
+    "issue": "Only some of the contract's Runner input errors are named for this slice (one of --cells/--versions, and --per-version). The status of the others is left open: --tier missing or invalid, --jobs, --warm, --scenarios-from-failed, a repeated version in --cells, a cell outside the configured set, --cells with another layer.",
+    "implementation_impact": "One implementer may add a required --tier because the contract says so, which breaks every documented command. Another may accept repeated versions or cells outside the configured set, which writes histories that no reader looks at.",
+    "suggestion": "List every Runner input error explicitly, each with in-slice or deferred: --tier absent and rejected by argparse; --jobs accepted; repeated version, outside-config cell and --cells with another layer are exit 2."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:69 (docs: e2e-quickstart.md TDD verdict step)",
+    "issue": "The contract's TDD verdict command includes --tier 0, but --tier is deferred. The spec does not say which form the quickstart doc should use.",
+    "implementation_impact": "A doc copied from the contract tells users to run a command that exits 2 on an unknown flag.",
+    "suggestion": "Say that the quickstart step in this slice is `ps-run-layer.py --layer e2e --cells … --session <token>` with no --tier, followed by `ps-aggregate.py --reports-dir`."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:26,32 (exit 143; Never: stopped records)",
+    "issue": "ps-run-layer is stopped with --stop-job while children run. stopped records are deferred, and the spec does not say what ps-run-layer appends for the admitted cells.",
+    "implementation_impact": "The children exit 143 with no output, so the generic no-result path appends crash records. A crash record is an infra cause, so an operator stop later counts toward blocked-infra. The other option, appending nothing, is also unstated.",
+    "suggestion": "State the rule: when the run is stopped (JobStopped or SIGTERM), append no record for cells without a child result, and do not apply the crash rule to children killed by that stop."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:27 (ps-e2e-run per-engine cells) / :44 (Crash child)",
+    "issue": "Some version-level failures happen before any engine is driven: skipped_image, compose unavailable, bring-up error, port-conflict retry, not healthy, install failure, no HTTP. The spec does not say whether the child still emits cells for every requested engine in these cases.",
+    "implementation_impact": "When cells is empty, ps-run-layer finds no per-cell result and writes crash. The real reason (errors or install) is lost, and the copy of errors and install into each cell, which the contract requires, never happens.",
+    "suggestion": "Require the child to emit `cells[engine] = {driven: false, launch_error: null, ...}` for every engine in --engines on every return path after the probe. Reserve crash for children that produce no parseable output."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:26,66 (record merge in history mode)",
+    "issue": "The child output may name a version not requested, carry cells for an engine that was not admitted, lack a cell for an admitted engine, or fail validate_layer_shape. Today these cases cause exit 2 (rejected) or a missing-version result. History mode has no rule for them.",
+    "implementation_impact": "Stray records could be appended to the wrong cell's history, or an admitted cell could silently get no record. The exit code would be unpredictable.",
+    "suggestion": "Write the rule: ignore and log any cell outside the admitted set; give an admitted engine with no cell a crash record; treat output that fails the shape gate as no output, so the crash rule applies."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:26 (child exit 2 under --jobs)",
+    "issue": "One child exits 2 while other version children are queued or running under --jobs. not-run production is deferred, and the spec does not say whether the others start or whether their records are appended.",
+    "implementation_impact": "Following today's code (return 2 before writing) drops valid records from the children that finished. Following the contract would need not-run records, which this slice cannot produce.",
+    "suggestion": "State the rule: queued children still run; every other child's records are appended; the exit-2 version gets no record; ps-run-layer exits 2 after appending."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:26 (--versions for layer e2e)",
+    "issue": "ps-run-layer --layer e2e --versions 9.2 (not configured) or --versions 9.1.0 when 9.1 is configured. Exact-string matching is required only for canary and --cells versions.",
+    "implementation_impact": "A history named with a non-configured string (for example -9.1.0-) is never read, so the run looks successful but is invisible to plan and aggregate. Plan --per-version --versions 9.2 would also emit browser-keyed e2e for a version that is not configured.",
+    "suggestion": "Extend the exact configured-string match to ps-run-layer --versions for e2e (exit 2), and say how plan and aggregate treat a --versions entry outside the configured set."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:24 (Configured cells read from --config)",
+    "issue": "--config is given, but psm_target_versions or psm_e2e_browsers is absent, null or an empty string. The spec does not say whether this means the script defaults or an empty list (exit 2). Reading or parsing the --config file can also fail.",
+    "implementation_impact": "Plan, runner and aggregate may resolve different configured sets from the same file, so cells planned as required do not match the cells the aggregate gates on.",
+    "suggestion": "State in the normalizer: key absent or null means the script default; a present empty string means exit 2; an unreadable or non-object config means exit 2. Use this one function in all three scripts."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:24 (State/freshness incl. reports-dir exclusion) vs Runner input errors",
+    "issue": "The fingerprint rule depends on rejecting psm_reports_dir equal to the module root, and a passthrough --screenshot-dir inside the module but outside the reports dir. The spec does not list these Runner input errors, or the equivalent checks in plan and aggregate, as in scope.",
+    "implementation_impact": "Screenshots written inside the module change the fingerprint during every run, so every new record is stale the moment it is written. A reports dir at the module root makes the exclusion ambiguous.",
+    "suggestion": "Name both checks as in-slice exit 2 in ps-run-layer, plus the reports-dir check in plan and aggregate, wherever source_fingerprint is computed."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:26 (history append, sole writer)",
+    "issue": "Appending to a history fails: OSError, disk full, flock error, or a reports dir that is missing or read-only.",
+    "implementation_impact": "The exit code is unspecified. Some cells may be recorded and others not, and the output line's `appended` list may claim records that were never written.",
+    "suggestion": "Write the rule: on append failure, log the path, leave it out of `appended`, keep appending the other cells, and exit 2 (or the stated code) after all cells are tried."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:26 (--merge-only report view)",
+    "issue": "In --merge-only --layer e2e, the view value for a configured cell with no history, or with corrupt-history, is not stated. Nor is what happens when --versions or --session is also passed.",
+    "implementation_impact": "The view's shape is inconsistent (missing key vs null vs a placeholder). If --versions is still required by argparse, the contract's form of the command (no --versions) cannot run.",
+    "suggestion": "Define it: a cell with no valid record gets `cells[ver][b] = null`; --versions and --session are rejected with exit 2, or ignored (choose one); --versions is not required for layer e2e."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:24 (Aggregate history-based E2E) / ps-aggregate.py main",
+    "issue": "The aggregate is called with explicit --static and no --reports-dir or --module, which the CLI still allows.",
+    "implementation_impact": "There is no history location, so every cell reads as missing with no error, or the code fails on a None path.",
+    "suggestion": "Make --reports-dir and --module required whenever the E2E layer is evaluated, or exit 2 when e2e is in --require and they are absent."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:24 (aggregate per-version e2e_state/reason, reason as in plan)",
+    "issue": "A version has cells with different reasons, for example chromium missing and firefox stale-source. Plan reasons such as not-gradeable and scenario-notes also need the current e2e_scenario_notes, and the spec does not say whether the aggregate computes them.",
+    "implementation_impact": "The aggregate may report a different reason than the plan for the same cell, or pick an arbitrary cell's reason for versions[ver].reason.",
+    "suggestion": "State that versions[ver].reason is the reason of the first cell without passing evidence, in psm_e2e_browsers order. State that the aggregate computes current e2e_scenario_notes through the same discover_scenarios loader the plan uses."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:41 (Corrupt line) and aggregate record selection",
+    "issue": "The last line of a history is corrupt and an earlier valid line is a passing gate-grade record. Aggregate selection still picks that pass.",
+    "implementation_impact": "e2e_cells shows state pass with gate_grade true next to reason corrupt-history. Consumers reading `state` may treat the cell as proven.",
+    "suggestion": "Say that when corrupt-history applies, e2e_cells[ver][b] gets gate_grade false and state inconclusive, with reason corrupt-history, whatever the selected record says."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:63,78 (timing sink)",
+    "issue": "The timing sink has gaps. A direct ps-e2e-run.py run with several --versions holds several versions in one process. A phase can exit by exception (JobStopped, timeout). And the outcome values are not listed.",
+    "implementation_impact": "Phases from one version leak into the next one's boot_phases as #2 entries. The outcome strings may not match between producers and tests.",
+    "suggestion": "Reset the sink per run_one_version call. Enumerate outcome as ok, the phase status string, or error on exception, and record the entry in __exit__ whatever the outcome. Make the sink a no-op when inactive (Layer 2/5 phases)."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:26-27 (image_tag Producers)",
+    "issue": "The child's emitted image_tag differs from the tag ps-run-layer resolved from its passthrough and config tag map.",
+    "implementation_impact": "The spec does not say which value the merged record stores. Freshness may then compare against a tag that was not actually booted, or reject valid evidence.",
+    "suggestion": "Write the rule: the child's image_tag wins in the merge; a mismatch with ps-run-layer's resolved tag is logged, and the record keeps the child value so it reads stale-tag."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:24 (normalizer) vs Never (canary/CAP-1)",
+    "issue": "The config sets psm_e2e_canary outside the configured cells, or malformed. The canary is deferred, but the normalizer text mentions canary matching.",
+    "implementation_impact": "Some scripts in this slice may exit 2 on the canary and others may ignore it, so the same config is valid for plan but rejected by the aggregate, or the other way round.",
+    "suggestion": "State whether psm_e2e_canary is validated in this slice. Recommended: ignored by all three scripts until CAP-1."
+  }
+]

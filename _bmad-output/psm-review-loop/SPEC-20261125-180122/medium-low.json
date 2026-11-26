@@ -1,0 +1,222 @@
+[
+ {
+  "round": 1,
+  "location": "cell-contract.md > Parallel-only failures",
+  "issue": "adversarial-6: inconclusive steps from parallel contention are not rechecked sequentially; may cause blocked-infra"
+ },
+ {
+  "round": 1,
+  "location": "cell-contract.md > Fresh",
+  "issue": "adversarial-8: (path,size,mtime) fingerprint misses same-size same-mtime content changes"
+ },
+ {
+  "round": 1,
+  "location": "SPEC.md frontmatter companions / banner",
+  "issue": "adversarial-9: adopted SKILL.md/run-phases.md listed as contract while cell-contract says they are superseded"
+ },
+ {
+  "round": 1,
+  "location": "cell-contract.md > Storage; Headless config copy",
+  "issue": "adversarial-11: no retention for histories; headless config copies never deleted"
+ },
+ {
+  "round": 1,
+  "location": "cell-contract.md > Docs to update",
+  "issue": "adversarial-12: sibling callers' SKILL.md (not reached rule) and quickstart exit 3 not listed"
+ },
+ {
+  "round": 1,
+  "location": "cell-contract.md > Storage",
+  "issue": "adversarial-14: SIGKILL of ps-run-layer loses child results"
+ },
+ {
+  "round": 1,
+  "location": "cell-contract.md > Fields session",
+  "issue": "adversarial-15/implementer-25: --session mandatory on every plan call incl. non-E2E"
+ },
+ {
+  "round": 1,
+  "location": "cell-contract.md > Newest",
+  "issue": "edge-case-5: started_at ordering vulnerable to clock jumps; run_id tie-break arbitrary"
+ },
+ {
+  "round": 1,
+  "location": "cell-contract.md > Failed-only rerun",
+  "issue": "edge-case-9: selection equal to full set still marked partial"
+ },
+ {
+  "round": 1,
+  "location": "SPEC.md frontmatter sources / Assumptions",
+  "issue": "implementer-21: chat request not in sources; Chrome->chromium and newest-target drift not flagged"
+ },
+ {
+  "round": 2,
+  "location": "SPEC.md CAP-7 success; cell-contract Cross-engine lock",
+  "issue": "adversarial-1: overlap criterion met even when BO lock serializes most bankwire scenarios; perf benefit unmeasured (timing report covers it)"
+ },
+ {
+  "round": 2,
+  "location": "cell-contract Parallel browsers BO-login fallback",
+  "issue": "adversarial-6: #2 pass after in-place reset stays gate-grade without a marker (same cold boot, install already ran)"
+ },
+ {
+  "round": 2,
+  "location": "SPEC Constraints / tier-matrix Rules",
+  "issue": "adversarial-8: no canary infra fallback; scope expansion"
+ },
+ {
+  "round": 2,
+  "location": "cell-contract Storage",
+  "issue": "adversarial-11: no history retention/compaction"
+ },
+ {
+  "round": 2,
+  "location": "cell-contract Cross-engine lock",
+  "issue": "adversarial-12: order-dependent preconditions (checkout-empty-banks zero banks) nondeterministic in parallel; pre-existing in sequential mode; lock-wait hang beyond step timeouts (adversarial-7 remainder)"
+ },
+ {
+  "round": 2,
+  "location": "cell-contract Newest",
+  "issue": "edge-case-8: started_at ordering vulnerable to clock jumps"
+ },
+ {
+  "round": 2,
+  "location": "SPEC Assumptions",
+  "issue": "implementer-23: 'Chrome' = Playwright chromium, canary newest not pinned to 9.x; source not quoted"
+ },
+ {
+  "round": 3,
+  "location": "SPEC.md > CAP-5 / Phase 1",
+  "issue": "adversarial-2: tiap iterasi tetap menjalankan ulang Layer 2/5 cold untuk versi host; laporan waktu tak menunjukkannya (Layers 2/5 di luar cakupan, Non-goals)."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > Phase timings / not-run",
+  "issue": "adversarial-4: progress log per versi dipakai bersama sesi lain pada modul+versi yang sama (keterbatasan yang sudah ada)."
+ },
+ {
+  "round": 3,
+  "location": "SPEC.md > CAP-7 success",
+  "issue": "adversarial-6: tes overlap lemah karena lock-wait di dalam fase browser; usulan switch otomatis ke sekuensial = perluasan cakupan."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > Plan step 7",
+  "issue": "adversarial-7: kegagalan warm akibat residu tanpa pemicu cold otomatis; usulan aturan baru = perluasan cakupan."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > preamble live tests",
+  "issue": "adversarial-8: tes live skip diam-diam tanpa Docker/browser; usulan status SKIPPED-NOT-PROVEN."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > Fresh",
+  "issue": "adversarial-9: fingerprint ikut menghitung file swap editor / Zone.Identifier; usulan daftar abaikan."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > Newest / latest",
+  "issue": "adversarial-10 + edge-case-10: urutan by started_at rentan lompatan jam WSL2; usulan urut posisi append."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > Parallel-only failures",
+  "issue": "edge-case-5: saat snapshot-db gagal, sel tanpa temuan dan tanpa BO fallback tersirat tetap memakai hasil paralel; bisa dipertegas."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > Plan > Run scope",
+  "issue": "edge-case-6: --versions/--browsers di luar set terkonfigurasi menjadi blocked-by-scope (tetap dilaporkan), bukan exit 2."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > not-run progress log",
+  "issue": "edge-case-9: versi antrean saat --stop-job tak di-truncate log progresnya."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > Entry points merge-only view",
+  "issue": "edge-case-11: bentuk view untuk sel tanpa record tak didefinisikan (view tidak dibaca sebagai bukti)."
+ },
+ {
+  "round": 3,
+  "location": "cell-contract.md > Storage",
+  "issue": "edge-case-12: histori append-only tanpa retensi/rotasi."
+ },
+ {
+  "round": 3,
+  "location": "SPEC.md > Success signal",
+  "issue": "adversarial-1 (bagian): usulan mencatat detik rerun-seq/snapshot-db terpisah; sudah tercakup per-phase seconds."
+ },
+ {
+  "round": 4,
+  "location": "SPEC CAP-7 success",
+  "issue": "uji overlap lolos walau lock BO menyerialkan hampir semua skenario bankwire; manfaat terukur lewat laporan timing (adversarial-1)"
+ },
+ {
+  "round": 4,
+  "location": "tier-matrix Rules / Phase 2",
+  "issue": "tier 1 jalan paralel dengan Layer 3; temuan Layer 3 yang dipatch membuang tier 1 (optimasi urutan, adversarial-3)"
+ },
+ {
+  "round": 4,
+  "location": "cell-contract Fresh",
+  "issue": "fingerprint ikut file swap editor/__pycache__/IDE (adversarial-5)"
+ },
+ {
+  "round": 4,
+  "location": "SPEC Success signal",
+  "issue": "tak ada ukuran end-to-end satu sesi validasi (adversarial-6)"
+ },
+ {
+  "round": 4,
+  "location": "cell-contract Plan step 7",
+  "issue": "flag warm-contradicted per sesi agar residue tak bolak-balik warm/cold tiap patch (adversarial-7)"
+ },
+ {
+  "round": 4,
+  "location": "cell-contract Storage / Headless",
+  "issue": "retensi histori dan hapus config copy headless (adversarial-8, edge-case-10)"
+ },
+ {
+  "round": 4,
+  "location": "cell-contract session",
+  "issue": "token sesi tak dipersist; panggil ulang psm-validate membuat keeper lama jadi asing (adversarial-9)"
+ },
+ {
+  "round": 4,
+  "location": "Docs to update / brownfield",
+  "issue": "scan sekali nama spec duplikat di module lain (adversarial-10)"
+ },
+ {
+  "round": 4,
+  "location": "Scenario prerequisites bankwire",
+  "issue": "checkout-empty-banks-safe di requires checkout-with-bank adalah urutan, bukan prasyarat (adversarial-11)"
+ },
+ {
+  "round": 4,
+  "location": "SPEC CAP-3",
+  "issue": "fail-fast tak berefek pada default slots 6 x matriks 3x2 (adversarial-12)"
+ },
+ {
+  "round": 4,
+  "location": "cell-contract Fresh",
+  "issue": "freshness pakai string tag, bukan image ID (adversarial-13)"
+ },
+ {
+  "round": 4,
+  "location": "cell-contract Plan",
+  "issue": "dua sesi bersamaan pada satu module tak dikunci (edge-case-7)"
+ },
+ {
+  "round": 4,
+  "location": "cell-contract Headless",
+  "issue": "config copy headless tak dihapus / gagal tulis tak terdefinisi (edge-case-10)"
+ },
+ {
+  "round": 4,
+  "location": "SPEC frontmatter sources / Assumptions",
+  "issue": "permintaan chat tak tercatat di sources; canary 'newest' vs '9' (implementer-19)"
+ }
+]

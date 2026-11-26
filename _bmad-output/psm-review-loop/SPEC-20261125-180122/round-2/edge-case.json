@@ -1,0 +1,50 @@
+[
+  {
+    "location": "cell-contract.md > Plan > steps 5-7 (cold-version, cold-canary, focus); SPEC.md CAP-1, CAP-4, CAP-5",
+    "issue": "A warm or failed-only run passes while the following cold full run fails on the same source_fingerprint, for example because of residue in a file modified since baseline (which warm reset does not restore), an install-path bug, or a scenario-order dependency that `requires` does not declare. The derivation then cycles with no patch in between: the cold fail gives a recorded failure, so `focus` runs warm. The warm pass makes the newest fresh conclusive record a pass, so `cold-canary`/`cold-version` runs. The cold fail starts the cycle again. `blocked-infra` covers only inconclusive causes, so nothing ends the cycle.",
+    "implementation_impact": "The plan keeps the loop going while every warm iteration reports green. The operator sees no failure to fix, and the E2E loop never ends or reaches the gate.",
+    "suggestion": "Add a rule: when a cell's newest cold full conclusive record is `fail` and a newer warm or partial `pass` has the same source_fingerprint as that fail, step 7 sets e2e_warm=false and e2e_scenarios=full (or reports a dedicated cause such as `warm-cold-divergence`), so the next focus run is cold and full and the fix loop sees the real failure. Add a test: cold fail, warm pass, cold fail on one fingerprint derives a cold full focus, not a third cold-canary/cold-version."
+  },
+  {
+    "location": "cell-contract.md > Warm container > Chain / Owner (keeper started with start_new_session, own warm Job ID)",
+    "issue": "ps-run-layer is stopped (via `--stop-job` on its own Job ID, SIGTERM, or Ctrl-C) while it waits for a just-started keeper to write session.json. The keeper sits in its own session under a different Job ID, and the orchestrator does not know that Job ID yet, because it is printed only at attach. The contract does not say whether stopping ps-run-layer also stops the keeper, or what record the cell gets.",
+    "implementation_impact": "The keeper keeps booting and holds a slot. The next warm call finds no session.json, starts a second keeper for the same (module, version, owner), and breaks the at-most-one-keeper rule. Two containers then hold slots until the TTL runs out.",
+    "suggestion": "State that ps-run-layer prints and logs the warm Job ID as soon as it spawns the keeper, and that its stop handler sends `--stop-job <warm-id>` to a keeper it started whose session.json does not exist yet (the cell gets `stopped`). Also take a per-(module, version, owner) start lock, or write a `starting` marker under `<tmp>/psm-warm/` before spawning, so a concurrent or later lookup waits for that keeper and does not start another."
+  },
+  {
+    "location": "cell-contract.md > Warm container > Chain (\"waits for the session file until the keeper exits\") and Reset per iteration (phase `baseline`)",
+    "issue": "The wait for session.json is bounded only by the keeper's pull, bring-up and wait-healthy timeouts. The `baseline` phase (a `--databases` dump plus the docroot file list) comes after wait-healthy and has no timeout of its own. During that whole wait the keeper logs only to its own `-warm.progress.log`, and nothing says ps-run-layer writes heartbeats to the version progress log the orchestrator tails.",
+    "implementation_impact": "A hung dump blocks ps-run-layer forever. A normal keeper boot leaves the version log unchanged for 3 minutes or more, so the run-phases stall rule (b) reports a false stall.",
+    "suggestion": "Give `baseline` a timeout (for example the op timeout or `psm_flashlight_startup_timeout`); on expiry the keeper exits and the cell gets `keeper-start`. Specify that ps-run-layer logs a `keeper-wait` phase with `ALIVE` heartbeats every 15 s in the version progress log, naming the warm log path, while it waits."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers > Cross-engine lock (`lock-wait:<engine>`, no timeout) and Config keys > psm_e2e_slots (`wait-slots` without limit when queued behind own cells); references/run-phases.md SLOW threshold of 180 s",
+    "issue": "The contract makes `lock-wait:<engine>` and own-run `wait-slots` unbounded on purpose, but these phases fall under the general SLOW rule (180 s). With a shared `LOCK_SH`/`LOCK_EX` flock, which has no fairness guarantee, an engine can wait through many of the other engine's BO scenarios. The contract exempts the keeper idle wait from the stall rule (`ALIVE idle`) but not these two phases.",
+    "implementation_impact": "A healthy parallel gate run logs `SLOW lock-wait` or `SLOW wait-slots`. The orchestrator then reports a suspected stall to Budi and offers to stop a run that is making progress.",
+    "suggestion": "Specify that `lock-wait:*` and own-queue `wait-slots` emit `ALIVE` heartbeats naming the holder or blocking cells and are exempt from the SLOW threshold, or get a SLOW threshold derived from the holder's remaining scenarios. Update the run-phases.md token table to match."
+  },
+  {
+    "location": "cell-contract.md > Plan > Phase 1 (hosting version) and Run scope; tier-matrix.md Rules (tier 0 runs inside the hosting version's loop)",
+    "issue": "The operator's run scope (`--versions`) excludes the hosting version, for example scope 8.1 while the canary is 9.1:chromium. The contract does not say whether the hosting loop still runs Layers 1, 2 and 5 for that out-of-scope version, whether it is skipped, or what ends it. Its E2E step is `blocked-by-scope`, which ends the E2E loop, but its own L1/2/5 cleanliness is still required for the loop to end.",
+    "implementation_impact": "The orchestrator may run Docker layers on a version the operator excluded, or wait for a loop that never starts. Phase 2 entry behavior also diverges between implementations.",
+    "suggestion": "Specify that when the hosting version is outside the run scope, no Phase 1 loop runs for it: the orchestrator takes the E2E plan call once, which reports `blocked-by-scope` and ends the E2E loop, and only in-scope versions run Phase 1 loops. Alternatively, define the hosting version as the first in-scope version. Add a test with scope 8.1 and canary 9.1."
+  },
+  {
+    "location": "cell-contract.md > State, freshness, gate-grade > Fresh (excludes `psm_reports_dir` \"when it lies inside it\")",
+    "issue": "`psm_reports_dir` equals the module root, or the module directory lies inside `psm_reports_dir`. The exclusion rule covers only a reports dir strictly inside the module, so these boundary cases are not specified.",
+    "implementation_impact": "If the module root itself is excluded, the fingerprint covers no files and never changes. Old pass records then stay fresh after any patch, and `ready` is wrongly true.",
+    "suggestion": "Make it an input error (exit 2) when `realpath(psm_reports_dir)` equals the module root or is an ancestor of it. Exclude it only when it is a strict descendant. Add a test."
+  },
+  {
+    "location": "cell-contract.md > Configured cells (\"Gating without E2E stays possible only through `ps-aggregate.py --require` without `e2e`\") vs Plan > E2E loop ended (\"gating by `--require` without `e2e` ... never a pass and `ready` stays false\")",
+    "issue": "The two passages conflict when gating uses `--require` without `e2e`. One keeps a way to gate without E2E. The other says `ready` stays false once the E2E loop has ended for that reason.",
+    "implementation_impact": "The aggregate either never allows `ready` without E2E, which removes the documented `--require` escape, or lets it through against the honesty text. Tests and the orchestrator report will disagree.",
+    "suggestion": "Reword E2E loop ended to say: `e2e` is never a pass and the E2E portion of `ready` stays false, but when `--require` excludes `e2e`, the aggregate's `ready` ignores E2E cells (reported as not required) as today. Add an aggregate test for `--require static,flashlight,scenario` with no E2E records."
+  },
+  {
+    "location": "cell-contract.md > Evidence record > \"Newest / latest = highest `started_at`, ties broken by `run_id`\"; Plan focus cell / recorded failure / has-passing-gate-grade selection",
+    "issue": "Record order depends only on wall-clock `started_at`. On the stated WSL2 host the guest clock can drift and then jump backward after host sleep or resync. A later record can then carry an earlier `started_at` than the record it supersedes. The append order in the history file, which is monotonic, is not used.",
+    "implementation_impact": "An older gate-grade `pass` can be selected over a newer `fail`, so `ready` is wrongly true, an honesty-law violation. Focus cell and newest-run selection can also point at the wrong cell.",
+    "suggestion": "Order a cell's records by line position in its append-only history (each append is atomic under `LOCK_EX`). Use `started_at` only to order across cells, for example to find the newest run, or add a monotonic sequence field written under the lock. State this, and add a test where a newer line has a smaller `started_at`."
+  }
+]

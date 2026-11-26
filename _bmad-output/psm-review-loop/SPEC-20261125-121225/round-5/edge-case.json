@@ -1,0 +1,92 @@
+[
+  {
+    "location": "cell-contract.md:109 (Warm container > Reset per iteration) with cell-contract.md:87 (Plan step 7)",
+    "issue": "A failed reset-db/reset-files/reset-opcache says the warm container is discarded and 'the next run boots cold', but the next plan call still derives step 7 with a recorded failure, so e2e_warm is true and the orchestrator passes --warm again. Nothing records that the reset failed or forces a cold run. The inconclusive record's reason for a reset failure is also not named in the reason list.",
+    "implementation_impact": "ps-run-layer just starts a new keeper, which is a warm boot and not the promised cold run. On an image where reset-opcache can never succeed (an --extra-tag-map tag with neither php-fpm nor apachectl), warm iterations alternate between new keepers and reset failures. Implementers will guess the reason value, and blocked-infra matching depends on it.",
+    "suggestion": "Name a reason (e.g. 'warm-reset') for a reset failure. State the mechanism: either the plan emits e2e_warm=false when the focus cell's newest record has reason warm-reset, or ps-run-layer runs that iteration as a cold-boot fallback. State whether the first iteration on a fresh keeper runs the reset at all."
+  },
+  {
+    "location": "cell-contract.md:103 (Warm container > Chain) with cell-contract.md:83 (Plan step 3 blocked-infra)",
+    "issue": "When the keeper exits before writing session.json, the cell gets inconclusive reason keeper-start, and there is no cold-boot fallback (unlike foreign-keeper, lease-held, keeper-dead and mismatch). The next derivation is again a focus step with e2e_warm true, so it retries the keeper. Two keeper-start records in one session trigger blocked-infra.",
+    "implementation_impact": "A defect that is specific to the keeper path (detach, session-file write, label stamping) ends the whole E2E loop with ready=false, even though an ordinary cold run of the focus cell would work. The operator gets no fix-loop feedback at all.",
+    "suggestion": "Specify that after a keeper-start record on the current fingerprint, the next focus run is a cold-boot fallback (or the plan sets e2e_warm=false). Alternatively, exclude keeper-start from the blocked-infra causes while a cold fallback is still possible."
+  },
+  {
+    "location": "cell-contract.md:103-105 (Warm container > Chain / ownership)",
+    "issue": "Two statements conflict when a live keeper with another owner token exists for (module path, V): 'finds this owner's live keeper ... or starts one' and 'A keeper with another owner ... the iteration cold-boots and logs foreign-keeper'. This includes Budi's own keeper from an earlier psm-validate invocation, because each invocation mints a new session token.",
+    "implementation_impact": "One implementation starts a second keeper (two containers for the same module and version, both holding slots). Another permanently degrades every iteration of this session to cold boots until the foreign keeper's TTL expires. When the operator simply re-invokes the skill, the previous keeper is never reused or stopped and keeps a slot for up to 60 minutes.",
+    "suggestion": "State whether ps-run-layer starts its own keeper when a foreign keeper exists for the same (module, V), and how the orchestrator handles keepers left by its own previous invocation. For example, list them at On Activation with a default offer to stop them, or key ownership on something that persists across invocations."
+  },
+  {
+    "location": "cell-contract.md:65 (State, freshness > Fresh)",
+    "issue": "The fingerprint covers every file under the module directory except .git/, top-level .psm-* and .memlog.md. It does not exclude psm_reports_dir, the screenshot dir, the headless config copy, or progress logs when these resolve inside the module directory. The default {project-root}/_bmad-output/psm-validate is inside the module whenever the module repo is the project root.",
+    "implementation_impact": "Each run's own history append, screenshot, or progress-log write changes the fingerprint. Every record is stale as soon as it is written, so no cell can ever reach gate-grade, and the plan loops on rerun with ready permanently false.",
+    "suggestion": "Exclude psm_reports_dir, the screenshot base and _bmad-output (resolved, when under the module dir) from the fingerprint walk, or make it an input error (exit 2) when the reports dir lies inside the module directory. Add a test that writes a history line under such a layout and the cell stays fresh."
+  },
+  {
+    "location": "cell-contract.md:65 (State, freshness > Fresh)",
+    "issue": "The fingerprint walk takes (path, size, mtime_ns) for every file, but the spec does not say what happens when a file cannot be stat'ed: a broken symlink, a permission-denied file, or a file deleted between listing and stat. It also does not say whether symlinks are followed.",
+    "implementation_impact": "ps-run-layer, plan and aggregate may each crash, skip the file, or hash differently. Divergent results would make plan and aggregate disagree on freshness, or make the run fail before admission without writing a record.",
+    "suggestion": "Specify a single shared fingerprint function: use lstat and do not follow symlinks (hash the link target string). An unreadable entry is either included as a fixed marker or is an input error (exit 2) naming the path. Plan, runner and aggregate import the same function."
+  },
+  {
+    "location": "cell-contract.md:80 (Plan > not-gradeable) and cell-contract.md:82 (step 2 blocked-not-gradeable)",
+    "issue": "Not-gradeable assumes that non-empty scenario_notes 'cannot change on the same fingerprint'. But scenario_notes include the deleted_specs notes from git status. Committing a spec deletion changes only .git/, which the fingerprint excludes, so the notes disappear while the fingerprint stays the same.",
+    "implementation_impact": "After the operator commits the deletion as the notes instruct, the plan still derives blocked-not-gradeable from the old record and runs nothing. The cell cannot be re-proved until some unrelated file is touched, and ready stays false for no current reason.",
+    "suggestion": "Treat a not-gradeable record as re-runnable when the current e2e_scenario_notes (computed by the plan before any boot) differ from the record's scenario_notes. Alternatively, include the git-derived deleted-spec list in the fingerprint input."
+  },
+  {
+    "location": "tier-matrix.md:22 (Visual review) and tier-matrix.md:20 (Layer 3 respawn after loop-back)",
+    "issue": "Visual review now runs on the cold canary run inside Phase 1 and on cold-version/cold-canary after a loop-back. It read-merges into <module>-adversarial.json, which updates that file's mtime. The plan judges Layer 3 freshness by file mtime versus the newest source mtime plus the versions list.",
+    "implementation_impact": "A visual-review write made after the latest patch makes adversarial.json look fresh. At Phase 2 start, plan_layer reports adversarial as reuse, so the Layer 3 lenses are not respawned for the patched source. This contradicts the rule that Layer 3 output from before the new patch is stale and must be spawned again.",
+    "suggestion": "Specify that visual-review writes do not refresh Layer 3 freshness. For example, keep a separate lens timestamp or a source_fingerprint field in adversarial.json written only by the lenses, and have the plan compare that instead of the file mtime. Alternatively, defer visual-review writes until after the lenses are merged in Phase 2."
+  },
+  {
+    "location": "tier-matrix.md:20 (tier 0 hosting loop) with cell-contract.md:89 (Plan > Phase 1)",
+    "issue": "The tier 0 host is 'the focus cell's version's loop' after a loop-back, and the hosting loop ends only on gate/done/an ending step. The spec does not say what happens when the focus cell changes version while tier 0 is in progress: cold-canary fails (focus becomes the canary), or a second failing cell from the same tier-1 run is at another version.",
+    "implementation_impact": "The orchestrator cannot tell whether V's loop keeps hosting the new focus, or whether it must end V's loop (which is not allowed before gate/done) and open the new version's loop. One reading leaves the new focus version's Layers 1/2/5 ungated by its own loop. The other has no defined exit condition for V's loop.",
+    "suggestion": "State that the hosting loop is fixed at loop-back entry and keeps hosting every tier-0 step until gate/done/an ending step. Or state that when e2e_focus_cell's version changes, the current loop ends after phase1_reuse is true for its version and the new focus version's loop takes over. Add a test for cold-canary failing inside a loop-back hosted in 8.1."
+  },
+  {
+    "location": "cell-contract.md:129 (Parallel browsers > engine workers)",
+    "issue": "The version process reads each worker's result from the worker's output file. The spec does not cover a worker that crashes, is OOM-killed, hangs past its step timeouts, or leaves a missing or unparsable output file while the other worker succeeds. ps-run-layer writes a crash record only when the child (the version process) left no result.",
+    "implementation_impact": "The version process returns a result for one engine only. The other cell gets no record, or a pass/fail record with null fields (read as incomplete-record), depending on the implementation. A hung worker blocks teardown indefinitely, because no worker-level timeout is defined.",
+    "suggestion": "Specify that a worker with no valid output file gets an inconclusive cell inside the version result (reason crash, browser_notes naming the worker exit code). Add a worker wall-clock bound (e.g. derived from scenario count × step timeouts) after which the version process kills it and records the same."
+  },
+  {
+    "location": "cell-contract.md:131 (Parallel browsers > BO login fallback)",
+    "issue": "When one engine's BO login fails and the other's succeeds, the failing engine reruns sequentially afterwards. The spec does not say what happens to the first parallel attempt's results, screenshots and console errors (kept, merged or discarded), what browser_mode the cell records, or whether the parallel-only rule (rerun-seq on a restored DB) applies to findings from this sequential rerun. It also does not say whether the DB is restored to the snapshot before the rerun, or what happens when both logins fail or the sequential rerun's login fails again.",
+    "implementation_impact": "Findings from the first, unauthenticated pass may be double-counted or lost. The fallback rerun runs against a DB already mutated by both parallel passes, so it can report state-caused failures that a sequential run would not. browser_mode does not reflect how the cell was actually driven.",
+    "suggestion": "Define the fallback: discard the first attempt's results for that engine, restore the snapshot-db dump before the rerun, record browser_mode as sequential for that cell, and exempt its findings from rerun-seq. If the login fails again, keep the inconclusive BO steps as today."
+  },
+  {
+    "location": "cell-contract.md:45 (normalizer accepts webkit) with cell-contract.md:98, 130, 133 (fail-fast pair, lock, slots)",
+    "issue": "The normalizer accepts chromium/firefox/webkit, so psm_e2e_browsers may hold three engines. Slots, parallel mode and fail-fast are specified only for two: 'a version that drives two browsers at cost 2', 'the second engine of a CAP-7 pair', 'does not start the second engine'.",
+    "implementation_impact": "With three browsers per version, the admission cost (3, or 2+1), the fallback when only two slots are free, whether all three workers run in parallel, and which engines get not-run after a fail-fast in sequential mode are all undefined. Implementations will diverge, and the slot cap can be exceeded or under-used.",
+    "suggestion": "Generalise: cost = number of engines driven concurrently. Admit at full cost when that many slots are free, else at cost 1 with --sequential-browsers. In sequential mode, every engine after the first fail gets not-run. Alternatively, restrict psm_e2e_browsers to at most two engines (exit 2)."
+  },
+  {
+    "location": "cell-contract.md:123 (Scenario prerequisites > duplicate names)",
+    "issue": "The spec says 'a spec whose effective name equals another spec's ... is skipped with a note naming both files', but does not say whether both colliding specs are skipped or only one, and if only one, which (first or later in file-name order).",
+    "implementation_impact": "Depending on the choice, a scenario named in another spec's requires may or may not survive. That changes which dependents are skipped transitively, the full scenario set, and the failed-only selection. Plan and runner could disagree if they are implemented separately.",
+    "suggestion": "State the rule explicitly. For example, all specs sharing an effective name are skipped (each note names every file in the collision), and dependents of that name are skipped too. Add a test with two files that share a name."
+  },
+  {
+    "location": "cell-contract.md:51 (Evidence record > Storage, append and corrupt-history)",
+    "issue": "Each append is one write() under flock, but a short or interrupted write (ENOSPC, kill during write) can leave a final line without a trailing newline. The next append then lands on the same physical line.",
+    "implementation_impact": "The next valid record is merged into the corrupt line and silently lost. The cell keeps reason corrupt-history until yet another record is written, so one infra hiccup costs an extra full cold run of that cell.",
+    "suggestion": "Before appending under the flock, check whether the file's last byte is a newline and write one first if it is not. Verify that the write returned the full length, and treat a short write as an append failure that ps-run-layer reports."
+  },
+  {
+    "location": "cell-contract.md:162 (Headless > return JSON, 'not reached')",
+    "issue": "'A cell the run never reached gets reason not reached: stopped at <step>' does not define 'reached'. A cell may have no record from this call but carry older records (stale, or fresh from an earlier session) whose aggregate reason is missing/stale-source/fail/not-run.",
+    "implementation_impact": "The headless caller may receive 'not reached' for a cell that holds a current fresh fail from a previous run, which hides a real blocking finding. Or it may receive the stale aggregate reason for a cell this call never touched. Either way, the per-version verdict contract is ambiguous.",
+    "suggestion": "Define 'reached' as: the cell has a record with this call's --session. For unreached cells, report 'not reached: stopped at <step>' and also keep the aggregate's state and reason in separate fields, so that an existing fresh fail is never masked."
+  },
+  {
+    "location": "cell-contract.md:51 (history path <module>-e2e-<ver>-<browser>.jsonl) with cell-contract.md:80 (failing uses fresh or stale records)",
+    "issue": "Cell histories are keyed by the module name only, and records carry no module path. The plan's failing, focus-cell, recorded-failure and step-6 stale-pass rules deliberately use stale records. So records written by another copy of the same module (a different path, worktree or fork in the same reports dir) count as this module's history.",
+    "implementation_impact": "A cold fail recorded for another copy makes a cell 'failing' here. It can become the focus cell, block cold-canary and gate, or trigger warm/failed-only runs on scenarios that never failed for this source. A stale pass from the other copy can promote cold-canary.",
+    "suggestion": "Add a module_path (resolved absolute path) field to every record, and ignore records whose module_path differs from the current module in plan and aggregate. Alternatively, key the history file name on a hash of the module path."
+  }
+]

@@ -1,0 +1,85 @@
+{
+ "round": 1,
+ "critical_high": 71,
+ "fixed": 55,
+ "escalated": 16,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261125-121225.r1-q1",
+   "finding": "Tier 1 (Chromium) lalu tier 2 (Firefox) bikin tiap versi boot 2x, padahal permintaanmu 'lalu versi lain DAN Firefox' + 'Firefox paralel dengan Chromium dalam satu boot'. Success signal 'tiap versi boot maks 1x' jadi bertentangan.",
+   "options": [
+    "Gabung tier 1+2: setelah canary, tiap versi sisa 1 boot cold, Chromium∥Firefox",
+    "Tetap 3 tier, terima boot ganda, ubah success signal"
+   ],
+   "recommended": "Gabung tier 1+2",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r1-q2",
+   "finding": "Kalau tier 1/2 gagal di versi V: sel mana yang diperbaiki, pakai warm container atau tidak, dan apakah canary 9.1 harus lolos ulang sebelum naik tier? (termasuk Open Question canary ikut versi gagal)",
+   "options": [
+    "Fokus ke sel gagal (V, browser) warm; lalu cold full di V, lalu cold full canary, lalu tier berikut",
+    "Canary tetap 9.1×Chromium, V hanya dicek di tier berikut"
+   ],
+   "recommended": "Fokus ke sel gagal",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r1-q3",
+   "finding": "Mode headless (psm-develop dkk.): boleh pakai warm container (tak ada operator yang menghentikan)? Dan jalan semua tier atau berhenti di tier pertama yang gagal?",
+   "options": [
+    "Tanpa warm di headless; tier jalan sampai gagal pertama",
+    "Warm boleh, wajib --stop-job sebelum kembali"
+   ],
+   "recommended": "Tanpa warm di headless",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r1-q4",
+   "finding": "Rerun failed-only melewatkan skenario prasyarat (bankwire checkout-with-bank butuh bo-setup-country), apalagi setelah reset DB.",
+   "options": [
+    "Ikut jalankan semua skenario yang urut-nama sebelum skenario gagal terakhir",
+    "Field baru 'requires' di spec skenario"
+   ],
+   "recommended": "Ikut urutan nama (tanpa ubah format spec)",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r1-q5",
+   "finding": "Browser paralel (CAP-7) berebut state global BO (bo-setup-country; checkout-with-bank bergantung urutan engine). Klaim 'temuan identik' tak terjamin (Open Question 1).",
+   "options": [
+    "Skenario dengan langkah BO jalan bergantian lewat lock lintas engine",
+    "Field 'serial: true' di spec skenario",
+    "Module dengan skenario BO-mutasi: browser sekuensial"
+   ],
+   "recommended": "Lock untuk skenario berlangkah BO",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r1-q6",
+   "finding": "Batas konkurensi tak punya nama, satuan, default; TTL warm container tak punya default; berlaku juga untuk Lapis 2/5 atau tidak?",
+   "options": [
+    "psm_e2e_slots: container=1 + browser tambahan=1, default 6, hanya E2E, warm ikut dihitung; TTL 60 menit",
+    "--jobs tetap batas container + batas browser terpisah"
+   ],
+   "recommended": "psm_e2e_slots default 6, TTL 60 menit",
+   "oscillation": false
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "brownfield.md (bankwire evidence)",
+   "issue": "'~25 h' tak terverifikasi; stempel agregat 20260908-072821Z..20260909-010808Z ≈ 17.7 jam."
+  },
+  {
+   "location": "SPEC.md frontmatter sources: []",
+   "issue": "Permintaan asli Budi dan jawabannya tak dikutip sebagai source (jejak ada di memlog)."
+  },
+  {
+   "location": "SPEC.md (bahasa edit skill)",
+   "issue": "Tak menyebut bahasa edit SKILL.md/run-phases.md; sudah diatur document_output_language di SKILL.md."
+  }
+ ]
+}

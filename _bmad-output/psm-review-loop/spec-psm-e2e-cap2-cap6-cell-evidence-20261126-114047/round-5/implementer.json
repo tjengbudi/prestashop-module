@@ -1,0 +1,86 @@
+[
+ {
+  "location": "Design Notes > Interim orchestration ('E2E loop ended ... an E2E run was stopped (exit 143; interactive: unless Budi asks to run it again)') + Tasks > docs > headless.md vs references/headless.md 'Pemantauan & menghentikan job' (silent log -> --stop-job, then 'kembalikan blocked')",
+  "issue": "headless.md today says a headless run that stops its own job after the silent-log rule returns `blocked` at once. The interim rule says an E2E run that exits 143 ends the E2E loop. Headless is not exempted, so the run would go on to the wrap-up and aggregate. The contract's Headless bullet, which is deferred, says such a stop returns `complete`. The headless.md docs task lists three changes (token per call, the two exit-2 cases, the config copy) and leaves the stop rule out.",
+  "implementation_impact": "The implementer can't tell whether a stopped headless E2E job still returns `blocked` without an aggregate (today's text, left as is) or ends the E2E loop and runs the wrap-up. Two agents following the two documents return different `status` values for the same event.",
+  "suggestion": "Pick one answer and add it to the headless.md docs task. Either keep 'stopped E2E job -> blocked' as an interim exception to 'E2E loop ended', or say a stopped E2E job ends the E2E loop and the run continues to the wrap-up and returns `complete`, `ready: false`. In that case headless.md's stop bullet must change for E2E jobs."
+ },
+ {
+  "location": "Design Notes > Interim orchestration ('Lapis 4 visual review (interactive, as today): every interactive ps-run-layer.py --layer e2e call passes -- --screenshot-dir <psm_reports_dir>/e2e-shots'; 'Run outcomes are read from the next plan call, never from the histories') + Runner > Output line shape",
+  "issue": "Today the orchestrator finds the screenshots to review in the direct ps-e2e-run.py output (`screenshot_dir`, per-version `screenshots`). In history mode that output sits in ps-run-layer's temp dir, which is deleted. ps-run-layer stamps `run-<ts>` itself (`run_shot_dir`) and never logs it. The output line holds only `e2e_status`, `reason`, `appended` and `source_fingerprint`. The plan exposes no screenshots, and the spec forbids reading the histories.",
+  "implementation_impact": "The SKILL.md Lapis 4 paragraph can't name a sanctioned way to locate the screenshots the run just produced. The implementer will either guess (list the newest `e2e-shots/run-*`) or break the 'never from the histories' rule.",
+  "suggestion": "Name the source. One option: ps-run-layer logs the stamped screenshot dir to stderr at the start of the run, and the orchestrator reviews that folder. The other: allow reading the `screenshots` field of the records listed in `appended` for visual review only. Don't add a key to the output line; its shape is fixed by the contract."
+ },
+ {
+  "location": "Design Notes > Record ('ps-run-layer computes state/conclusive/reason at merge (State rules ...); readers trust the stored state and apply only the corrupt-line and incomplete-record rules') vs cell-contract.md > Evidence record (incomplete-record rule; reason 'incomplete-record when set by those rules') and Runner exit codes ('over all records it appended')",
+  "issue": "The spec doesn't say whether ps-run-layer applies the incomplete-record rule when it writes a record. Example: the child emits a cell with State-rule `pass` but `authored_assertions` or `browser_notes` missing, which the spec stores as `null`. ps-run-layer could store `state: pass, reason: null`, and readers would reclassify it as inconclusive. Or it could store `inconclusive` with reason `incomplete-record`.",
+  "implementation_impact": "This decides ps-run-layer's exit code (0 vs 1) and `e2e_status` for the same run, what a hand-written test expects to find on disk, and whether the stored `state` matches what plan and aggregate report. Two reasonable implementations disagree, and the tests would pin one of them by accident.",
+  "suggestion": "State that ps-run-layer applies the State rules and then the incomplete-record rule before writing. It stores `inconclusive`, `conclusive: false`, reason `incomplete-record`, and its exit code and output line are computed from the stored state. Readers still apply the rule as a backstop for hand-written or legacy lines."
+ },
+ {
+  "location": "I/O & Edge-Case Matrix > 'Narrowed plan' ('per_version[9.1].rerun and all_reuse reflect only 9.1's cells') vs Design Notes > Plan shape ('all_reuse = every per_version[V].rerun is empty ... per-version rerun always holds adversarial')",
+  "issue": "In per-version mode, `per_version[V].rerun` always contains `adversarial`, because `<module>-adversarial-<ver>.json` never exists (plan_per_version iterates every LAYER). So `all_reuse` is false on every per-version call. The row's claim that `all_reuse` reflects only 9.1's cells can't be observed: a passing and a broken implementation both return false.",
+  "implementation_impact": "The I/O-row test has no assertion that can fail for `all_reuse`. An implementer who derives `all_reuse` from `not rerun_matrix`, the old rule the spec forbids, still passes it.",
+  "suggestion": "Drop `all_reuse` from this row, or test the derivation directly: call the rollup helper on a hand-built `per_version` dict with no `adversarial` and assert that other versions' e2e entries don't flip `all_reuse`."
+ },
+ {
+  "location": "Tasks > ps-e2e-run.py ('normalizer replaces parse_browsers fallback') / Code Map ('parse_browsers') vs scripts/tests/test-ps-e2e-run.py:241,244",
+  "issue": "Existing tests assert today's fallback: `parse_browsers('')` and `parse_browsers('safari,ie')` return `['chromium','firefox']`. The spec makes those inputs exit 2, but its test task doesn't mention these assertions. The spec also doesn't say whether `parse_browsers` survives as a wrapper or is deleted, or how a direct `ps-e2e-run.py --browsers ''` or `--browsers safari` fails: exit 2 before `job_start`/`progress_init`, or after.",
+  "implementation_impact": "The verification loop fails on test-ps-e2e-run.py until someone decides what these assertions become. The direct-run quickstart path changes behaviour without a test that defines the new behaviour.",
+  "suggestion": "Add to the tests task: replace the two fallback assertions with normalizer exit-2 assertions (empty list, unknown engine). State that ps-e2e-run.py's `--browsers` goes through the shared normalizer and an invalid value returns 2 before the job is registered. Delete `parse_browsers`, or keep it as a thin call to the normalizer."
+ },
+ {
+  "location": "Design Notes > Runner interim ('ps-run-layer reads --config through its own key map ...: psm_flashlight_tag_map') + cell-contract.md > Config keys > Image tag ('ps-run-layer takes both flags from its passthrough')",
+  "issue": "The spec doesn't say how ps-run-layer pulls `--tag-map`/`--extra-tag-map` out of the passthrough. The child's argparse accepts `--tag-map X`, `--tag-map=X` and prefix abbreviations (`--tag-m X`, `--extra X`). If ps-run-layer matches only the exact `--tag-map X` form, it resolves a different tag than the child does.",
+  "implementation_impact": "In that case, records that ps-run-layer writes (crash, browser-unavailable, child exit without usable output) carry ps-run-layer's tag. Records from the child carry the child's tag. One of them reads `stale-tag` in plan and aggregate, and the infra-retry loop sees a reason that no environment fix clears.",
+  "suggestion": "Specify the parse: accept `--flag value` and `--flag=value`. Treat a prefix abbreviation (at least 4 characters) of `--tag-map` or `--extra-tag-map` in the passthrough as exit 2, as the reserved-flag check does, so ps-run-layer and the child always see the same value."
+ },
+ {
+  "location": "Design Notes > Record ('without usable child output they are null, except run_id = ps-run-layer's RUN_ID') vs cell-contract.md > Fields ('run_id = RUN_ID of the version process (ps-run-layer's own when no child ran)')",
+  "issue": "The contract uses ps-run-layer's RUN_ID only when no child ran. The spec also uses it for a crash record, where a child did run but left no output. That child's RUN_ID is in its progress log (`run=` on every line) but not in the record. The change is silent: the spec gives no reason that `--run-id` pre-generation is deferred, and doesn't say how a crash record should be traced to its log.",
+  "implementation_impact": "This is low impact for the rules in this slice. But crash records can't be matched to the progress-log lines of the child that crashed. A later CAP-3 implementer who reads the contract will expect `run_id` to identify the version process.",
+  "suggestion": "Either say explicitly that this is a deviation (crash records carry ps-run-layer's RUN_ID until `--run-id` lands with CAP-3), or pull in the cheap part of `--run-id`: ps-run-layer generates the hex12, passes it to the child, and the child assigns it to `fl.RUN_ID` before `job_start`. Then crash records match the contract."
+ },
+ {
+  "location": "I/O & Edge-Case Matrix > 'Timings' (manual boot, image pulls -> boot_phases has pull, pull#2, wait-healthy, wait-healthy#2) + Design Notes > Timing ('boot_wall_clock ... until _teardown returns') vs scripts/tests/test-ps-e2e-run.py:712-746",
+  "issue": "The `pull`, `wait-healthy`, `bring-up` and `teardown` phases are emitted inside `fl.pull_image`, `fl.wait_healthy`, `fl._bring_up_manual` and `fl._teardown`. The existing run_one_version tests replace exactly those functions (`mod.fl.wait_healthy = lambda ...`, `mod.fl._teardown = lambda s: None`), so no phase is recorded. The spec names no seam for the Timings row.",
+  "implementation_impact": "Written in the existing style, the Timings test sees an empty or partial `boot_phases` and fails, or gets rewritten until it passes vacuously. The implementer has to work out the subprocess-level stubbing alone, including manual mode's DB `wait-healthy` nested inside `bring-up`.",
+  "suggestion": "Name the seam. Stub `subprocess.run` and `fl.image_present` (pull and manual bring-up go through `subprocess.run`, wait-healthy through `_health_status`), and leave the fl helpers real so their `phase` blocks run. Alternatively, drive the sink directly with nested `fl.phase(...)` calls for the `#n` and outcome assertions, and keep a separate run_one_version test only for 'boot_phases is filled from the sink'."
+ },
+ {
+  "location": "Boundaries > Never ('phase1_reuse' deferred) vs cell-contract.md > Plan ('per version, phase1_reuse and clean (Phase 1)')",
+  "issue": "The contract has the plan emit `per_version[V].clean` next to `phase1_reuse`. The spec defers `phase1_reuse` by name and defines an interim orchestrator-side 'V clean'. It never says whether the plan's `clean` field is emitted this slice. The contract computes `clean` from `phase1_reuse`, so it can't be emitted without its prerequisite.",
+  "implementation_impact": "The implementer may half-build `clean`, for example by loading ps-aggregate's layer functions lazily inside ps-plan-layers, which the contract requires. Or it may be omitted and a reviewer flags the omission. The 'do not half-build' rule makes either choice risky.",
+  "suggestion": "Add `per_version[V].clean` to the Never list (absent this slice, interim 'V clean' lives in the orchestrator)."
+ },
+ {
+  "location": "Design Notes > Aggregate / cell-contract.md > Aggregate ('e2e_scenario_notes ... comes from the selected records only')",
+  "issue": "Each selected record holds its own `scenario_notes` list, copied from the run that produced it. Cells proven in different runs can hold different lists. The spec doesn't say how the aggregate combines them into the single top-level `e2e_scenario_notes`: union, deduplication, ordering, or omitted when empty as today.",
+  "implementation_impact": "There is a small risk of nondeterministic output or test flakiness when records disagree. Tests that compare the field exactly would encode an arbitrary choice.",
+  "suggestion": "State it: the ordered union with duplicates removed, walking versions in numeric order then `psm_e2e_browsers` order. The key is omitted when the union is empty (today's behaviour)."
+ },
+ {
+  "location": "Design Notes > Interim orchestration > Quickstart TDD verdict ('ps-run-layer.py --layer e2e --cells 9.1:chromium --session <t> --config <cfg>', '<cfg> = <psm_reports_dir>/psm-config.json')",
+  "issue": "The quickstart TDD loop runs outside skill activation, so nothing has written `<psm_reports_dir>/psm-config.json`. ps-run-layer and aggregate exit 2 when the `--config` file is unreadable. The template doesn't say how the quickstart user gets `<cfg>`. It also doesn't say that `--allow-image-pull` must now go after `--`, since today's step (b) passes it directly.",
+  "implementation_impact": "A quickstart written verbatim from the template fails with exit 2 on a fresh machine. An implementer who drops `--config` instead changes which cells are configured without saying so.",
+  "suggestion": "In the quickstart template, either omit `--config` (script defaults, configured set 1.7.8/8.1/9.1 x chromium/firefox), or give the resolver command that writes `<cfg>` first. Show any pull flag as `-- --allow-image-pull`."
+ },
+ {
+  "location": "Code Map ('docs/psm/README.md -- E2E commands') vs Tasks > docs ('docs/psm/README.md unchanged (no ps-run-layer command there, no new keys this slice)')",
+  "issue": "The Code Map lists docs/psm/README.md as holding E2E commands. The docs task, and the file itself (only prose mentions of `ps-run-layer.py --jobs` at lines 84/89/355), show it holds none.",
+  "implementation_impact": "This is minor. The implementer will search README for commands to update, find none, and have to work out which section is authoritative.",
+  "suggestion": "Remove README from the Code Map, or annotate it as 'reviewed, unchanged'."
+ },
+ {
+  "location": "Tasks > docs > SKILL.md (list of SKILL.md changes) vs SKILL.md 'Vonis dan output' ('Exit 2 dari skrip manapun = error input: baca stderr, perbaiki, ulangi')",
+  "issue": "Under the decided rule, a child-originated exit 2 from `ps-run-layer.py --layer e2e` ends the E2E loop for the session. It is not 'fix and repeat'. SKILL.md's general exit-2 sentence still says every exit 2 means fix and repeat. The SKILL.md docs task doesn't list carving out this case.",
+  "implementation_impact": "After the docs update, SKILL.md would still tell the interactive orchestrator to retry a child-originated E2E exit 2, against the interim rule. Which text wins depends on which paragraph the agent reads last.",
+  "suggestion": "Add to the SKILL.md docs task: qualify the general exit-2 sentence with 'except an E2E run whose output line was printed (child-originated exit 2): the E2E loop ends; see run-phases.md'."
+ },
+ {
+  "location": "Design Notes > Runner interim ('--merge-only --layer e2e takes only --module, --reports-dir, --config (--cells, --versions, --session, --per-version or a passthrough -> exit 2; --jobs ignored)')",
+  "issue": "The allow-list leaves out ps-run-layer's other flags: `--job-id`, `--verbose` and `--layer` itself. Read strictly ('takes only'), `--job-id` or `--verbose` with the e2e view would be exit 2. Read leniently, they are ignored like `--jobs`.",
+  "implementation_impact": "This is minor. A test or doc that passes `--verbose` to the wrap-up command passes or fails depending on that choice.",
+  "suggestion": "Say that `--verbose` and `--job-id` are accepted and ignored (or are exit 2), like `--jobs`."
+ }
+]

@@ -1,0 +1,337 @@
+[
+ {
+  "round": 1,
+  "location": "Tasks > ps-e2e-run.py",
+  "issue": "adversarial-12: producer fields already covered by 'Producers as written'; named in task anyway"
+ },
+ {
+  "round": 1,
+  "location": "Design Notes > Record",
+  "issue": "adversarial-15: child vs runner image_tag mismatch (bug-only); child value kept"
+ },
+ {
+  "round": 1,
+  "location": "Frontmatter context",
+  "issue": "adversarial-17: tier-matrix.md not needed, tiers deferred"
+ },
+ {
+  "round": 1,
+  "location": "Runner",
+  "issue": "edge-12: history append failure handling unspecified"
+ },
+ {
+  "round": 1,
+  "location": "Design Notes > Record",
+  "issue": "edge-18: image_tag mismatch, same as adversarial-15"
+ },
+ {
+  "round": 1,
+  "location": "Code Map",
+  "issue": "implementer-19: run_steps step index covered by Producers; Code Map names run_steps"
+ },
+ {
+  "round": 1,
+  "location": "Fresh",
+  "issue": "implementer-25: symlink/dir entries, reports-dir default, plan/aggregate root check"
+ },
+ {
+  "round": 1,
+  "location": "ps-flashlight-run.py task",
+  "issue": "implementer-29: drift test owner of defaults (noted in task)"
+ },
+ {
+  "round": 1,
+  "location": "Frontmatter context",
+  "issue": "implementer-32: tier-matrix.md, same as adversarial-17"
+ },
+ {
+  "round": 2,
+  "location": "Design Notes > Record (exactly Fields keys + boot_wall_clock)",
+  "issue": "boot_log/ps_domain/orchestrator dropped from records; diagnostic regression vs today's aggregate log tail (contract Fields whitelist; scope suggestion)"
+ },
+ {
+  "round": 2,
+  "location": "Design Notes > Timing / I/O row Timings",
+  "issue": "#n suffixes are ordinal only; tests should not read wait-healthy#2 as the PS wait after a port retry (spec makes no DB/PS claim)"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Interim orchestration (adversarial-7)",
+  "issue": "E2E-loop state is orchestrator memory; could be derived from records with session <t>"
+ },
+ {
+  "round": 3,
+  "location": "I/O matrix rows Chromium-only / Newer fail; Tasks > tests (adversarial-8)",
+  "issue": "aggregate-side rows should use the AC1 baseline (--require static,e2e) plus a positive control"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Timing (edge-case-6)",
+  "issue": "e2e_phase_durations shape for empty/null cases and wall_clock unit not pinned"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Runner interim (edge-case-8)",
+  "issue": "--versions duplicates/empty items/whitespace and --cells browser case handling"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Normalizer input (edge-case-9)",
+  "issue": "non-string values, empty string, empty items"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Record (edge-case-10)",
+  "issue": "blank lines and non-UTC offsets in history readers"
+ },
+ {
+  "round": 3,
+  "location": "Tasks > read_history (edge-case-11)",
+  "issue": "OS-level read errors on a history file"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Runner interim --cells (edge-case-12)",
+  "issue": "browser order within a cell token / appended order"
+ },
+ {
+  "round": 3,
+  "location": "Boundaries > ps-e2e-run --engines (edge-case-13)",
+  "issue": "--engines validation details"
+ },
+ {
+  "round": 3,
+  "location": "Tasks > tests (implementer-7)",
+  "issue": "spawn/reap test seam and docker_available stub not named"
+ },
+ {
+  "round": 3,
+  "location": "Boundaries > Aggregate (implementer-10)",
+  "issue": "e2e_screenshot_dir derivation and emission condition of e2e_smoke_only/e2e_browsers_run"
+ },
+ {
+  "round": 3,
+  "location": "Tasks > ps-e2e-run (implementer-12)",
+  "issue": "per-cell field types (console_errors, scenarios_run with smoke, launch-error defaults)"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Normalizer (implementer-13)",
+  "issue": "list-valued psm_target_versions via apply_config_file crashes plan --versions (pre-existing)"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Child output (implementer-14)",
+  "issue": "browser_notes of the browser-unavailable record"
+ },
+ {
+  "round": 3,
+  "location": "I/O row Bad config (implementer-16)",
+  "issue": "which CLIs the row's tests cover"
+ },
+ {
+  "round": 4,
+  "location": "Tasks > tests (adversarial-9)",
+  "issue": "No contract test feeding real ps-e2e-run output through ps-run-layer merge; scope expansion"
+ },
+ {
+  "round": 4,
+  "location": "Design Notes > Aggregate (adversarial-10)",
+  "issue": "versions[ver].layers.e2e state vocabulary / advisory_note; resolvable from contract Aggregate"
+ },
+ {
+  "round": 4,
+  "location": "Design Notes > Timing (adversarial-11)",
+  "issue": "browsers[].wall_clock for never-started engine spans admission..write; contract-defined"
+ },
+ {
+  "round": 4,
+  "location": "Interim orchestration command templates / Code Map (adversarial-12)",
+  "issue": "templates omit module path and --reports-dir; adversarial-lens.md missing in Code Map; resolvable from today's run-phases commands"
+ },
+ {
+  "round": 4,
+  "location": "Runner interim (edge-case-2, implementer-12)",
+  "issue": "child SIGTERMed while ps-run-layer not stopping: behaviour unspecified (rare edge)"
+ },
+ {
+  "round": 4,
+  "location": "Child output (edge-case-4)",
+  "issue": "empty per-cell lists should be emitted as [] not omitted; implied by incomplete-record rule"
+ },
+ {
+  "round": 4,
+  "location": "Configured cells (edge-case-6)",
+  "issue": "invalid browsers exit 2 even when E2E disabled; contract rule as written"
+ },
+ {
+  "round": 4,
+  "location": "Runner interim key map (edge-case-8, implementer-11)",
+  "issue": "psm_flashlight_startup_timeout read but unused this slice"
+ },
+ {
+  "round": 4,
+  "location": "Child output shape check (edge-case-9)",
+  "issue": "status/browsers_available malformed handling unspecified"
+ },
+ {
+  "round": 4,
+  "location": "Timing (edge-case-10)",
+  "issue": "boot_wall_clock when no teardown runs; outer wrapper measures entry..return"
+ },
+ {
+  "round": 4,
+  "location": "Reasons (implementer-1)",
+  "issue": "reason when warm/partial/not-run newer than gate-grade fail; contract says 'by the newest fresh record'"
+ },
+ {
+  "round": 4,
+  "location": "Plan shape (implementer-6)",
+  "issue": "per_version_capable value for e2e rerun_matrix entries / PER_VERSION_LAYERS"
+ },
+ {
+  "round": 4,
+  "location": "Interim orchestration Lapis 4 (implementer-7)",
+  "issue": "visual-pending timing deferred; 'as today' interim stated"
+ },
+ {
+  "round": 4,
+  "location": "Never / CAP-7 (implementer-10)",
+  "issue": "sequential records of this slice stay gate-grade after CAP-7; future scope"
+ },
+ {
+  "round": 4,
+  "location": "Tasks > docs adversarial-lens.md (implementer-13)",
+  "issue": "no plan command there; reworded together with Layer 3 fix"
+ },
+ {
+  "round": 5,
+  "location": "adversarial-3",
+  "issue": "State rule needs a shared home (child exit code vs record_state in ps-plan-layers); implementer choice"
+ },
+ {
+  "round": 5,
+  "location": "adversarial-4",
+  "issue": "Headless config copy is manual (doc-only by decision); script entry point would expand scope"
+ },
+ {
+  "round": 5,
+  "location": "adversarial-6",
+  "issue": "Keep temp dir / point to child output when a crash record is written (diagnostics)"
+ },
+ {
+  "round": 5,
+  "location": "adversarial-7",
+  "issue": "RESERVED_PASSTHROUGH prefix check listed under layer e2e; code applies reserved check to every layer"
+ },
+ {
+  "round": 5,
+  "location": "adversarial-8",
+  "issue": "Fingerprint stat error is exit 2 even when --require excludes e2e (contract rule as written)"
+ },
+ {
+  "round": 5,
+  "location": "adversarial-9",
+  "issue": "boot_wall_clock is a top-level record key the contract Fields list lacks (round-1 gap filler)"
+ },
+ {
+  "round": 5,
+  "location": "adversarial-10",
+  "issue": "AC2 'a contract reason' not a concrete expected reason"
+ },
+ {
+  "round": 5,
+  "location": "edge-case-3",
+  "issue": "Race between reaping a child and appending its records on --stop-job"
+ },
+ {
+  "round": 5,
+  "location": "edge-case-4",
+  "issue": "uv's own exit 2 indistinguishable from ps-e2e-run exit 2"
+ },
+ {
+  "round": 5,
+  "location": "edge-case-5",
+  "issue": "Canonicalization (realpath) of reports/screenshot dirs for inside-module checks"
+ },
+ {
+  "round": 5,
+  "location": "edge-case-6",
+  "issue": "Abbreviated --screenshot-dir in passthrough bypasses the check"
+ },
+ {
+  "round": 5,
+  "location": "edge-case-7",
+  "issue": "Parsing --tag-map/--extra-tag-map from passthrough (forms/abbreviations); other post-run reasons end V's loop as unproven"
+ },
+ {
+  "round": 5,
+  "location": "edge-case-8",
+  "issue": "Headless copy when resolver absent and caller passes nothing; reports dir creation"
+ },
+ {
+  "round": 5,
+  "location": "edge-case-9",
+  "issue": "Order of docker check vs fingerprint walk; skipped line fingerprint"
+ },
+ {
+  "round": 5,
+  "location": "edge-case-10",
+  "issue": "--merge-only with --job-id/--verbose/--config for other layers"
+ },
+ {
+  "round": 5,
+  "location": "implementer-3",
+  "issue": "Whether ps-run-layer applies the incomplete-record rule at write time"
+ },
+ {
+  "round": 5,
+  "location": "implementer-4",
+  "issue": "Narrowed plan row: all_reuse assertion cannot fail (per-version rerun always holds adversarial)"
+ },
+ {
+  "round": 5,
+  "location": "implementer-5",
+  "issue": "Existing parse_browsers fallback tests must become normalizer exit-2 tests"
+ },
+ {
+  "round": 5,
+  "location": "implementer-6",
+  "issue": "Tag-map flag extraction from passthrough must match the child's argparse"
+ },
+ {
+  "round": 5,
+  "location": "implementer-7",
+  "issue": "crash record run_id = ps-run-layer RUN_ID (interim until --run-id, CAP-3)"
+ },
+ {
+  "round": 5,
+  "location": "implementer-8",
+  "issue": "Timings test seam (stub subprocess, not fl phase helpers)"
+ },
+ {
+  "round": 5,
+  "location": "implementer-9",
+  "issue": "per_version[V].clean not listed in Never (depends on deferred phase1_reuse)"
+ },
+ {
+  "round": 5,
+  "location": "implementer-10",
+  "issue": "How selected records' scenario_notes combine into e2e_scenario_notes"
+ },
+ {
+  "round": 5,
+  "location": "implementer-11",
+  "issue": "Quickstart <cfg> source and -- --allow-image-pull form"
+ },
+ {
+  "round": 5,
+  "location": "implementer-12",
+  "issue": "Code Map lists docs/psm/README.md as holding E2E commands"
+ },
+ {
+  "round": 5,
+  "location": "implementer-14",
+  "issue": "--merge-only --layer e2e allow-list omits --job-id/--verbose"
+ }
+]

@@ -1,0 +1,54 @@
+{
+ "round": 4,
+ "critical_high": 44,
+ "fixed": 41,
+ "escalated": 3,
+ "dropped": 1,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261125-121225.r4-q1",
+   "finding": "Module tanpa skenario authored (smoke-only) atau spec bercatatan: setelah run canary pertama plan berhenti di blocked-not-gradeable, jadi versi/browser lain tak pernah diuji smoke sama sekali (hari ini tetap diuji).",
+   "options": [
+    "Tier 1 tetap jalan sekali untuk smoke (dilaporkan, ready tetap false)",
+    "Terima, tulis di Non-goals"
+   ],
+   "recommended": "Tier 1 tetap jalan sekali untuk smoke (dilaporkan, ready tetap false)",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r4-q2",
+   "finding": "Rerun sekuensial (rerun-seq) jalan di DB yang sudah diubah dua engine paralel, jadi kegagalan akibat interferensi paralel bisa ikut 'terkonfirmasi'.",
+   "options": [
+    "Pulihkan DB ke snapshot baseline (setelah warmup-bo) sebelum tiap rerun-seq",
+    "Biarkan, tulis konfirmasi best-effort untuk skenario yang mengubah state"
+   ],
+   "recommended": "Pulihkan DB ke snapshot baseline (setelah warmup-bo) sebelum tiap rerun-seq",
+   "oscillation": false
+  },
+  {
+   "id": "20261125-121225.r4-q3",
+   "finding": "Verifikasi visual Lapis 4 (model meninjau screenshot, cacat memblok ke adversarial.json) belum punya tempat di alur tier.",
+   "options": [
+    "Tinjau hanya screenshot run cold full (canary cold + tier 1), tetap lewat adversarial.json, tanpa loop-back E2E",
+    "Cacat visual dicatat per sel (visual_findings), sel dianggap gagal dan memicu loop-back"
+   ],
+   "recommended": "Tinjau hanya screenshot run cold full (canary cold + tier 1), tetap lewat adversarial.json, tanpa loop-back E2E",
+   "oscillation": false
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "cell-contract.md > Evidence record > Fields",
+   "issue": "no module/module_path identity in records (same as today's name-only identity check)"
+  },
+  {
+   "location": "brownfield.md > Evidence",
+   "issue": "~25 h should be ~18 h (corrected)"
+  },
+  {
+   "location": "SPEC.md frontmatter sources / Assumptions",
+   "issue": "in-chat source not in sources; Chrome->Chromium and 9->newest target mapping could be stated more explicitly"
+  }
+ ]
+}

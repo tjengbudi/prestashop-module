@@ -1,0 +1,62 @@
+[
+  {
+    "location": "cell-contract.md:56 (Plan > E2E loop ended) vs cell-contract.md:48 (step 3 blocked-infra)",
+    "issue": "After blocked-infra ends the E2E loop for the session, a patch in the same session (e.g. a Layer 1 fix in another version's loop) changes the fingerprint. Step 3 says a patch allows a retry, but 'E2E loop ended' says the orchestrator keeps that state for the session and never repeats the step.",
+    "implementation_impact": "Two implementers can disagree on whether E2E resumes after a patch. One keeps ready=false for the rest of the session even when the infra cause is gone. The other re-enters tier 0 and contradicts the 'never repeats' rule.",
+    "suggestion": "State which rule wins: either the session-level 'ended' state is cleared when the plan's source_fingerprint or the resolved image tag differs from the one recorded at the time the loop ended (re-enter the hosting loop), or blocked-infra stays terminal for the session regardless of patches and the 'a patch allows a retry' clause applies only to a new session."
+  },
+  {
+    "location": "cell-contract.md:48 (step 3 blocked-infra); tier-matrix.md:18; cell-contract.md:57 (Stop convergence offer condition)",
+    "issue": "A cell whose inconclusive cause alternates between runs (e.g. no-slots, crash, no-slots), or a stopped record between two identical causes, never meets 'two newest records with the same infra cause'. Stop convergence is offered only when V is not clean or the focus cell has a recorded failure, which does not hold for a first canary run or a gate cell that keeps going inconclusive.",
+    "implementation_impact": "In interactive mode, the orchestrator reruns an infra-flaky cell (at cold canary, cold-version or gate) without bound and without offering the operator an exit, which defeats the wall-clock goal.",
+    "suggestion": "Add a session cap: when a cell's last N records in the current --session are all inconclusive (any cause, 'stopped' included), derive blocked-infra with the newest cause. Or extend the stop-convergence offer to every iteration where the derived step reruns a cell whose newest record in this session is inconclusive, Phase 2 gate reruns included."
+  },
+  {
+    "location": "tier-matrix.md:20 (loop-back: Layer 3 results not yet merged are discarded); run-phases.md Fase 2 (lens subagents spawned at Phase 2 start, inline fallback writes adversarial.json per lens)",
+    "issue": "A tier-1 failure can trigger loop-back while Layer 3 lens subagents spawned at Phase 2 start are still running. In the inline fallback, a lens read-merges directly into <module>-adversarial.json. The spec does not say how in-flight lenses are cancelled, awaited, or kept from writing.",
+    "implementation_impact": "A lens that finishes after the patch writes pre-patch findings into adversarial.json with an mtime newer than the source. The plan's mtime freshness then reuses stale Layer 3 output at the next Phase 2, which breaks the 'never merged after the patch' guarantee.",
+    "suggestion": "Specify that on loop-back the orchestrator stops or ignores in-flight lenses. Lens output should go only to per-lens files tagged with session and source_fingerprint, as visual-pending does. The merge step should drop any tagged with a fingerprint other than the plan's current one, and the inline fallback should not write adversarial.json directly before the Phase 2 merge."
+  },
+  {
+    "location": "cell-contract.md:99-101 (Parallel browsers: BO-login fallback pass, rerun-seq, sequential fallback); cell-contract.md:97 (per-engine screenshot subdir)",
+    "issue": "A sequential pass (rerun-seq or the BO-login fallback) drives the same engine in the same run folder and <shots>/<ver>/<engine> subdir. Screenshot file names are deterministic (<engine>-<scenario>-<label>.png). The spec does not say which pass's screenshots the record's `screenshots` holds.",
+    "implementation_impact": "The rerun overwrites first-pass screenshots, or the record lists paths whose content now comes from the other pass. Visual review then judges images that do not match the findings it is reviewing.",
+    "suggestion": "Give sequential passes their own subdir (<shots>/<ver>/<engine>-seq, matching the {browser} expansion). Define the record's `screenshots` as the counted pass's paths (the rerun's for rerun-seq and the BO-login fallback), with first-pass paths kept under a separate field or dropped."
+  },
+  {
+    "location": "cell-contract.md:16 (Storage: unparsable lines) and cell-contract.md:18 (Newest = highest started_at, ties by run_id)",
+    "issue": "Only unparsable lines are handled. A line that parses but has a missing or non-ISO `started_at`, a `state` outside pass|fail|inconclusive|not-run, or a version/browser that does not match the history file name has no defined handling. The incomplete-record rule covers only certain fields on pass/fail records.",
+    "implementation_impact": "Newest-record ordering raises an exception or sorts null arbitrarily. A misfiled record can count as another cell's evidence, and plan and aggregate may diverge.",
+    "suggestion": "Treat a parsed record as unparsable (same corrupt-history rule) when started_at is not a valid UTC ISO-8601 string, state is not in the enum, or version/browser differ from the file's cell. Add a test line for each case."
+  },
+  {
+    "location": "cell-contract.md:18 (Newest / latest = highest started_at); cell-contract.md:45 (newest run by started_at)",
+    "issue": "Record order relies on wall-clock started_at. On WSL2 the guest clock drifts and is stepped back after host sleep or hibernate. A record appended later can then carry an earlier started_at than an older one in the same append-only history.",
+    "implementation_impact": "After a clock step, a new cold pass can rank as older than a previous fail (or the reverse), so 'has passing gate-grade evidence', 'failing', focus-cell choice and blocked-infra are derived from the wrong record.",
+    "suggestion": "Order records within one cell history by append position (line index), which the LOCK_EX append already serialises, and use started_at only to compare records across cells (focus-cell newest run). Alternatively, define a monotonic per-history sequence field written under the lock."
+  },
+  {
+    "location": "cell-contract.md:45-52 (Plan derivation over all records); SPEC.md Constraints (Job ID ownership)",
+    "issue": "Two psm-validate sessions on the same module (different session tokens, e.g. two terminals or a headless caller during an interactive session) append to the same cell histories. Nothing prevents or defines concurrent sessions on one module.",
+    "implementation_impact": "The other session's records change the newest record, the focus cell and the step mid-loop. The orchestrator may then run cells it did not plan, or reach done using another session's runs, while blocked-infra and reached are judged only per session.",
+    "suggestion": "Either take a per-module session lock (e.g. flock <reports>/<module>.psm-validate.lock held by the orchestrator, second session exits 2 or waits), or state explicitly that records from other sessions count as evidence and that derivation tolerates concurrent writers."
+  },
+  {
+    "location": "cell-contract.md:63 (Runner input errors: missing --tier); cell-contract.md:21 (tier field)",
+    "issue": "Only a missing --tier is an input error. Accepted values are not specified, and plan emits e2e_tier null for done and blocked-* steps.",
+    "implementation_impact": "Records can carry an arbitrary or null `tier` (e.g. a typo or a run started after a null tier), and the timing report and e2e_tier_reached rely on that field.",
+    "suggestion": "Define --tier as an integer in {0, 1}; any other value, including empty or 'null', exits 2."
+  },
+  {
+    "location": "cell-contract.md:72-74 (warm keeper lookup by module path, at most one keeper per module path, version, owner)",
+    "issue": "The keeper lookup, `starting` and session.json compare 'module path' without saying whether it is normalised. source_fingerprint uses realpath, but keeper identity does not.",
+    "implementation_impact": "Calls using a relative path, a trailing slash or a symlinked path miss the live keeper and start a second keeper for the same (module, version, owner), using an extra slot, or fail the pre-iteration module-path check and stop a valid keeper.",
+    "suggestion": "Specify that ps-run-layer and the keeper store and compare realpath(module path) everywhere a module path identifies a keeper (starting, session.json, lookup, pre-iteration check)."
+  },
+  {
+    "location": "cell-contract.md:128 (Headless config copy <psm_reports_dir>/<module>-psm-config.headless.<session>.json)",
+    "issue": "Every headless call writes a new config copy keyed by its session token. Nothing says when the file is deleted, or what happens when it cannot be written (read-only or missing reports dir).",
+    "implementation_impact": "Repeated headless calls from psm-develop or psm-optimize leave an unbounded number of config files in the reports dir. A write failure has no defined verdict (blocked or complete).",
+    "suggestion": "Delete the copy before the headless call returns, on every path including early returns. A failed write returns status: blocked with the path and the OS error."
+  }
+]

@@ -1,0 +1,71 @@
+{
+ "round": 3,
+ "critical_high": 17,
+ "fixed": 17,
+ "escalated": 0,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [],
+ "medium_low": [
+  {
+   "location": "Design Notes > Interim orchestration (adversarial-7)",
+   "issue": "E2E-loop state is orchestrator memory; could be derived from records with session <t>"
+  },
+  {
+   "location": "I/O matrix rows Chromium-only / Newer fail; Tasks > tests (adversarial-8)",
+   "issue": "aggregate-side rows should use the AC1 baseline (--require static,e2e) plus a positive control"
+  },
+  {
+   "location": "Design Notes > Timing (edge-case-6)",
+   "issue": "e2e_phase_durations shape for empty/null cases and wall_clock unit not pinned"
+  },
+  {
+   "location": "Design Notes > Runner interim (edge-case-8)",
+   "issue": "--versions duplicates/empty items/whitespace and --cells browser case handling"
+  },
+  {
+   "location": "Design Notes > Normalizer input (edge-case-9)",
+   "issue": "non-string values, empty string, empty items"
+  },
+  {
+   "location": "Design Notes > Record (edge-case-10)",
+   "issue": "blank lines and non-UTC offsets in history readers"
+  },
+  {
+   "location": "Tasks > read_history (edge-case-11)",
+   "issue": "OS-level read errors on a history file"
+  },
+  {
+   "location": "Design Notes > Runner interim --cells (edge-case-12)",
+   "issue": "browser order within a cell token / appended order"
+  },
+  {
+   "location": "Boundaries > ps-e2e-run --engines (edge-case-13)",
+   "issue": "--engines validation details"
+  },
+  {
+   "location": "Tasks > tests (implementer-7)",
+   "issue": "spawn/reap test seam and docker_available stub not named"
+  },
+  {
+   "location": "Boundaries > Aggregate (implementer-10)",
+   "issue": "e2e_screenshot_dir derivation and emission condition of e2e_smoke_only/e2e_browsers_run"
+  },
+  {
+   "location": "Tasks > ps-e2e-run (implementer-12)",
+   "issue": "per-cell field types (console_errors, scenarios_run with smoke, launch-error defaults)"
+  },
+  {
+   "location": "Design Notes > Normalizer (implementer-13)",
+   "issue": "list-valued psm_target_versions via apply_config_file crashes plan --versions (pre-existing)"
+  },
+  {
+   "location": "Design Notes > Child output (implementer-14)",
+   "issue": "browser_notes of the browser-unavailable record"
+  },
+  {
+   "location": "I/O row Bad config (implementer-16)",
+   "issue": "which CLIs the row's tests cover"
+  }
+ ]
+}

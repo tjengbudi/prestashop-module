@@ -1,0 +1,30 @@
+Already decided — do not raise again:
+- Scope chosen by Budi: tiered gate, warm container in fix loop, per-phase timing, fail-fast + failed-only rerun. Firefox at release gate runs in parallel with Chromium in one boot.
+- [20261125-121225.r1-q1] Budi: merge tier 1+2 — after canary is clean, each remaining version boots cold once with Chromium and Firefox in parallel.
+- [20261125-121225.r1-q2] Budi: focus on failed cell — fix at (V, browser) warm, then cold full at V, then cold full canary again, then next tier.
+- [20261125-121225.r1-q3] Budi: no warm container in headless; tiers run until first failure.
+- [20261125-121225.r1-q4] Budi: new scenario spec field 'requires' declares prerequisite scenarios; failed-only rerun runs failed scenarios plus their transitive 'requires'.
+- [20261125-121225.r1-q5] Budi: lock BO steps — scenarios with BO steps run one engine at a time via a cross-engine lock; FO-only scenarios stay parallel.
+- [20261125-121225.r1-q6] Budi: psm_e2e_slots (container=1 slot, each extra browser=1 slot), default 6, E2E only, warm container counts; warm TTL 60 min idle.
+- [20261125-121225.r2-q1] Budi: Phase 1 per-version gates only Layers 1/2/5; canary E2E runs in the canary version's loop; Phase 2 starts when all versions are clean and canary E2E is gate-ready.
+- [20261125-121225.r2-q2] Budi: narrowed scope filters e2e_next_cells; if empty, plan reports e2e_step blocked-by-scope plus required cells and runs nothing.
+- [20261125-121225.r2-q3] Budi: psm_e2e_slots counts all live E2E jobs host-wide (cold+warm, all sessions); when full, wait with ALIVE wait-slots until startup timeout, then cell is inconclusive no-slots; --jobs on e2e layer exits 2.
+- [20261125-121225.r2-q4] Budi: first canary run is cold+full when no failure is recorded; warm container only after a failure (canary version = 2 boots when clean).
+- [20261125-121225.r3-q1] Budi: a failure seen only in parallel mode is rerun sequentially before it counts as a finding.
+- [20261125-121225.r3-q2] Budi: host-wide slot count reads Docker label psm.slots on live containers (visible to all daemon clients), not the temp-dir registry.
+- [20261125-121225.r3-q3] Budi: same cell fingerprint + same inconclusive reason twice in a row -> e2e_step blocked-infra, E2E loop ends and is reported like skipped.
+- [20261125-121225.r3-q4] Budi: headless caller's version/browser arguments become the configured set required for ready (written into the forwarded --config JSON); per-version verdict contract kept.
+- [20261125-121225.r4-q1] Budi: smoke-only / noted-spec modules still run tier 1 once for smoke on other cells (reported); ready stays false.
+- [20261125-121225.r4-q2] Budi: restore DB to the baseline snapshot (post warmup-bo) before each sequential rerun (rerun-seq).
+- [20261125-121225.r4-q3] Budi: visual review only on cold full runs (cold canary + merged tier), still via adversarial.json, no E2E loop-back.
+- [20261125-121225.r5-q1] Budi: BO lock is exclusive against every scenario of the other engine (FO stays parallel with FO only), so a BO scenario can never mask another engine's failure.
+- [20261125-180122.r1-q1] Budi: rerun-seq runs the engine's full scenario set after a full reset (DB, files, var/cache, opcache); supersedes the narrower round-3 rerun scope.
+- [20261125-180122.r1-q2] Budi: both — add 'requires' to bankwire E2E specs (fixture edit in scope) and fallback: a failed scenario without 'requires' also runs every scenario sorted before it.
+- [20261125-180122.r1-q3] Budi: structural success + mandatory before/after CAP-6 timing report on bankwire; numeric wall-clock target set later from that data.
+- [20261125-180122.r1-q4] Budi: automatic --cleanup-orphans before wait-slots allowed in all modes, only for containers whose owner is proven dead; headless.md updated accordingly.
+- [20261125-180122.r2-q1] Budi: a failure in the sequential rerun (clean snapshot, full set) is a blocking finding (fail), never inconclusive or infra.
+- [20261125-180122.r2-q2] Budi: operator action 'stop convergence' — run Layer 3, merge-only, aggregate; ready=false; post-canary tier not run.
+- [20261125-180122.r2-q3] Budi: add psm-optimize to docs-to-update: a 'not reached' version is not comparable between baseline and after.
+- [20261125-180122.r3-q1] Budi: identical-findings test baseline = one cold run per engine (--cells V:chromium, then V:firefox).
+- [20261125-180122.r3-q2] Budi: sequential fallback (insufficient slots) takes snapshot-db and resets before each subsequent engine.
+- [20261125-180122.r3-q3] Budi: a configured version missing from a layer's results = unproven, ready=false, no exit 2.

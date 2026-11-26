@@ -1,0 +1,80 @@
+[
+  {
+    "location": "cell-contract.md > Parallel browsers (CAP-7) > Identical findings; cell-contract.md > Runner > Fail-fast (sequential fallback); SPEC.md CAP-3 success and CAP-7 success",
+    "issue": "Contradiction. The identical-findings test compares a parallel run after sequential confirmation with a run of the same cells under --sequential-browsers. Fail-fast in the sequential fallback stops after the first engine's fail and records not-run for every later engine. The injected fixture fault (checkout-with-bank.json step 55) fails on every engine, so the sequential run has findings only for the first browser, while the parallel run has confirmed findings for both. The two tuple sets can never be equal. The 'rerun once on mismatch' rule does not help, because the mismatch is deterministic. CAP-7's claim that findings are 'identical to a sequential run on the same module' has the same flaw whenever more than one engine fails.",
+    "implementation_impact": "The mandated live test cannot pass as written. The implementer has three bad options: disable fail-fast for that run (no flag exists for it), compare only the first engine, or weaken the fault. Each choice changes what CAP-7 actually proves.",
+    "suggestion": "State the comparison baseline explicitly. Either compare against one single-engine sequential run per engine (--cells V:chromium, then V:firefox), or add a test-only switch that disables in-version fail-fast for the sequential reference run, and say which one the test uses."
+  },
+  {
+    "location": "SPEC.md > Success signal (before/after timing report)",
+    "issue": "The report must use 'the same injected fault' for both measurements, but the 'after' release-gate figure is 'the tier-1 run'. Tier 1 starts only after the canary passes (step 4 gate), so the fault must be reverted first. Meanwhile the 'before' gate run (--versions 1.7.8,8.1,9.1 --per-version --jobs 3) runs with or without the fault, and the text does not say which. The same question applies to the 'before' fix-loop iteration: it is unclear whether it runs before or after the one-line patch. A failing expect_text can take up to the navigation timeout, so the module state changes the browser-phase timings.",
+    "implementation_impact": "Whoever produces bankwire-e2e-timing.md has to guess the module state for each of the four measurements. The before/after comparison may be apples to oranges, and Budi will set the numeric target later from these numbers.",
+    "suggestion": "Spell out the module state for each of the four runs. For example: fix-loop before and after both measured on the iteration right after the revert patch, and release-gate before and after both on the clean (fault-reverted) module. Record that state in the report header."
+  },
+  {
+    "location": "cell-contract.md > Warm container > Pre-iteration check; Owner (session.json fields)",
+    "issue": "The check compares session.json's orchestrator mode and PS_DOMAIN with 'the current passthrough or config values'. session.json stores the resolved values: the orchestrator after auto has resolved to compose or manual, and the effective PS_DOMAIN with its floating port, which pick_free_host_port in ps-e2e-run.py moves off 8000 whenever 8000 is taken. The config holds 'auto' and 'localhost:8000'. Compared literally, they mismatch every time (orchestrator) or whenever another session holds port 8000 (PS_DOMAIN). Every mismatch stops the keeper and forces a cold boot.",
+    "implementation_impact": "The warm container may never be reused, so the CAP-5 success criterion and the success signal (warm iteration with no bring-up) fail at random or every time. The implementer has to invent normalisation rules.",
+    "suggestion": "Store the requested values (requested orchestrator, configured ps_domain) in session.json next to the resolved ones, and define the comparison as requested-vs-requested. For PS_DOMAIN, compare the host component only."
+  },
+  {
+    "location": "cell-contract.md > Aggregate; Configured cells (narrowing); SKILL.md On Activation step 2; ps-aggregate.py main (unscanned-version exit 2)",
+    "issue": "The aggregate's versions become the configured target versions, 'replacing --versions and the static payload's versions'. But ps-aggregate.py exits 2 when a target version is missing from the static scan, and the interactive scope menu narrows --versions uniformly for every layer, Layer 1 included. After a run narrowed to 9.1, the canonical static file covers only 9.1, so the aggregate exits 2 instead of reporting the left-out cells as not proven. The new e2e-quickstart TDD step ('then ps-aggregate.py --reports-dir') hits the same wall.",
+    "implementation_impact": "The contract that narrowed cells 'show in e2e_cells without passing gate-grade evidence' cannot be met. The implementer must either drop the unscanned gate (a regression in honesty) or force Layer 1 to scan every configured version regardless of scope. The spec chooses neither.",
+    "suggestion": "Decide one: either Layer 1 always scans every configured version (it is cheap, and scope narrowing would then exclude Layer 1), or a configured version missing from static becomes not-proven (ready=false), not exit 2. Then update the quickstart verdict step to match."
+  },
+  {
+    "location": "cell-contract.md > Plan > Phase 1 ('a Layer 2 or 5 run that reported skipped (Docker absent) counts as clean for the rest of the session')",
+    "issue": "per_version[V].clean is computed by ps-plan-layers and requires phase1_reuse. When Docker is absent, ps-run-layer does not persist the skipped payload (versions {}), so the per-version Layer 2/5 file never exists, the plan reports 'file lapis belum ada' and rerun forever, and clean stays false. The plan is stateless apart from --session and cannot know a skip happened earlier in the session. The spec does not say whether the plan or the orchestrator applies the 'skipped counts as clean' rule, or where the skip is recorded.",
+    "implementation_impact": "Without an owner for this rule, Phase 1 never ends on a host without Docker, or the orchestrator overrides the plan's clean field by judgment, against 'never picks a tier by judgment'.",
+    "suggestion": "Name the owner and the storage. For example: ps-run-layer writes a per-version skip marker carrying the session token, and the plan treats it as clean for that --session. Or the orchestrator keeps the state, and the doc states that this overrides per_version[V].clean."
+  },
+  {
+    "location": "cell-contract.md > State, freshness > Fresh (reports dir inside module) vs ps-plan-layers.py newest_source_mtime / plan_layer mtime gate for Layers 1, 2, 5",
+    "issue": "The contract explicitly allows psm_reports_dir strictly inside the module and excludes it from source_fingerprint, so appending E2E history keeps E2E fresh. Layers 1, 2 and 5 still judge freshness by newest_source_mtime, which skips only vendor/node_modules/.git. Every history append, per-version layer file write or .psm-*/.memlog.md write inside the module therefore stales Layers 1, 2 and 5. Once an E2E step runs, V is no longer clean, so the hosting loop's end condition (V clean and e2e_step gate/done) is never reached.",
+    "implementation_impact": "With a reports dir inside the module, Phase 1 loops forever. The implementer must either extend the exclusion to the mtime gate or forbid that configuration. Both change behaviour that the spec says stays.",
+    "suggestion": "Either apply the same exclusions (reports dir, top-level .psm-* and .memlog.md) to newest_source_mtime, or make a reports dir anywhere inside the module an input error, and drop the 'appending history to a reports dir inside the module' test."
+  },
+  {
+    "location": "cell-contract.md > Warm container > Chain (keeper command line)",
+    "issue": "The keeper command is given as 'ps-e2e-run.py --keep-warm --job-id <warm-id> --warm-ttl … --warm-owner <token> -o <result>' plus passthrough and --config. It omits the module path, --versions V (without it, apply_config_file fills every target version from psm_target_versions), the pre-generated --run-id needed for the slot claim, and the progress file for '<module>-e2e-<ver>-warm.progress.log'. It also does not say how the keeper learns its slot cost for the psm.slots label.",
+    "implementation_impact": "The implementer has to reconstruct the keeper invocation. Getting --versions wrong boots the wrong or several versions, and missing --run-id breaks slot-claim accounting.",
+    "suggestion": "Give the full keeper argv: module path, --versions V, --run-id, the progress-file path, --job-id, --warm-ttl, --warm-owner and -o. State that the keeper labels psm.slots=1."
+  },
+  {
+    "location": "cell-contract.md > Runner > Input errors (RESERVED_PASSTHROUGH gains --run-id); Config keys > psm_e2e_slots (passes pre-generated RUN_ID as --run-id)",
+    "issue": "--run-id is listed only as a reserved passthrough flag and as something ps-run-layer passes to children. No section defines the child flag: which scripts accept it, that it must override ps-flashlight-run.RUN_ID before owner_labels() and progress lines use it, and how it relates to boot_id and run_id in records. RUN_ID is a module-level constant generated at import today.",
+    "implementation_impact": "If the override happens after import-time use, or is missed in workers, the psm.run label will not match the slot claim and claims are counted twice or never released.",
+    "suggestion": "Add a Runner bullet: ps-e2e-run.py (version process, keeper, worker) accepts --run-id <hex12> and sets fl.RUN_ID before job_register or any label or progress use. Workers inherit the version process's RUN_ID or get their own (state which)."
+  },
+  {
+    "location": "SPEC.md > Success signal ('After' from boot_phases, keeper_boot, phase_durations, wall_clock) vs cell-contract.md > Evidence record (started_at/finished_at = this cell's engine start and end) and Phase timings (cell wall_clock = finished_at - started_at)",
+    "issue": "The report must list 'wall-clock … per version and browser'. 'Before' wall-clock comes from START/END timestamps covering the whole run (bring-up through teardown). In 'after' records, a cell's wall_clock spans only its engine, and boot time sits in boot_phases.wall_clock (warm: the iteration's reset/install boot plus keeper_boot). How to combine them into a comparable per-cell or per-iteration wall-clock is not defined (sum? boot wall plus cell wall? max over overlapping parallel cells?).",
+    "implementation_impact": "Different combinations give different speed-ups, and the numeric target is meant to come from this report.",
+    "suggestion": "Define the report's wall-clock column. For example: end-to-end = (last finished_at or boot teardown end) minus (first wait-slots start) per ps-run-layer invocation, plus per-cell engine wall_clock as a separate column. Apply the same definition to the 'before' logs."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers (CAP-7) > Parallel-only failures (reset-files: 'copy the module source over modules/<mod> again')",
+    "issue": "The existing install path (INSTALL_BLOCK_SH) runs 'cp -r /ps-module-src /var/www/html/modules/$MOD_NAME'. When the target exists, this nests the source as modules/<mod>/ps-module-src instead of overwriting it. The warm reset explicitly deletes modules/<mod> first. The rerun-seq reset says 'copy … over', and modules/<mod> exists in the snapshot list, so it is not deleted. Whether the rerun reset deletes then copies, overlays file by file, or re-runs install is unspecified.",
+    "implementation_impact": "A literal reuse of the install copy produces a nested directory and leaves stale module files in place. The 'identical to sequential' guarantee then fails for a module whose parallel pass modified its own files.",
+    "suggestion": "State: rerun-seq reset deletes modules/<mod>, then copies /ps-module-src to modules/<mod> (no install, since the DB already holds the installed state), exactly like the warm reset's first step."
+  },
+  {
+    "location": "cell-contract.md > Plan (e2e_required_cells) and Plan > E2E loop ended ('for blocked-*, naming e2e_required_cells')",
+    "issue": "e2e_required_cells is defined as 'the cells before the scope filter' of the derived step. For blocked-not-gradeable and blocked-infra, the step runs nothing and has no cell list, and for done the list is empty. The report must still 'name e2e_required_cells' for every blocked-* step. It is unclear whether these lists hold the cells in e2e_blocked_causes, every configured cell lacking passing gate-grade evidence, or nothing.",
+    "implementation_impact": "Plan output and the orchestrator's blocked report would differ between implementations, and the CAP-1 next-cells test cannot pin the field.",
+    "suggestion": "Define e2e_required_cells for each non-running step: blocked-not-gradeable and blocked-infra = the cells in e2e_blocked_causes; done = []; blocked-by-scope = the unfiltered cells of the blocked step."
+  },
+  {
+    "location": "cell-contract.md > Failed-only rerun (CAP-4) ('The record gets scenario_set: partial') and Runner (--scenarios seed; fallback records full)",
+    "issue": "When the failed set plus transitive requires plus the smoke happens to equal every valid spec (likely for bankwire: checkout-with-bank pulls in three of the four other specs, and a failure in admin-config-reachable pulls in nothing), the contract still says partial. Only the fallback path records full. It is unclear whether a selection that covers the full set is partial or full.",
+    "implementation_impact": "This matters for a cold failed-only focus run (allowed when e2e_warm is false). Recorded as partial, it forces an extra cold full run. Recorded as full, it becomes gate-grade. Either choice is defensible, so the choice is a guess.",
+    "suggestion": "Add one rule: if the resolved selection equals the full set, record scenario_set: full (or always partial), and include it in the CAP-4 tests."
+  },
+  {
+    "location": "cell-contract.md > Phase timings (e2e_phase_durations shape) and Evidence record > Producers ('Each finding gains action and step')",
+    "issue": "e2e_phase_durations[ver] is given as {boots: {<boot_id>: {...}}, browsers: {<engine>: {...}}}, but the inner objects are unspecified: phase map plus wall_clock? phase_durations only? keyed how when two records share an engine? The base of the finding 'step' index (0 or 1) is also not stated. The fixture's 'step 55' matches only a 0-based index, but the identical-findings tuples and the parallel/rerun matching on (scenario, step, action) depend on a consistent convention.",
+    "implementation_impact": "The aggregate output shape and the finding keys used for cross-pass matching would be chosen ad hoc. Tests written by different people would disagree.",
+    "suggestion": "Give the inner shapes, for example boots[id] = {phases: {<name>: {seconds, outcome}}, wall_clock} and browsers[engine] = the selected record's phase_durations plus wall_clock. State that step is the 0-based index into the spec's steps list."
+  }
+]

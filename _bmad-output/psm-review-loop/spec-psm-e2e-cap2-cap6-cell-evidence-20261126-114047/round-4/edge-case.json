@@ -1,0 +1,62 @@
+[
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:94 (Design Notes > Interim orchestration, 'E2E loop ended' / 'V's E2E step is due')",
+    "issue": "An interactive E2E run that Budi stops (for example a stalled log, per 'Pantau run Docker') exits 143 and prints no output line. Exit 143 is not in the 'E2E loop ended' list. The due rule only checks whether a run printed the current source_fingerprint, and a stopped run printed none, so the step stays due.",
+    "implementation_impact": "The orchestrator restarts the same stalled E2E run right away, possibly forever, and drops records the run had already appended.",
+    "suggestion": "Add a 143 rule to Interim orchestration. For example: an E2E run that exited 143 ends the E2E loop for the session (report the Job ID and the last phase), or it counts as one infra retry."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Design Notes > Runner interim, 'a child reaped with returncode 143 or -15 counts as stopped, never crash')",
+    "issue": "The rule covers a child that gets SIGTERM while ps-run-layer itself is not being stopped (an outside kill, or an OS or daemon shutdown signal to the child only). The spec does not say what ps-run-layer does next. Nothing is appended for that child's cells, ps-run-layer keeps going, and the output line and exit code are computed only over appended records.",
+    "implementation_impact": "The run can print 'ran' and exit 0 with a cell missing silently. The interim due rule then treats that version as already run on this fingerprint.",
+    "suggestion": "Say that a child stopped while ps-run-layer is not stopping either makes ps-run-layer exit 143 with no output line, or gives its cells a crash record (exit 1). Treat 143/-15 as 'stopped' only while ps-run-layer's own stop handler is active."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:27 (Boundaries > ps-e2e-run.py exit codes: '0 only when every driven cell passes or E2E is skipped')",
+    "issue": "Some versions drive zero cells: a boot or install failure, a missing image without --allow-image-pull, or a probe that dropped every engine (today run_one_version returns early with skipped_browser). Read literally, 'every driven cell passes' is then vacuously true.",
+    "implementation_impact": "A direct ps-e2e-run.py run, or a test that reads the child's exit code, can get exit 0 for a version that proved nothing.",
+    "suggestion": "Define it explicitly: exit 0 only when at least one cell was driven and every driven cell passes, or the status is skipped. A version with zero driven cells is exit 1."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:89 (Design Notes > Child output, 'a missing per-cell field is stored null (incomplete-record rule)') + :27/:71 (per-engine notes)",
+    "issue": "The spec does not say that empty per-cell collections must be emitted as [] rather than omitted, or that a cell with no notes gets an empty browser_notes. This matters for browser_notes, inconclusive and scenario_notes. The contract says browser_notes is 'keyed by engine', so an engine with no notes may have no key at all. Under the incomplete-record rule, a pass or fail with browser_notes, inconclusive or scenario_notes null reads as inconclusive.",
+    "implementation_impact": "Every clean pass record can be read as inconclusive incomplete-record, so no cell ever gets passing gate-grade evidence and ready never becomes true.",
+    "suggestion": "Add to Child output: the child always emits inconclusive, browser_notes and scenario_notes as lists ([] when empty). When ps-run-layer fills a cell's browser_notes from an engine-keyed map, a missing key becomes [], not null."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:94 (Interim orchestration, 'E2E loop ended: an E2E run printed skipped or exited 2') vs references/headless.md (Kembalian: 'exit 2 error input' → blocked)",
+    "issue": "In headless, an E2E run that exits 2 (a pre-spawn input error or a child exit 2) matches two rules. Interim orchestration says it ends the E2E loop and the run continues to the wrap-up. headless.md says any input error (exit 2) returns status 'blocked'. The headless.md docs task does not settle which rule wins.",
+    "implementation_impact": "Headless callers get 'blocked' or 'complete' with ready=false for the same failure, depending on which doc the orchestrator follows.",
+    "suggestion": "Add to the headless.md docs bullet: an exit 2 from ps-run-layer --layer e2e ends the E2E loop and the wrap-up still runs (status complete, ready false). 'blocked' stays for exit 2 from plan, Layer 1 or the aggregate."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:24 (Configured cells: exit 2 cases) + :70 (plan always emits source_fingerprint) + :92 (Aggregate)",
+    "issue": "The spec does not say whether plan and aggregate validate psm_e2e_browsers, or compute the fingerprint (with exit 2 on a stat error), when psm_e2e_enabled is false or --require excludes e2e. Example: a config with psm_e2e_browsers 'webkitx' and E2E disabled. Today parse_browsers falls back silently.",
+    "implementation_impact": "A module that does not use E2E now hits exit 2 on every plan and aggregate call, which also blocks Layers 1, 2 and 5 and the verdict.",
+    "suggestion": "State the interim rule either way. Either the normalizer and fingerprint errors are exit 2 regardless of psm_e2e_enabled/--require (and docs warn about this), or plan and aggregate skip browser validation and e2e fields when E2E is disabled or not required."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:94 (Interim orchestration, Fase 2 and wrap-up list)",
+    "issue": "Interim Fase 2 lists the steps as: plan, re-entry, Layer 3, grouped E2E, then a wrap-up of Layer 2/5 merge-only, the e2e view and the aggregate. It leaves out the cross-version Layer 1 static scan to the canonical <module>-static.json. Today's Fase 2 runs that scan, and the contract's wrap-up includes it. The aggregate reads that file, and it does not check whether the file is fresh.",
+    "implementation_impact": "The aggregate can judge Layer 1 from a missing or earlier-run static file, either dropping ready or crediting stale static results.",
+    "suggestion": "Add 'the cross-version static scan (canonical <module>-static.json) as today' to the interim Fase 2 or wrap-up list and to the run-phases.md docs task."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:90 (Runner interim, 'ps-run-layer reads --config through its own key map: configured set, psm_flashlight_tag_map, psm_flashlight_startup_timeout')",
+    "issue": "ps-run-layer must read psm_flashlight_startup_timeout, but nothing in this slice uses it there: wait-slots is deferred, and the child already gets the value through the forwarded --config. The spec also does not say what happens on a non-integer value, because Config keys is adopted only for Image tag.",
+    "implementation_impact": "Implementers may add dead parsing or an exit 2 rule that no test pins. A bad value could give exit 2 in the runner but a different error in the child.",
+    "suggestion": "Either drop psm_flashlight_startup_timeout from ps-run-layer's key map this slice, or name its consumer and say that a non-integer value is exit 2 for layer e2e only."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:89 (Design Notes > Child output, shape check and 'admitted engine missing from the child's browsers_available')",
+    "issue": "The shape check covers versions[<ver>].cells only. It does not say how ps-run-layer handles three cases: output whose top-level browsers_available is absent, null or not a list; a status value other than 'ran'/'skipped'; or no status at all.",
+    "implementation_impact": "An admitted engine without a cell can be recorded as browser-unavailable or as crash depending on the implementation. A malformed status could even be treated as skipped.",
+    "suggestion": "Extend the shape check: status must be 'ran' or 'skipped', and browsers_available must be a list of strings when status is 'ran'. Anything else → crash for every admitted cell."
+  },
+  {
+    "location": "spec-psm-e2e-cap2-cap6-cell-evidence.md:93 (Design Notes > Timing, 'boot_wall_clock = seconds from run_one_version entry until _teardown returns')",
+    "issue": "The spec does not define boot_wall_clock for a version where _teardown never runs. Examples: an early return because the image is missing and pull is not allowed, compose is unavailable, or no browser binary was found. In these cases boot_id is still set and boot_phases is {}.",
+    "implementation_impact": "Implementers can emit null, 0, or the elapsed time to return, so aggregate boots[…].wall_clock values cannot be compared.",
+    "suggestion": "Add: when no container was started, boot_wall_clock = seconds from run_one_version entry until it returns, measured by the same outer wrapper."
+  }
+]

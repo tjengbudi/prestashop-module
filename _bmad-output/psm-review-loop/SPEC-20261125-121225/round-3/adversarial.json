@@ -1,0 +1,92 @@
+[
+  {
+    "location": "cell-contract.md > Evidence record (Newest / latest) + State, freshness, gate-grade (Passing gate-grade) + Plan step 1 `done`",
+    "issue": "The spec says each rule picks the newest record that matches it, so 'passing gate-grade evidence' can be read as 'the newest record that is passing and gate-grade'. A cell with an older fresh cold full pass and a newer fresh cold full FAIL on the same fingerprint has both. This happens with a flaky scenario, a rerun on unchanged source, or a same-tag image re-pull. Step 1 `done` and the aggregate's `ready` would then count the older pass, even though the same cell is 'failing' under the Plan definition (newest cold full conclusive record). Step 1 is evaluated before the failing check, so the loop would report `done` over a known failure.",
+    "implementation_impact": "Plan and aggregate can return done/ready=true while the newest gate-grade evidence for a cell is a conclusive fail. That breaks the honesty law. Implementers will also write different selectors in plan and aggregate.",
+    "suggestion": "Define passing gate-grade evidence as: the cell's newest gate-grade record (fresh, conclusive, cold, full) exists and satisfies the passing conditions. A newer gate-grade fail always overrides an older pass. Add a test: pass then fail on the same fingerprint gives ready=false and a step other than done."
+  },
+  {
+    "location": "cell-contract.md > State, freshness, gate-grade (Fresh) — `ss.is_skipped`",
+    "issue": "`ss.is_skipped` skips `vendor`, `node_modules` and `.git` (ps-static-scan.py SKIP_DIRS). The install still copies the whole module, vendor/ included (`cp -r /ps-module-src`). Updating or patching a shipped composer dependency under vendor/ changes runtime behaviour but leaves `source_fingerprint` unchanged, so every old E2E record stays fresh and gate-grade.",
+    "implementation_impact": "A release can go `ready` on E2E evidence from different code than what ships. That is a direct gap in the freshness rule this spec introduces.",
+    "suggestion": "Fingerprint exactly the file set the installer copies (everything under the module dir except `.git`, and `node_modules` if it is never copied), not the static-scan skip set. Add a test: touching a file under vendor/ stales every cell."
+  },
+  {
+    "location": "cell-contract.md > State, freshness, gate-grade (Fresh) — `image_tag equals the resolved tag`",
+    "issue": "Freshness compares the image tag string, not the image ID or digest. When a floating tag (for example `9.1`) is re-pulled with new content, every record still matches. Runner changes do not count either: a new action semantic in ps-e2e-run.py, a new universal smoke, or new admin credentials or paths all leave old evidence fresh.",
+    "implementation_impact": "Gate-grade evidence can describe a different PrestaShop build or a different test harness than the current one, and nothing marks it stale.",
+    "suggestion": "Record the local image ID (`docker image inspect --format {{.Id}}`) and an E2E harness version (a hash of ps-e2e-run.py or an explicit constant) in each record. Make both part of freshness (reasons `stale-image`, `stale-harness`)."
+  },
+  {
+    "location": "tier-matrix.md > Rules (Phase 1/Phase 2 paragraph) + cell-contract.md > Plan > Phase 1 ('Phase 2 starts when every version's loop has ended')",
+    "issue": "The canary version's Phase 1 loop can end with `e2e_step` gate, and then another version's Phase 1 loop patches source (for example to fix a 1.7.8 flashlight error). That patch stales the canary evidence through the fingerprint. 'Every loop has ended' is still true, so Phase 2 starts while the plan says `cold-canary`/`focus` (tier 0). The spec says tier 0 runs only inside Phase 1 and that a loop-back re-enters Phase 1, but it does not say whether a later patch from another loop counts as a loop-back. It also does not fix the order of the per-version loops. The already-decided entry condition ('canary E2E gate-ready') is not what the mechanical predicate checks.",
+    "implementation_impact": "The orchestrator either runs tier 0 inside Phase 2 after Layer 3 has been spawned, or runs tier 1 with a stale canary. Either way, behaviour is undefined and the CAP-1 ordering test misses it.",
+    "suggestion": "Define the Phase 2 entry as a fresh plan predicate evaluated just before Phase 2: phase1_reuse is true for every version and e2e_step is in {gate, done}. When it fails, re-enter the hosting loop. Alternatively, order the canary version's loop last and re-check it after any other loop patches."
+  },
+  {
+    "location": "cell-contract.md > Config keys (`psm_e2e_slots`, host-wide counting)",
+    "issue": "Admission means: read the registry, sum held slots, then register. The spec defines no atomic reservation. Two ps-run-layer processes (two sessions, or two invocations in one session) can both read 5/6 and both admit, reaching 7. The warm keeper and the CAP-7 second-engine slot follow the same read-then-act pattern.",
+    "implementation_impact": "The cap that exists to prevent `wait-healthy` stalls on the shared WSL daemon can be exceeded exactly when several sessions start together, which is the case it was built for.",
+    "suggestion": "Specify a host-wide lock (for example `flock` on `<tmp>/psm-jobs/slots.lock`) held across 'count live slots, then write own slot claim'. Slot claims need liveness checks so a dead process's claim is reclaimed. Add a concurrency test with two admitters racing for the last slot."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers (CAP-7) 'When the cap leaves no room for the second engine' + Config keys ('each concurrent browser beyond the first costs 1 more')",
+    "issue": "ps-run-layer admits cells, but the decision to run the second engine in parallel is made in the child ps-e2e-run.py. The spec does not say which process acquires the extra browser slot, whether the version is admitted at cost 1 or 2, or whether a version that fell back to sequential can switch to parallel when a slot frees mid-run. It also does not say how the child learns the host-wide count.",
+    "implementation_impact": "Slot accounting can be split between two processes, giving double counting or none, and the CAP-7 'boots once, overlapping phases' success test passes or fails depending on admission timing.",
+    "suggestion": "Make ps-run-layer the single slot owner. Admit a two-browser version at cost 2 when available, otherwise at cost 1 with an explicit `--sequential-browsers` passed to the child. Never upgrade mid-run. Record the chosen mode in the cell record."
+  },
+  {
+    "location": "cell-contract.md > Warm container (CAP-5) — 'At most one keeper per (module path, version)', `--use-warm auto`, Pre-iteration check",
+    "issue": "Keeper lookup is host-wide by module path and version. A second Claude session validating the same module will reuse ('--keep-warm ... reuses it') or auto-attach to the first session's keeper. It will then reset that keeper's DB and files, and on a failed pre-iteration check it will `--stop-job` a job it does not own. SKILL.md forbids stopping another session's job without Budi's consent.",
+    "implementation_impact": "Cross-session interference: one session's iteration wipes another session's warm state mid-loop, or kills its keeper. This violates the targeted-stop contract the spec says it preserves.",
+    "suggestion": "Scope keepers to the owning session (store a session/orchestrator ID in session.json and match on it in `auto` and in keeper reuse). When a keeper with a foreign owner is found, cold-boot and log it; never stop or reset it."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers (CAP-7) — Cross-engine lock wait limit",
+    "issue": "Lock waits are capped at the startup timeout (default 180 s), but the lock is held for a whole BO scenario. On bankwire, `checkout-with-bank` has about 50 steps, BO and FO, each with a navigation timeout. On a cold 1.7/8 container it can easily hold the lock longer than 180 s. The waiting engine's BO scenario then turns inconclusive for reasons unrelated to the module.",
+    "implementation_impact": "Parallel runs produce spurious inconclusive cells, so the cell never gets passing gate-grade evidence and the loop reruns it. That defeats CAP-7's speed goal and breaks the 'identical findings' success criterion.",
+    "suggestion": "Base the lock-wait limit on holder liveness and progress (wait while the holder's worker is alive and emitting phase lines, with a separate generous cap such as the sum of nav timeouts). Alternatively, on timeout, fall back to running that scenario after the other engine finishes, the same way the BO-login fallback works."
+  },
+  {
+    "location": "cell-contract.md > Parallel browsers (CAP-7) — 'FO-only scenarios run without the lock' + 'Identical findings'",
+    "issue": "Both engines share one DB per version, and the lock only serialises BO scenarios with each other. An FO-only scenario in engine A can run in the middle of engine B's BO scenario that mutates shop state. On bankwire, Firefox's FO-only `checkout-empty-banks` can run before, during or after Chromium's `bo-setup-country`, `bo-setup-payment-country` or the add-bank part of `checkout-with-bank`. Which state it sees then depends on timing, not on a fixed sequential order. The spec claims findings identical to a sequential run but defines nothing that detects or handles divergence, and the referenced 'fixture' is only 'on bankwire'.",
+    "implementation_impact": "Findings for FO scenarios can become nondeterministic in parallel mode. The single bankwire comparison test may pass by luck and then fail intermittently.",
+    "suggestion": "Keep the decided lock scheme but add a guard. Either (a) an FO-only scenario whose transitive `requires` include a BO scenario also takes the lock, or (b) CAP-7 records which scenarios overlapped another engine's BO scenario, and a parallel-only failure is rerun sequentially before it counts as a finding. Also define a deterministic fixture module (one BO mutator plus one FO reader) for the identical-findings test, in addition to bankwire."
+  },
+  {
+    "location": "cell-contract.md > Evidence record (Storage: append-only `.jsonl` history)",
+    "issue": "Histories are appended by whichever ps-run-layer process drove the cell, and nothing prevents two processes from writing the same cell file: two sessions on the same module, or a stray direct run. Records hold findings, screenshot lists and phase timings, so they are far larger than the atomic-append size (PIPE_BUF/4 KiB). The spec does not say how readers handle a torn or corrupt line.",
+    "implementation_impact": "Interleaved or partial JSON lines can corrupt a cell's history. Whether a bad line is skipped, crashes the plan, or hides the newest record is undefined, and both 'never gate-grade' and 'never hides older records' depend on it.",
+    "suggestion": "Require `flock` on the history file (or a sibling lock) around each append, and write each record as a single `write()` call. Define reader behaviour: a line that fails to parse is ignored with a note in plan and aggregate, and it never stands in for a pass."
+  },
+  {
+    "location": "cell-contract.md > Plan — 'Focus cell = the failing cell from the newest run'",
+    "issue": "Tier 1 can leave two failing cells from one parallel run, for example 8.1:chromium and 1.7.8:firefox. After a loop-back fixes the first and the cold-version run of 8.1 passes, the newest run has no failing cell, yet 1.7.8:firefox is still failing (newest cold full conclusive record = fail, stale). Read literally, 'the failing cell from the newest run' is undefined, and 'no failing cell → the canary' does not apply because a failing cell exists.",
+    "implementation_impact": "Implementers will pick different focus cells, or none, in multi-failure cases. Step 4 `cold-canary` cannot match while a non-canary cell is failing, so the derivation can fall into step 5 with an undefined focus.",
+    "suggestion": "Define focus as: among failing cells, the one whose failing record has the highest started_at (ties: version order, then browser order). Add a plan test with two failing cells from one tier-1 run that walks through both loop-backs."
+  },
+  {
+    "location": "cell-contract.md > Scenario prerequisites (`requires`) validation",
+    "issue": "A spec is skipped when `requires` 'names a spec that does not exist'. `psm-universal-smoke` is not a spec file, so a spec that declares `\"requires\": [\"psm-universal-smoke\"]`, which is natural because the smoke always runs first, would be skipped, and so would all of its dependents. The spec exempts the smoke from the failed-only name check but not here.",
+    "implementation_impact": "Authors can lose coverage silently: a whole chain of scenarios is skipped and `ready` drops through `scenario_notes` for an otherwise valid declaration.",
+    "suggestion": "Either accept `psm-universal-smoke` in `requires` as a satisfied no-op, or reject it with a specific note ('implicit, remove from requires') that does not cascade-skip dependents. Choose one and test it."
+  },
+  {
+    "location": "cell-contract.md > not-run (CAP-3) and Config keys (`no-slots` record) vs Evidence record fields (`started_at` = 'this cell's engine start')",
+    "issue": "`not-run` and `no-slots` records describe cells whose engine never started, but ordering (newest = highest `started_at`, ties by `run_id`) and the plan's 'reason not-run when it is the cell's newest record' both depend on `started_at`. The spec does not say what timestamp these records carry, and it does not list which mandatory fields they leave empty.",
+    "implementation_impact": "If `started_at` is null or missing, a not-run record may sort before or after older records unpredictably, and the plan's reason reporting and CAP-3 test become flaky.",
+    "suggestion": "Specify that synthetic records (not-run, no-slots) use the time ps-run-layer decided not to start the cell as `started_at`/`finished_at`, carry the invocation's `run_id`/`job_id`, and set the other fields to explicit nulls. They stay non-gate-grade."
+  },
+  {
+    "location": "cell-contract.md > Phase timings (CAP-6) + Config keys (`wait-slots`)",
+    "issue": "`wait-slots` (in ps-run-layer, before the child starts) is a logged phase, and on a busy shared host it can be the largest share of wall-clock. It is not listed in `boot_phases` or `phase_durations`, and the cell's `wall_clock` is defined from engine start, so it excludes slot waiting and boot entirely.",
+    "implementation_impact": "CAP-6's purpose, showing what dominates the wait, misses queueing time. The open question on the wall-clock budget cannot be answered from the recorded data.",
+    "suggestion": "Record `wait-slots` per cell (in `phase_durations` or a separate `queue` entry) and add an invocation-level wall-clock (admission request to record write) to the aggregate's `e2e_phase_durations`."
+  },
+  {
+    "location": "cell-contract.md > Plan > Phase 1 ('takes the E2E step from a plan call with the run scope') vs Phase 1 plan call `--versions V --per-version`",
+    "issue": "The plan's `--versions` does two jobs: it scopes `phase1_reuse` to the loop's version, and it acts as the E2E run-scope filter on `e2e_next_cells`. The hosting loop must therefore make two different plan calls with different `--versions`. If a loop-back hosted in V's loop uses its `--versions V` call for the E2E step, step 3 `cold-canary` (canary version ≠ V) is filtered out and becomes `blocked-by-scope`. That 'ends the E2E loop', and Phase 2 starts without a cold canary.",
+    "implementation_impact": "One easy-to-miss calling-convention detail decides whether a loop-back re-proves the canary. A wrong call silently ends the tier-0 loop.",
+    "suggestion": "Split the flags: for example `--phase1-version V` for `phase1_reuse`, keeping `--versions`/`--browsers` only as run scope. Alternatively, state explicitly in run-phases.md that the E2E step call never takes the loop's V, and add a plan test covering loop-back step 3 from a non-canary loop."
+  }
+]

@@ -1,0 +1,104 @@
+[
+  {
+    "location": "Boundaries & Constraints > Never (\"headless config copy/`reached`/`not reached`\") vs Always (Configured cells, Aggregate configured versions)",
+    "issue": "The slice makes the configured set come only from the `--config` JSON (plan and aggregate ignore `--versions`/`--browsers` for it; aggregate versions come from config) but defers the Headless rule that writes the caller's versions and browsers into `<module>-psm-config.headless.<session>.json`. Today headless.md takes versions and browsers from the caller's arguments. After this slice, a psm-develop/psm-cross-version/psm-scaffold/psm-optimize call that narrows to, say, 9.1 × chromium is judged against the resolver's 3×2 set, so `ready` is always false. Under the contract the aggregate's differing `--versions` is also exit 2.",
+    "implementation_impact": "Every narrowed headless caller regresses to permanent `ready=false` (or exit 2) as soon as the slice merges. The per-version verdict contract that SPEC.md Constraints says headless callers keep is broken in the interim.",
+    "suggestion": "Pull the headless config-copy bullet (cell-contract.md > Headless, first bullet) into this slice, since it is pure config plumbing. Or state an explicit interim rule (e.g. headless passes a config whose `psm_target_versions`/`psm_e2e_browsers` equal its arguments) and add a test for a narrowed headless call."
+  },
+  {
+    "location": "Boundaries > Never (CAP-1: `e2e_step`, `phase1_reuse`, run scope; `--tier`) + Always (`--per-version` is exit 2 for layer e2e) + Tasks > docs (\"Fase 1/2 e2e commands\")",
+    "issue": "The slice removes today's E2E orchestration path: run-phases.md Fase 1 gates on `all_reuse` and Fase 2 runs `--layer e2e --per-version --jobs N`, then `--merge-only` when `all_reuse` is true. But it defers everything the contract uses to replace it (`phase1_reuse`, `e2e_step`, `e2e_next_cells`, `e2e_cells_arg`, `--tier`). The spec never says what the Phase 1/Phase 2 E2E procedure is in this intermediate state. It does not say how the orchestrator builds `--cells`, which plan field ends a Phase 1 loop, or when Phase 2 starts. The docs task names the sections to edit but gives no content.",
+    "implementation_impact": "The implementer must invent an interim orchestration, and the contract forbids exactly that (\"the orchestrator ... never picks a tier by judgment\"). The likely result is SKILL.md/run-phases.md text that hand-derives `--cells` from `rerun_matrix`. That text gets rewritten in CAP-1, and until then interactive runs have no defined convergence path.",
+    "suggestion": "Add a short 'Interim orchestration (until CAP-1)' section: the exact Phase 1 and Phase 2 E2E commands, how `--cells` is formed from the e2e `rerun_matrix` entries, which boolean gates loop exit and Phase 2 entry, and that `--merge-only --layer e2e` is the report view only."
+  },
+  {
+    "location": "Always (\"Plan's per-cell `rerun_matrix` reasons\") vs cell-contract.md > Plan (\"`all_reuse` keeps today's computation over these `rerun` lists\") vs ps-plan-layers.py `per_version_rollup`",
+    "issue": "The contract says e2e `rerun_matrix` entries cover every configured cell whatever `--versions`, while `per_version[V].rerun` lists e2e only for V. Today `per_version_rollup` computes `all_reuse = not matrix`. If that stays, a Phase 1 call for `--versions V --per-version` can never report `all_reuse: true` while any other version's or Firefox's cell is stale. If `all_reuse` is recomputed from the `rerun` lists, it can be true while `rerun_matrix` is non-empty. Phase 1 still gates on `all_reuse` in this slice because `phase1_reuse` is deferred.",
+    "implementation_impact": "Depending on which reading the implementer picks, Phase 1 per-version loops either never converge or report convergence while the matrix shows reruns. Either way existing per_version_rollup tests break in an unspecified direction.",
+    "suggestion": "State explicitly how `all_reuse` is computed in this slice: from `per_version[*].rerun` only, or excluding e2e entries for versions outside `--versions`. Add a test: config 3×2, `--versions 9.1 --per-version`, 9.1 fully fresh, 8.1 e2e stale → expected `all_reuse` and `rerun_matrix`."
+  },
+  {
+    "location": "I/O & Edge-Case Matrix row 'Narrowed plan' + Always (\"browser-keyed `layers.e2e`\") vs ps-plan-layers.py canonical mode",
+    "issue": "Canonical (non-`--per-version`) plan output has no `rerun_matrix` today; only per-version mode emits it, via `per_version_rollup`. The 'Narrowed plan' row and the contract ('per-cell planning in both modes') assume one exists, but the spec does not say whether canonical mode gains a `rerun_matrix`, what its non-e2e entries look like, or which mode the row tests.",
+    "implementation_impact": "The implementer either adds a new canonical `rerun_matrix` with a shape nobody specified or tests the row only in per-version mode. Canonical-mode per-cell freshness (used by Phase 2) is then left unverified.",
+    "suggestion": "Specify that canonical mode gains `rerun_matrix`, and give its shape (same `{layer, version, browser?, reason?, per_version_capable}` entries). Split the 'Narrowed plan' row into canonical and per-version cases."
+  },
+  {
+    "location": "Always (\"browser-keyed `layers.e2e`\"); Tasks > ps-plan-layers.py",
+    "issue": "The shape of each browser entry under `layers.e2e` / `per_version[V].layers.e2e` is never defined. Today each layer entry is `plan_layer`'s `{reuse, reason, path}`. Canonical `rerun` is computed as `[l for l, p in plans.items() if not p['reuse']]`, and `plan_per_version` does the same per version. A dict keyed by browser has no `reuse` key.",
+    "implementation_impact": "Existing `rerun` computation breaks (KeyError, or e2e silently treated as reuse). Readers (run-phases.md, tests) get an ad-hoc per-browser shape that may not match what CAP-1 later expects.",
+    "suggestion": "Define the per-browser entry, e.g. `{reuse: bool, reason: <contract reason>|null, history: <path>}`. State that e2e's `rerun` membership derives from 'any browser entry has reuse=false'."
+  },
+  {
+    "location": "Boundaries > Never (\"`stopped` records\") vs cell-contract.md > Evidence record > Storage",
+    "issue": "Stopped records are deferred, but the spec gives no rule for what ps-run-layer appends when it is stopped via `--stop-job` (exit 143) or the child is killed. By the Storage rule, a child that left no result produces an `inconclusive` record with reason `crash`, so an operator stop is recorded as a crash. In the contract, `stopped` is explicitly skipped by `blocked-infra`, while `crash` counts as an infra cause.",
+    "implementation_impact": "Histories written by this slice carry false `crash` records for every operator stop. Once CAP-1 lands, two such records in one session on one fingerprint yield a spurious `blocked-infra` and end the E2E loop.",
+    "suggestion": "Either include the `stopped` record (written from the stop handler) in this slice, or state that a run ending in 143 appends no record for unfinished cells. Add an I/O matrix row for --stop-job during a run."
+  },
+  {
+    "location": "Always (\"prints the Runner > Output JSON line; exit 3/1/0/2/143 per Runner\") vs Never (\"`not-run` production\" deferred to CAP-3)",
+    "issue": "Runner > Output says a child exit 2 makes the remaining queued cells `not-run` with reason `input-error after <ver>`, in-flight children finish, and ps-run-layer exits 2. This slice defers `not-run` production and keeps `--jobs` concurrency. The spec does not say what happens to the other queued versions' cells when one child exits 2 (run anyway? cancelled with no record?), or what `appended` reports.",
+    "implementation_impact": "The implementer must choose between partially building CAP-3 (forbidden: 'do not half-build') and silently diverging from the Runner rule it was told to implement 'as written'.",
+    "suggestion": "Add an explicit interim rule for child exit 2: e.g. no new child starts, queued cells get no record, `appended` lists only records actually written, exit 2. Add it to the I/O matrix."
+  },
+  {
+    "location": "Never (\"`--tier` (record `tier: null`)\") vs Tasks > docs (e2e-quickstart TDD verdict step) and cell-contract.md > Runner input errors",
+    "issue": "cell-contract.md > Docs, which the spec points to, gives the quickstart TDD verdict step as `ps-run-layer.py --layer e2e --cells … --tier 0 --session <token>`. Its Runner input errors also make 'a `--tier` missing' exit 2. This slice adds no `--tier` flag, so argparse rejects `--tier 0` (it comes before `--`). The spec says neither that the missing-`--tier` error is not enforced nor what the slice's TDD command is.",
+    "implementation_impact": "Docs copied from the contract give a command that fails with exit 2. Alternatively the implementer adds a `--tier` flag to make the docs work, which half-builds CAP-1.",
+    "suggestion": "Give the exact slice-level TDD verdict command (`--layer e2e --cells 9.1:chromium --session <t>` then `ps-aggregate.py --reports-dir … --module … --config …`). State that the `--tier` input-error rule is deferred along with the flag."
+  },
+  {
+    "location": "Always (\"plan and aggregate accept `--session` optionally (validated, unused this slice)\") vs cell-contract.md > Evidence record > Fields (`session`)",
+    "issue": "The contract says the token is 'passed as `--session` to every plan call and every `ps-run-layer.py --layer e2e` run; both reject a missing or malformed token (exit 2)'. Making it optional on the plan changes a contract rule rather than deferring a capability, and the spec's own Ask First reserves that for the human.",
+    "implementation_impact": "Plan callers written in this slice (docs, headless) will omit `--session`. CAP-1 then has to tighten the flag to required, which breaks every caller written against the slice.",
+    "suggestion": "Make `--session` required (exit 2 when missing or malformed) on plan calls now, as the contract says; it costs nothing. Or record the deviation explicitly as approved by the human."
+  },
+  {
+    "location": "Design Notes (\"Boot `wall_clock` is taken after `_teardown` returns ... an outer wrapper measures\") + Approach (CAP-6)",
+    "issue": "The boot's `wall_clock` has no defined start point. An outer wrapper around `run_one_version` measures the whole version run, browser phases included. CAP-6's purpose is to show whether boot or browser driving dominates. A boot wall-clock that contains the browser phases makes that comparison meaningless.",
+    "implementation_impact": "`e2e_phase_durations.boots[*].wall_clock` will roughly equal the sum of boot and browser time. Operators and the later timing report (SPEC Success signal) read a boot cost inflated by browser time.",
+    "suggestion": "Define boot `wall_clock` precisely: either from the first container phase (`pull` or `bring-up`) to the end of `teardown`, documented as including browser time, or as elapsed container-phase time excluding `browser:*`. State what the cell's own `wall_clock` covers relative to it."
+  },
+  {
+    "location": "Design Notes (\"one sink per version process\") + Tasks > ps-flashlight-run.py (`phase` timing sink) + I/O row 'Timings'",
+    "issue": "`ps-e2e-run.py main` loops over several versions in one process for direct runs, and the spec keeps per-version `boot_phases`/`cells` in the child shape. A per-process sink accumulates phases across versions, and `boot_id` = process RUN_ID repeats for every version's boot. `fl.phase` is also used by Layer 2 (`install+phpstan`) and Layer 5 (`snapshot-db`, `scenario`), and the sink activation rule is unspecified. Ordinary e2e boots also produce suffixes the matrix does not cover: `pull#2` (PS and DB images), and `bring-up#2`/`teardown#2` after the port-conflict retry.",
+    "implementation_impact": "Direct multi-version runs report merged or duplicated phases and colliding boot_ids. A sink left active, or global, could leak into flashlight/scenario runs. Retry suffixes may be emitted inconsistently.",
+    "suggestion": "Specify a sink opened and closed per `run_one_version` call (per boot), inactive by default so Layers 2 and 5 are unaffected. Define `boot_id` per boot, which is unique even in a multi-version process. Add matrix rows for the two-image pull and the port-retry case."
+  },
+  {
+    "location": "Tasks > `ps-e2e-run.py` bullet vs Always (\"Producers ... as written\")",
+    "issue": "The task list omits several Producer and Field obligations the contract places on the child. Per-engine `launch_error` is one: today a launch failure becomes a version-level `browser_notes` line and the engine is dropped. Each finding's new `action` and `step` (0-based step index) are another; today's `assemble_findings` emits neither `step` nor a per-finding `action`. Per-cell `bo_authed` and `scenarios_run` are also missing. The probe-missed note currently lands in version-level `browser_notes`, and the spec does not say it must stay out of the other engine's cell.",
+    "implementation_impact": "An implementer working from the task list produces cells whose launch failures read as reason `not-driven` or `browser-notes` instead of `launch-error`. Findings lack the (scenario, step, action) key CAP-4/CAP-7 rely on, and a probe-missed chromium note could drop a firefox cell's passing grade.",
+    "suggestion": "Extend the ps-e2e-run.py task to name `launch_error` per cell, findings `action`+`step`, per-cell `bo_authed`, `scenarios_run` (or explicitly null), and the rule that probe or launch notes go only to their own engine's cell. Add a test for each."
+  },
+  {
+    "location": "Always (Aggregate: \"legacy `<module>-e2e*.json` ignored\") + (\"`--merge-only` report view\") vs ps-aggregate.py `main` file discovery",
+    "issue": "`ps-aggregate.py main` auto-derives `<module>-<layer>.json` for every layer in LAYERS when `--reports-dir` is given, e2e included. This slice makes `--merge-only --layer e2e` write `<module>-e2e.json` (the `view: true` report view) into that same folder. The spec does not say that the auto-discovery loop must drop e2e. It also does not say how the aggregate behaves without `--reports-dir`/`--module`, as in today's quickstart form `--static static.json --e2e e2e.json`, where no histories can be located.",
+    "implementation_impact": "The aggregate either loads the report view as E2E evidence, which is a verdict from a non-evidence file, or trips the new `--e2e` exit 2 through discovery. Explicit-path aggregate calls get undefined E2E behaviour.",
+    "suggestion": "State that e2e is removed from the derived-file loop and that the history reader requires `--reports-dir` + `--module`. Say what happens without them (e.g. every cell `missing`, or exit 2 when `--require` includes e2e). Add a test with a `view: true` `<module>-e2e.json` present."
+  },
+  {
+    "location": "Always (\"`ps-run-layer.py --config` for every layer ... Layer `e2e`: exactly one of `--cells`/`--versions`\") vs ps-run-layer.py argparse",
+    "issue": "The spec underspecifies the ps-run-layer argument changes. `--versions` is `required=True` for all layers today, and the spec does not say it becomes optional only for e2e. `merge_only` requires `--versions`, while the contract's e2e report view takes only `--module`, `--reports-dir`, `--config`. The spec also does not list which `--config` keys ps-run-layer itself reads in this slice (configured set and tag map, but not slots, canary or TTL). And it does not say that ps-run-layer must not use `apply_config_file`, which would fill `--versions` from `psm_target_versions`.",
+    "implementation_impact": "Likely bugs: `--cells` runs rejected for missing `--versions`; `--merge-only --layer e2e` still demanding `--versions`; or `apply_config_file` silently widening an e2e run to every configured version.",
+    "suggestion": "Add an explicit flag matrix for ps-run-layer in this slice: required/optional per layer and mode, the keys read from `--config` via its own key map, and `--merge-only --layer e2e` accepting no `--versions`/passthrough."
+  },
+  {
+    "location": "Always (Producers: ps-run-layer resolves each version's `image_tag`) + Code Map (child emits `image_tag`)",
+    "issue": "Both ps-run-layer, from its passthrough `--tag-map`/`--extra-tag-map` and `psm_flashlight_tag_map` in `--config`, and the child, through `apply_config_file` plus the forwarded passthrough, resolve the tag. The spec does not say which value is written into the merged record or what happens when they differ.",
+    "implementation_impact": "If the child's tag is stamped and differs from the tag plan and aggregate resolve (e.g. the tag map arrives only through `--config` on one side), every record reads `stale-tag` forever. The opposite choice stamps a tag the container never ran.",
+    "suggestion": "State that the child's `image_tag` is authoritative for records it produced, and that ps-run-layer compares it with its resolved tag. Treat a mismatch as an input error or an inconclusive record. Add a test."
+  },
+  {
+    "location": "Tasks & Acceptance > Acceptance Criteria",
+    "issue": "The three ACs are thin and partly untestable. 'ready holds the E2E part true' does not define an assertable output. 'All six cells' assumes a 3×2 config that is never stated. Not covered: exit code 3 vs 1 for child and runner; `--new-session` output (`[a-z0-9]{16}`, other flags exit 2); `--e2e` exit 2; legacy `<module>-e2e*.json` ignored; the removed `unscanned` gate (narrowed Layer 1 gives ready=false, not exit 2); `incomplete-record`; `not_run_cells`; per-version `e2e_state`/`reason`; the `--engines` override.",
+    "implementation_impact": "Large parts of the Always list can be skipped or mis-implemented while all ACs pass, and the reviewer has no measurable done-criterion for them.",
+    "suggestion": "Rewrite AC1 with explicit inputs (config 3×2) and outputs (`e2e_cells` all passing gate-grade, `versions[*].e2e_state == pass`, `e2e_phase_durations[ver].boots` with exactly one entry per boot_id). Add ACs for each exit-code path, `--new-session`, `--e2e`, legacy files, the unscanned-gate removal and incomplete records."
+  },
+  {
+    "location": "Frontmatter `context` (omits tier-matrix.md) + Boundaries > Never",
+    "issue": "The Never list defers tier concepts (`e2e_step`, focus, canary, `blocked-*`, run scope) defined in tier-matrix.md, yet the frontmatter context loads only SPEC.md, cell-contract.md and brownfield.md. Some in-scope rerun reasons also depend on Plan definitions (`not-gradeable`, `scenario-notes` against the plan's current `e2e_scenario_notes`) that the slice must implement without the surrounding tier machinery. The spec does not mark which Plan sub-definitions are in scope.",
+    "implementation_impact": "The implementer may stop at the `cell-contract.md` > Plan heading and skip `not-gradeable`/`scenario-notes` because they sit in the deferred tier text. Or they may build the failing/focus definitions because the reason list references them (e.g. aggregate `stale-fail` needs 'failing').",
+    "suggestion": "List the exact Plan sub-definitions in scope (rerun reasons, not-gradeable, failing as used by `stale-fail`) and those out of scope. Add tier-matrix.md to the context, or state why it is unnecessary."
+  }
+]

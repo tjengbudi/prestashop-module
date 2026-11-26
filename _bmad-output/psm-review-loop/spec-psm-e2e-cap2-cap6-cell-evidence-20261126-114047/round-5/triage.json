@@ -1,0 +1,115 @@
+{
+  "round": 5,
+  "critical_high": 6,
+  "fixed": 6,
+  "escalated": 0,
+  "dropped": 0,
+  "code_defects": 0,
+  "questions_for_budi": [],
+  "medium_low": [
+    {
+      "location": "adversarial-3",
+      "issue": "State rule needs a shared home (child exit code vs record_state in ps-plan-layers); implementer choice"
+    },
+    {
+      "location": "adversarial-4",
+      "issue": "Headless config copy is manual (doc-only by decision); script entry point would expand scope"
+    },
+    {
+      "location": "adversarial-6",
+      "issue": "Keep temp dir / point to child output when a crash record is written (diagnostics)"
+    },
+    {
+      "location": "adversarial-7",
+      "issue": "RESERVED_PASSTHROUGH prefix check listed under layer e2e; code applies reserved check to every layer"
+    },
+    {
+      "location": "adversarial-8",
+      "issue": "Fingerprint stat error is exit 2 even when --require excludes e2e (contract rule as written)"
+    },
+    {
+      "location": "adversarial-9",
+      "issue": "boot_wall_clock is a top-level record key the contract Fields list lacks (round-1 gap filler)"
+    },
+    {
+      "location": "adversarial-10",
+      "issue": "AC2 'a contract reason' not a concrete expected reason"
+    },
+    {
+      "location": "edge-case-3",
+      "issue": "Race between reaping a child and appending its records on --stop-job"
+    },
+    {
+      "location": "edge-case-4",
+      "issue": "uv's own exit 2 indistinguishable from ps-e2e-run exit 2"
+    },
+    {
+      "location": "edge-case-5",
+      "issue": "Canonicalization (realpath) of reports/screenshot dirs for inside-module checks"
+    },
+    {
+      "location": "edge-case-6",
+      "issue": "Abbreviated --screenshot-dir in passthrough bypasses the check"
+    },
+    {
+      "location": "edge-case-7",
+      "issue": "Parsing --tag-map/--extra-tag-map from passthrough (forms/abbreviations); other post-run reasons end V's loop as unproven"
+    },
+    {
+      "location": "edge-case-8",
+      "issue": "Headless copy when resolver absent and caller passes nothing; reports dir creation"
+    },
+    {
+      "location": "edge-case-9",
+      "issue": "Order of docker check vs fingerprint walk; skipped line fingerprint"
+    },
+    {
+      "location": "edge-case-10",
+      "issue": "--merge-only with --job-id/--verbose/--config for other layers"
+    },
+    {
+      "location": "implementer-3",
+      "issue": "Whether ps-run-layer applies the incomplete-record rule at write time"
+    },
+    {
+      "location": "implementer-4",
+      "issue": "Narrowed plan row: all_reuse assertion cannot fail (per-version rerun always holds adversarial)"
+    },
+    {
+      "location": "implementer-5",
+      "issue": "Existing parse_browsers fallback tests must become normalizer exit-2 tests"
+    },
+    {
+      "location": "implementer-6",
+      "issue": "Tag-map flag extraction from passthrough must match the child's argparse"
+    },
+    {
+      "location": "implementer-7",
+      "issue": "crash record run_id = ps-run-layer RUN_ID (interim until --run-id, CAP-3)"
+    },
+    {
+      "location": "implementer-8",
+      "issue": "Timings test seam (stub subprocess, not fl phase helpers)"
+    },
+    {
+      "location": "implementer-9",
+      "issue": "per_version[V].clean not listed in Never (depends on deferred phase1_reuse)"
+    },
+    {
+      "location": "implementer-10",
+      "issue": "How selected records' scenario_notes combine into e2e_scenario_notes"
+    },
+    {
+      "location": "implementer-11",
+      "issue": "Quickstart <cfg> source and -- --allow-image-pull form"
+    },
+    {
+      "location": "implementer-12",
+      "issue": "Code Map lists docs/psm/README.md as holding E2E commands"
+    },
+    {
+      "location": "implementer-14",
+      "issue": "--merge-only --layer e2e allow-list omits --job-id/--verbose"
+    }
+  ]
+}

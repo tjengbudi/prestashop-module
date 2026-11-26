@@ -1,0 +1,21 @@
+{"round": 4, "critical_high": 24, "fixed": 22, "escalated": 2, "dropped": 2, "code_defects": 0,
+ "questions_for_budi": [
+  {"id": "20261125-180122.r4-q1", "finding": "Browser paralel berbagi state toko global tanpa urutan antar-engine: checkout-with-bank engine A (menambah bank) bisa selesai sebelum checkout-empty-banks-safe engine B jalan, jadi B menguji jalur 'bank sudah ada' dan bug di jalur bank-kosong lolos diam-diam di B (tanpa temuan, tanpa rerun-seq).", "options": ["Barrier lockstep: skenario k+1 di engine mana pun mulai setelah semua engine selesai skenario k", "Terima dan dokumentasikan batasannya"], "recommended": "Barrier lockstep", "oscillation": false},
+  {"id": "20261125-180122.r4-q2", "finding": "Rerun cell inconclusive bisa tak berujung bila penyebabnya berganti-ganti (no-slots, crash, no-slots) atau ada record stopped di antaranya, karena blocked-infra butuh penyebab yang sama dua kali (keputusan r3-q3).", "options": ["blocked-infra setelah dua record ber-penyebab infra berturut-turut di satu sesi pada fingerprint sama, penyebab apa pun", "Tawarkan 'stop convergence' setiap kali rerun inconclusive (Fase 1 dan 2)"], "recommended": "Penyebab apa pun, dua kali berturut-turut", "oscillation": false}
+ ],
+ "medium_low": [
+  {"location": "SPEC CAP-7 success", "issue": "uji overlap lolos walau lock BO menyerialkan hampir semua skenario bankwire; manfaat terukur lewat laporan timing (adversarial-1)"},
+  {"location": "tier-matrix Rules / Phase 2", "issue": "tier 1 jalan paralel dengan Layer 3; temuan Layer 3 yang dipatch membuang tier 1 (optimasi urutan, adversarial-3)"},
+  {"location": "cell-contract Fresh", "issue": "fingerprint ikut file swap editor/__pycache__/IDE (adversarial-5)"},
+  {"location": "SPEC Success signal", "issue": "tak ada ukuran end-to-end satu sesi validasi (adversarial-6)"},
+  {"location": "cell-contract Plan step 7", "issue": "flag warm-contradicted per sesi agar residue tak bolak-balik warm/cold tiap patch (adversarial-7)"},
+  {"location": "cell-contract Storage / Headless", "issue": "retensi histori dan hapus config copy headless (adversarial-8, edge-case-10)"},
+  {"location": "cell-contract session", "issue": "token sesi tak dipersist; panggil ulang psm-validate membuat keeper lama jadi asing (adversarial-9)"},
+  {"location": "Docs to update / brownfield", "issue": "scan sekali nama spec duplikat di module lain (adversarial-10)"},
+  {"location": "Scenario prerequisites bankwire", "issue": "checkout-empty-banks-safe di requires checkout-with-bank adalah urutan, bukan prasyarat (adversarial-11)"},
+  {"location": "SPEC CAP-3", "issue": "fail-fast tak berefek pada default slots 6 x matriks 3x2 (adversarial-12)"},
+  {"location": "cell-contract Fresh", "issue": "freshness pakai string tag, bukan image ID (adversarial-13)"},
+  {"location": "cell-contract Plan", "issue": "dua sesi bersamaan pada satu module tak dikunci (edge-case-7)"},
+  {"location": "cell-contract Headless", "issue": "config copy headless tak dihapus / gagal tulis tak terdefinisi (edge-case-10)"},
+  {"location": "SPEC frontmatter sources / Assumptions", "issue": "permintaan chat tak tercatat di sources; canary 'newest' vs '9' (implementer-19)"}
+ ]}

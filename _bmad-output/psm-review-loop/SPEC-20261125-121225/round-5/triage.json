@@ -1,0 +1,24 @@
+{"round": 5, "critical_high": 33, "fixed": 32, "escalated": 1, "dropped": 0, "code_defects": 0,
+ "questions_for_budi": [
+  {"id": "20261125-121225.r5-q1",
+   "finding": "Klaim CAP-7 'temuan identik dengan run sekuensial' cuma berlaku satu arah: skenario BO engine A bisa jalan bareng skenario FO engine B dan menutupi kegagalannya. rerun-seq hanya mengulang engine yang punya temuan, jadi kegagalan yang tertutup tak pernah ketahuan.",
+   "options": ["Sempitkan klaim jadi 'tak ada temuan tambahan', terima risiko tertutup", "Lock BO eksklusif terhadap semua skenario engine lain (FO tetap paralel antar-FO), paralelisme berkurang"],
+   "recommended": "Sempitkan klaim jadi 'tak ada temuan tambahan'",
+   "oscillation": false}
+ ],
+ "medium_low": [
+  {"location": "cell-contract.md > Parallel-only failures (adversarial-4)", "issue": "rerun-seq restores only the DB, not files; beyond Budi's r4-q2 decision, consequence is a false fail only"},
+  {"location": "cell-contract.md > Warm Teardown (adversarial-5)", "issue": "keeper stopped before cold-canary of same version; optimisation"},
+  {"location": "cell-contract.md > Plan recorded failure (adversarial-7)", "issue": "old-session failure makes first run warm; efficiency, suggestion to bound by session"},
+  {"location": "cell-contract.md > Plan blocked-infra (adversarial-9)", "issue": "module-attributable causes reported as infra; new report label is scope"},
+  {"location": "cell-contract.md > Headless (adversarial-11)", "issue": "blocked-infra unreachable in headless; callers have their own attempt caps"},
+  {"location": "SPEC.md CAP-3 / psm_e2e_slots (adversarial-12)", "issue": "fail-fast saves nothing at default 6 slots; staggered admission is a design change"},
+  {"location": "cell-contract.md > Evidence record (adversarial-13)", "issue": "optional boot_note marker for cold-boot fallbacks"},
+  {"location": "cell-contract.md > Fresh (adversarial-14)", "issue": "editor/IDE artefacts stale cells; conservative, exclusion list optional"},
+  {"location": "cell-contract.md > Warm Chain (edge-case-2)", "issue": "keeper-start retried warm; addressed incidentally by e2e_warm session rule"},
+  {"location": "cell-contract.md > Storage (edge-case-15)", "issue": "histories keyed by module name only; other copies of the module in the same reports dir"},
+  {"location": "tier-matrix.md / run-phases.md read-merge (implementer-2)", "issue": "adversarial.json findings lifecycle across Layer 3 reruns; pre-existing read-merge behaviour"},
+  {"location": "cell-contract.md > Aggregate (implementer-6)", "issue": "aggregate target_versions vs configured versions when narrowed; ready already false"},
+  {"location": "SPEC.md Open Questions (implementer-28)", "issue": "no measurable wall-clock acceptance; already an Open Question for Budi"},
+  {"location": "SPEC.md Assumptions (implementer-29)", "issue": "canary 'newest target' vs literal 9, Chromium vs branded Chrome; assumption documented"}
+ ]}
