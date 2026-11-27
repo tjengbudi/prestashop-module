@@ -1,0 +1,110 @@
+[
+  {
+    "location": "Boundaries & Constraints > Always > Child, first bullet (\"one engine stays in-process and `sequential`\")",
+    "issue": "The sentence is ambiguous. It sits right after the parallel-mode rule, so it can be read as \"in parallel mode, one of the engines stays in the version process\". That reading contradicts \"spawns one `--engine-worker` subprocess per engine\" and the contract (sync Playwright alone in its process). The intended meaning, that a version with a single probed engine is driven in-process with `browser_mode: sequential`, is never stated.",
+    "implementation_impact": "An implementer may drive engine 1 in the version process and spawn a worker only for engine 2. The version process then runs Playwright while it also has to reap and SIGTERM-forward workers and create `.done` markers. That breaks barrier liveness and the stop path.",
+    "suggestion": "Reword: \"A version process with exactly one probed engine drives it in-process (`browser_mode: sequential`, no snapshot); with >= 2 probed engines and no `--sequential-browsers`, every engine runs in its own worker and the version process drives no browser during the lockstep pass.\""
+  },
+  {
+    "location": "Always > Child (\"direct runs included\") vs ps-e2e-run.py `--slot-cost` default 1",
+    "issue": "Direct `ps-e2e-run.py` runs now go parallel with two engines, but `--slot-cost` still defaults to 1. So a direct two-engine run stamps `psm.slots=1` while driving two browsers. The daemon-wide cap (SPEC Constraints: \"E2E concurrency ... plus CAP-7 browsers\") under-counts every direct run.",
+    "implementation_impact": "ps-run-layer admits other runs' cells against a count that is too low, which brings back the WSL `wait-healthy` stalls the cap exists to prevent. No test row covers this.",
+    "suggestion": "Decide explicitly. Either a direct run without `--slot-cost` stamps the number of probed engines when it goes parallel, or a direct run with `--slot-cost 1` and n > 1 engines forces sequential mode. Add a unit row for the chosen rule."
+  },
+  {
+    "location": "Design Notes > Reset in shell (`reset-db` = drop the DB with the prelude creds, then load the `--databases` dump)",
+    "issue": "`DB_PRELUDE` defines `$MYSQL` and `$MYSQLDUMP` with `$DBN` as a trailing positional argument. Loading the dump through `$MYSQL` after `DROP DATABASE` connects to a database that no longer exists and fails with \"Unknown database\". `$MYSQLDUMP --databases` also puts `$DBN` before the option. The spec says \"with the prelude creds\" without saying not to use the prelude's composed commands.",
+    "implementation_impact": "The obvious implementation (`$MYSQL -e 'DROP DATABASE ...'; $MYSQL < dump`) fails on every reset. Every confirmation then becomes `parallel-unconfirmed` and every later sequential-fallback engine becomes `sequential-reset`. Stubbed unit tests would not catch this.",
+    "suggestion": "Specify the commands: dump with `$MYSQLDUMP_BIN -h $DBH -P $DBPORT -u $DBU -p$DBPW --single-transaction --routines --databases $DBN`, and load with `$MYSQL_BIN -h ... -u ... -p...` (no database argument). Also name the in-container path of the dump and the file list, so they never fall under the docroot that `reset-files` prunes."
+  },
+  {
+    "location": "Always > Reset bullet (\"`DB_PRELUDE` (lazily `load_sibling`ed)\") / Code Map ps-scenario-run.py",
+    "issue": "`ps-scenario-run.load_sibling` calls `sys.exit(2)` on failure, and importing ps-scenario-run executes its own top-level `load_sibling` of ps-flashlight-run. Loading it lazily mid-boot can therefore raise SystemExit(2) after bring-up.",
+    "implementation_impact": "Exit 2 is the input-error code. ps-run-layer would stop queued cells with `input-error after <ver>` instead of the contract's `parallel-unconfirmed`/`sequential-reset` for a snapshot failure. A second module instance of ps-flashlight-run would also be created, with its own `_PROGRESS`, `_JOB` and `_TIMING` globals.",
+    "suggestion": "Load the prelude before bring-up (fail as an input error then), or catch SystemExit and turn it into a snapshot failure. Better: read `DB_PRELUDE` without executing the module, or move it into ps-flashlight-run as the single owner."
+  },
+  {
+    "location": "Design Notes > Reset in shell (`reset-opcache` = `kill -USR2` the php-fpm master found via `/proc/*/comm`)",
+    "issue": "`/proc/*/comm` is the same for the php-fpm master and its workers, and is truncated to 15 characters (for example `php-fpm8.1`). The spec gives no rule for picking the master (for example, the process whose parent is not php-fpm, or `/proc/<pid>/cmdline` containing `master process`). It also gives no success check after the signal.",
+    "implementation_impact": "Signalling a worker with USR2 does not reset opcache, so stale compiled PHP survives the reset and the confirmation pass is not a true reset. Or the selection matches several pids and fails.",
+    "suggestion": "Define the master test (`cmdline` contains `php-fpm: master process`, or ppid not a php-fpm pid), the comm match (prefix `php-fpm`), and that exactly one match is required, otherwise fall through to apachectl or fail."
+  },
+  {
+    "location": "Design Notes > Confirmation merge; I/O matrix (no row for a degraded rerun)",
+    "issue": "The merge moves every parallel finding \"absent from\" the rerun's findings to `parallel_only`. It does not handle a rerun that could not reproduce for infrastructure reasons: a `launch_error`, `drive_engine`'s \"gagal setelah launch\" (scenarios=[]), or a rerun whose BO login failed, so the same (scenario, step, action) is now in `inconclusive` instead of `findings`.",
+    "implementation_impact": "A real BO finding F becomes \"not reproduced\" (`parallel_only`) when the rerun merely could not authenticate. That breaks the honesty law's \"unconfirmable findings never pass silently\": F should make the cell `parallel-unconfirmed`, not be filed as a parallel-only artefact.",
+    "suggestion": "Add rules and matrix rows. A rerun with `launch_error`, or with no driven scenarios, gives `parallel-unconfirmed`. A parallel finding whose key is in the rerun's `inconclusive` stays unconfirmed, so the cell is `parallel-unconfirmed` unless the rerun has its own `fail`. Only a key that ran conclusively and passed moves to `parallel_only`."
+  },
+  {
+    "location": "Design Notes > Snapshot failure; I/O matrix row Unconfirmable",
+    "issue": "Several reset-failure cases are left undefined. (1) After the first engine's confirmation reset fails (DB possibly already dropped), does the next engine in `psm_e2e_browsers` order still try its own reset and pass, or is it marked `parallel-unconfirmed` straight away? (2) An engine that needs only a BO-login fallback pass has no findings to leave unconfirmed. If its reset fails, the contract's `parallel-unconfirmed` \"with the unconfirmed findings in parallel_only\" fits poorly, and its discarded first pass leaves the cell with no driven result. (3) What `findings` holds on a `parallel-unconfirmed` or `sequential-reset` cell (empty, null, or the parallel findings) is not stated.",
+    "implementation_impact": "Different implementations give different states and exit codes for the same failure. Plan and aggregate consumers may read leftover `findings` on an inconclusive record as a fail signal, for example when picking a focus cell.",
+    "suggestion": "Add matrix rows covering: reset fails before engine 1's rerun while engine 2 also needs a pass; reset fails before a BO-login fallback pass. State that `findings` is `[]` on these child-set inconclusive cells, with the parallel findings only in `parallel_only`."
+  },
+  {
+    "location": "Design Notes > `scenario_spans` vs Confirmation merge (BO-login fallback \"replaces the cell's driven fields wholesale\")",
+    "issue": "One note says `scenario_spans` (and `started_at`) always come from the first, lockstep pass. The other says the BO-login fallback replaces the driven fields wholesale. Spans, `started_at` and `bo_authed` are not explicitly in or out of \"driven fields\". The contract also discards the fallback engine's first-pass result.",
+    "implementation_impact": "If spans and started_at are replaced, the overlap acceptance criterion and live test (c) become false or vacuous for that cell, because the sequential pass trivially overlaps nothing. If they are kept, the record mixes a discarded pass's timing with another pass's results.",
+    "suggestion": "List the replaced fields explicitly for the fallback (findings, inconclusive, authored_assertions, bo_authed, console_errors, screenshots, finished_at, scenarios_run). State whether `started_at` and `scenario_spans` stay from the lockstep pass, and have live test (c) skip cells that used the fallback."
+  },
+  {
+    "location": "Always > Child (lockstep barrier, \"no timeout\") / parallel driver",
+    "issue": "The barrier's liveness depends only on the version process creating `<engine>.done` when it reaps a worker. If the version process itself dies (crash, OOM, SIGKILL after the stop grace period), a surviving worker waits on `barrier-wait` forever, because no timeout is the stated rule. The spec also does not say what the version process does with live workers when its own code raises.",
+    "implementation_impact": "Orphaned worker processes stay registered under the Job ID, emit ALIVE lines forever, and keep the browser open. `--cleanup-orphans` treats the owner as alive.",
+    "suggestion": "Require workers to exit when the parent pid is gone (check `os.getppid()` or the parent pid's liveness in the barrier and lock poll loops). Require the version process to SIGTERM and reap workers in its `finally` before teardown. Add a unit test that kills the parent mid-barrier."
+  },
+  {
+    "location": "Tasks > ps-e2e-run.py engine worker (`--engine-worker <spec.json>`, result file)",
+    "issue": "Neither the spec nor the contract defines the worker spec JSON (engine, scenarios, ctx, lock/step paths, result path, job id, progress file), the result file schema (cell fields plus phase entries in recorded order), or what \"parseable\" means. That includes a truncated write, or a result present with a non-zero exit. The worker also must not go through `fl.run_main_with_progress`, which always writes `DONE`; the spec only says \"never `DONE`\".",
+    "implementation_impact": "Crash detection is ambiguous, and \"timings re-recorded in order so suffixes continue\" cannot be implemented consistently without a schema. A worker stopped by SIGTERM through the usual wrapper writes `DONE rc=stopped` into the version's log, so the runner reads the version as finished.",
+    "suggestion": "Pin down the minimal schemas. The result file is written atomically (temp file plus `os.replace`). Parseable means a JSON object with the agreed keys, whatever the exit code. The worker entry bypasses `run_main_with_progress` (or passes a flag that suppresses DONE)."
+  },
+  {
+    "location": "I/O matrix row Parallel-only failure (\"reset phases `#2` in `boot_phases`\") / Always > Reset bullet (\"`#n` suffixes\")",
+    "issue": "`TimingSink.record` suffixes per name from the second occurrence. The first confirmation reset therefore records `reset-db`, `reset-files`, `reset-opcache` with no suffix, and only `wait-http#2` and `warmup-bo#2` get `#2`. The matrix (and the contract wording) implies `reset-db#2`.",
+    "implementation_impact": "Tests written to the matrix fail against the existing sink, or someone \"fixes\" the sink to force suffixes and breaks CAP-6 keys elsewhere.",
+    "suggestion": "State the exact expected keys for one and two confirmation passes, for example `reset-db`, `reset-files`, `reset-opcache`, `wait-http#2`, `warmup-bo#2`, then `reset-db#2` and so on."
+  },
+  {
+    "location": "Acceptance Criteria #1 / I/O matrix row Parallel clean",
+    "issue": "\"Both start before either ends\" is satisfied by any implementation that spawns both workers before reaping either, even one that serializes every scenario. A take-`LOCK_EX`-always bug would pass. Nothing checks that FO-only scenarios actually overlap across engines, or that parallel mode saves time. On bankwire, 5 of 6 steps (the smoke plus four specs) are BO, so the lock serializes almost everything. Meanwhile any finding adds a full reset plus a full sequential rerun per failing engine, which can make a failing gate boot slower than the sequential fallback (where fail-fast skips firefox).",
+    "implementation_impact": "The Problem statement's speed-up promise goes unverified. A regression to full serialization would ship green, and the failure-path cost is not acknowledged.",
+    "suggestion": "Add a criterion (unit with real threads, and live) that FO-only steps' spans overlap across engines. Record the expected gain and the failure-path cost explicitly, at least as a note feeding the deferred bankwire timing report."
+  },
+  {
+    "location": "Boundaries > Honesty law; Problem statement (shared state)",
+    "issue": "Confirmation reruns only findings. Within a lockstep step, engine B's BO scenario still runs after engine A's run of the same scenario has mutated the shop, and FO-only scenarios run concurrently against one DB. A failure that only shows on fresh state (first-time config save, empty table) can therefore be masked into a pass on the later engine. It is never rerun, so the claimed identity with one cold run per engine does not hold by construction.",
+    "implementation_impact": "False passes are possible in parallel mode, the one failure class the honesty law exists to prevent. The Identical findings live test uses a fault that fails on every engine, so it cannot detect masking.",
+    "suggestion": "Acknowledge the residual risk explicitly (or escalate as an Ask First contract change), and add a live fixture that only fails on fresh state to the identical-findings test. Or document that `{browser}`-unique data is required for spec authors and why that is sufficient."
+  },
+  {
+    "location": "Always > Runner (\"a version any of whose configured cells has a newest record with reason `parallel-unconfirmed` ... is always admitted at cost 1 sequential\")",
+    "issue": "The forcing lasts only while `parallel-unconfirmed` is the newest record. In the forced sequential run, a `fail` on the first engine makes the second engine `not-run`, which becomes its newest record, so the next run goes parallel again and can repeat `parallel-unconfirmed` indefinitely. If the root cause is the reset routine itself, the forced sequential run needs the same reset and produces `sequential-reset`. The remedy then cannot help, and nothing says so.",
+    "implementation_impact": "An oscillation between parallel-unconfirmed, not-run and parallel-unconfirmed never reaches `blocked-infra` (`not-run` breaks the pair), so the operator gets neither evidence nor a clear block.",
+    "suggestion": "Base the forcing on the newest record that is not `not-run`/`no-slots`, or on any `parallel-unconfirmed` record in the current session. Add a matrix row for a persistent reset failure to show it ends in `blocked-infra`."
+  },
+  {
+    "location": "Tasks > tests/live/test-cap7-live.py (b)/(c); Verification command 3",
+    "issue": "(b) and (c) run through `ps-run-layer.py --cells V:chromium+firefox` on a shared daemon. If fewer than 2 slots are free, admission silently falls back to cost 1 `--sequential-browsers`. (c) then checks sequential records, where no spans overlap anyway, so it passes vacuously, and (b) does not test parallel confirmation at all.",
+    "implementation_impact": "The CAP-7 live contract can be \"proven\" without parallel mode ever running.",
+    "suggestion": "Require the test to assert `browser_mode: parallel`, the presence of `rerun-seq:<engine>` phases, and overlapping `started_at`/`finished_at` on the records it checks. Fail (not skip) when admission fell back to sequential, or reserve slots via `--slots` and a pre-check of daemon usage."
+  },
+  {
+    "location": "Verification (live command \"expected: exit 0\") / Acceptance Criteria #2",
+    "issue": "The live suite skips when Docker, either browser, or an image is missing, and a skip exits 0. The Verification and the acceptance criterion (\"(a), (b) and (c) pass on every default target version\") therefore cannot tell a pass from a skip. `PSM_LIVE_VERSIONS` can also narrow the versions without the criterion noticing.",
+    "implementation_impact": "The slice can be marked verified when no live check ran, or ran on one version only.",
+    "suggestion": "Have the suite print a machine-checkable summary (ran/skipped per test and version), and require the verification to show (a), (b) and (c) ran on every default target with `PSM_LIVE_VERSIONS` unset."
+  },
+  {
+    "location": "Design Notes > Confirmation merge (`finished_at` from the counting pass, `started_at` from the first pass)",
+    "issue": "Confirmation passes run one after another in `psm_e2e_browsers` order. A later engine's `finished_at` therefore comes after the earlier engine's reset and rerun as well. The cell's `wall_clock` (`finished_at` minus `started_at`) counts another engine's reset and rerun time as its own.",
+    "implementation_impact": "CAP-6 per-cell wall-clock and the deferred bankwire timing report misattribute time: the second engine looks slow whenever the first engine had a finding.",
+    "suggestion": "Either document that a cell's wall_clock spans its first-pass start to its own pass's end, including queueing behind other engines' passes, or keep `finished_at` from the lockstep pass and rely on `rerun-seq:<engine>` for the rerun's duration."
+  },
+  {
+    "location": "Always > Child (\"Every scenario holds `fcntl.flock` ...; `_bo_login` runs outside it\") / live test (a)",
+    "issue": "Engine B's `_bo_login` can run while engine A already holds `LOCK_EX` for step 0 (the universal smoke is BO), because the login happens before the first scenario and outside the lock. Live test (a) proves only the sequence \"A logs in, B logs in, then each loads\". It does not cover a login that overlaps another engine's running BO scenario (session or token churn mid-scenario on PS 8/9).",
+    "implementation_impact": "Intermittent BO findings or inconclusive steps on the first BO step. These are then confirmed away or produce BO-login fallbacks, which adds reruns and flakiness that the live suite does not exercise.",
+    "suggestion": "Either do every engine's `_bo_login` before barrier step 0 (all engines log in, then the first barrier), or extend live test (a) to log B in while A is mid-way through a BO page sequence."
+  }
+]

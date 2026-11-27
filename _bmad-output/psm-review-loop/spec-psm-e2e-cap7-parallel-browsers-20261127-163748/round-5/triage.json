@@ -1,0 +1,6 @@
+{"round": 5, "critical_high": 12, "fixed": 12, "escalated": 0, "dropped": 0, "code_defects": 0,
+ "questions_for_budi": [],
+ "medium_low": [
+  {"location": "Tasks > tests/live/test-cap7-live.py (PSM_LIVE_VERSIONS)", "issue": "Parsing of an empty, unknown or image-missing PSM_LIVE_VERSIONS value is unspecified; Verification requires it unset, so acceptance is unaffected (edge-case-4)."},
+  {"location": "Boundaries > Always > Runner / Design Notes > Logging", "issue": "ps-run-layer does not log why a version was admitted sequential (slots vs parallel-unconfirmed history); observability enhancement, live (b) already uses a fresh reports dir (implementer-5)."}
+ ]}

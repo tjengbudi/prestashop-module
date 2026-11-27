@@ -1,0 +1,26 @@
+[
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:94 (Design Notes > Snapshot and reset in shell: listing snippet, reset-files)",
+    "issue": "The snapshot/reset scripts use $MOD_NAME (find prune, rm -rf modules/$MOD_NAME, cp -r ... modules/$MOD_NAME), but the spec never says the fl._exec calls pass MOD_NAME in env. The spec says only one fl._exec with timeout --timeout. Install passes {\"MOD_NAME\": mod_name}, but Layer 5's DB_PRELUDE helper (_sh) passes {}.",
+    "implementation_impact": "If MOD_NAME is empty, reset-files runs rm -rf modules/ and then cp -r /ps-module-src modules/, which wipes every module. The rerun then reports false failures that count as confirmed blocking findings (fail, exit 3). The snapshot listing also covers all of modules/.",
+    "suggestion": "State that every snapshot/reset fl._exec gets env {\"MOD_NAME\": mod_name}, and that each script starts with : \"${MOD_NAME:?}\" so an empty name fails that sub-phase (its <sub-phase>: reason entry) before any rm runs; add a unit test asserting the env passed to the stubbed _exec."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:91 (Design Notes > Confirmation merge: version-level legacy fields rebuilt from the final cells)",
+    "issue": "Legacy pass = no findings and no parallel-unconfirmed cell. This holds even when browsers is empty: every worker crashed, the sequential fallback's snapshot failed (all cells sequential-reset), or the boot or install failed with version-level errors (no cell driven). Today these paths leave pass false (the res default, with an early return). skipped_browser covers only the all-launch_error case.",
+    "implementation_impact": "A version that tested nothing reports pass: true with browsers: [] and skipped_browser: false. Any consumer of the legacy fields (direct-run JSON, _AND_KEYS merge) then reads it as passing.",
+    "suggestion": "Define pass = bool(browsers) and no version-level errors and no findings and no parallel-unconfirmed cell. Say whether the rebuild also runs on early-return paths (boot/install/wait-http errors) or those keep pass false. Add an I/O row: all workers crash -> pass false, browsers []."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:29,94 (shared reset routine: wait-http and warmup-bo after reset; health check)",
+    "issue": "The spec bounds snapshot-db, reset-db, reset-files and reset-opcache by --timeout. It gives no timeout and no target for the reset routine's wait-http and warmup-bo: the first boot uses --startup-timeout with the FO / and BO AdminLogin URLs. It also never says how long the one-shot health check may wait on a slow docker inspect.",
+    "implementation_impact": "Implementers may pick --timeout (600 s), --startup-timeout (180 s) or a new value. A slow post-reset shop then passes or fails the routine (parallel-unconfirmed vs confirmed) depending on that choice, and unit tests cannot pin the behavior.",
+    "suggestion": "State: post-reset wait-http and warmup-bo call the same helpers as first boot with --startup-timeout and the same FO/BO URLs; the health check is one _health_status call with its existing docker timeout."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:77 (tests/live/test-cap7-live.py: PSM_LIVE_VERSIONS may narrow the versions)",
+    "issue": "No handling is given for a PSM_LIVE_VERSIONS value that is empty or whitespace, names a version outside the default target versions, or names one whose default-tag image is missing locally.",
+    "implementation_impact": "The suite can silently test nothing and exit 0 with no SKIPPED line, or crash with a traceback. The Verification step (exit 0, no SKIPPED) can then pass without any version exercised.",
+    "suggestion": "Specify: parse as a comma list, trim, drop empties; an unknown version, or an empty result after filtering, is a test failure (exit 1) naming the value; a listed version whose image is missing gives one SKIPPED: <reason> line like the other missing images."
+  }
+]

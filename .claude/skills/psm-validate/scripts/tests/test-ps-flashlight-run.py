@@ -950,6 +950,53 @@ def test_timing_sink():
                 pass
             ok &= check("timing: sink baru per boot — hitungan #n mulai lagi",
                         set(mod.timing_deactivate().boot_phases) == {"pull"} and sink2 is not sink)
+
+            # CAP-7: fase sel lockstep/konfirmasi ikut ke phase_durations engine-nya; events
+            # = (nama, detik, outcome) TANPA akhiran, urut catat (dikirim worker ke proses versi).
+            sink3 = mod.timing_activate()
+            for name in ("lock-wait:firefox", "browser:firefox", "barrier-wait:firefox",
+                         "lock-wait:firefox", "snapshot-db", "rerun-seq:firefox", "reset-db",
+                         "browser:firefox"):
+                with mod.phase(name, None):
+                    pass
+            got3 = mod.timing_deactivate()
+            ok &= check("timing CAP-7: lock-wait:/barrier-wait:/rerun-seq: ke phase_durations "
+                        "engine (#n per nama), bukan boot_phases",
+                        set(got3.phase_durations["firefox"]) == {
+                            "lock-wait:firefox", "lock-wait:firefox#2", "browser:firefox",
+                            "browser:firefox#2", "barrier-wait:firefox", "rerun-seq:firefox"}
+                        and set(got3.boot_phases) == {"snapshot-db", "reset-db"})
+            ok &= check("timing CAP-7: events tanpa akhiran, urut catat, (nama, detik, outcome)",
+                        [e[0] for e in got3.events] == ["lock-wait:firefox", "browser:firefox",
+                                                         "barrier-wait:firefox", "lock-wait:firefox",
+                                                         "snapshot-db", "rerun-seq:firefox",
+                                                         "reset-db", "browser:firefox"]
+                        and all(len(e) == 3 and isinstance(e[1], float) and e[2] == "ok"
+                                for e in got3.events))
+            ok &= check("timing CAP-7: CELL_PHASE_PREFIX tetap 'browser:' (ps-plan-layers _driven), "
+                        "CELL_PHASE_PREFIXES memuatnya",
+                        mod.CELL_PHASE_PREFIX == "browser:"
+                        and mod.CELL_PHASE_PREFIXES == ("browser:", "lock-wait:", "barrier-wait:",
+                                                         "rerun-seq:"))
+            sink4 = mod.timing_activate()
+            for name, secs, outcome in got3.events:
+                sink4.record(name, secs, outcome)
+            ok &= check("timing CAP-7: catat ulang events ke sink lain = partisi & akhiran yang sama",
+                        mod.timing_deactivate().as_dict() == got3.as_dict())
+
+            # progress_attach: sambung ke log yang SUDAH ada tanpa mengosongkannya (worker engine)
+            log2 = Path(td) / "w.progress.log"
+            log2.write_text("baris proses versi\n", encoding="utf-8")
+            mod.progress_attach(str(log2), "8.1", 7)
+            with mod.phase("browser:chromium", None):
+                pass
+            l2 = log2.read_text(encoding="utf-8").splitlines()
+            ok &= check("progress_attach: tanpa truncate, versi & slow_after diset, baris ditulis",
+                        l2[0] == "baris proses versi" and " v=8.1 " in l2[-1]
+                        and " END browser:chromium " in l2[-1]
+                        and mod._PROGRESS["slow_after"] == 7)
+            mod.progress_attach(None, "8.1")
+            ok &= check("progress_attach(None) = log nonaktif", mod._PROGRESS["path"] is None)
     finally:
         mod._TIMING["sink"] = None
         mod._PROGRESS.clear()

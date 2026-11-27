@@ -56,7 +56,7 @@ Deskripsi lengkap tiap skill + contoh pemakaian: [Referensi per skill](#referens
 | `psm_e2e_enabled` | Gerbang uji browser E2E psm-validate (Lapis 4): `true`/`false` | `true` |
 | `psm_e2e_browsers` | Engine Playwright untuk uji E2E, dipisah koma | `chromium,firefox` |
 | `psm_e2e_canary` | Sel canary tier 0 Lapis 4, `<versi>:<browser>` di dalam `psm_target_versions` × `psm_e2e_browsers`; kosong = versi target terbaru × `chromium` (browser terkonfigurasi pertama bila tanpa chromium). Salah bentuk / di luar sel = exit 2, **walau** `psm_e2e_enabled` false | `""` |
-| `psm_e2e_slots` | Cap slot uji E2E **sedaemon** Docker (`ps-run-layer.py --slots`): jumlah label `psm.slots` semua container E2E yang jalan, lintas run & sesi; bilangan bulat ≥ 1 | `6` |
+| `psm_e2e_slots` | Cap slot uji E2E **sedaemon** Docker (`ps-run-layer.py --slots`): jumlah label `psm.slots` semua container E2E yang jalan, lintas run & sesi. Versi yang men-drive n browser secara paralel dalam satu boot memakan n slot (tak muat → 1 slot, browser berurutan); bilangan bulat ≥ 1 | `6` |
 | `psm_modules_dir` | Folder tempat module PrestaShop kamu | `{project-root}/modules` |
 | `psm_reports_dir` | Output laporan validasi/optimasi | `{project-root}/_bmad-output/psm-validate` |
 

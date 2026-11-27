@@ -1,0 +1,38 @@
+[
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:91 (Confirmation merge: 'version-level legacy fields ... are rebuilt from the final cells as today')",
+    "issue": "The spec says the legacy fields are rebuilt 'as today' but doesn't map the new child-set cells into them. A crash cell (launch_error null, findings null), a parallel-unconfirmed cell (findings []) and a sequential-reset cell (never driven) have no defined place in `browsers`, `pass` or `skipped_browser`.",
+    "implementation_impact": "Applied literally, today's rules put a crashed engine in `browsers` and set `pass: true` for a version whose findings are unconfirmed or whose engines crashed or were never driven. The direct-run `pass` then reads green while the exit code is 1, so unconfirmed findings pass silently in the legacy output.",
+    "suggestion": "Add one sentence: legacy `browsers` lists only engines whose cell is not crash, parallel-unconfirmed, sequential-reset, not-run or launch_error; legacy `pass` is false when any cell is parallel-unconfirmed (or define pass = all cells pass); `skipped_browser` is true when `browsers` is empty. Add one unit test per child-set state."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:94 (reset-opcache: 'its parent's does not [start with php-fpm]' + 'a /proc entry that ... cannot be read is skipped')",
+    "issue": "The php-fpm master can be the container's PID 1 (CMD `php-fpm -F`), so its parent is pid 0 and /proc/0 does not exist. The skip-on-unreadable rule then drops the master itself. The spec also doesn't say how the parent pid is read (/proc/<p>/stat field 4 breaks on a comm with spaces or parens; /proc/<p>/status has a PPid line).",
+    "implementation_impact": "Every reset-opcache sees zero masters and fails, so on such an image every confirmation pass becomes parallel-unconfirmed and every later engine in the sequential fallback becomes sequential-reset.",
+    "suggestion": "Read the parent from `/proc/$p/status` (`PPid:`). Treat PPid 0, or a parent whose comm cannot be read, as 'parent is not php-fpm'. Skip on unreadable applies only to the candidate's own comm/status. Add a unit fixture with the master at PID 1."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:94 (reset-files: 'LC_ALL=C sort' listing, then 'comm -13 /tmp/psm-e2e-snapshot.files /tmp/psm-e2e-current.files')",
+    "issue": "Only `sort` is pinned to LC_ALL=C. `comm` runs in the container's own locale. GNU comm checks input order by its locale collation when there are unpairable lines, which the new files always are.",
+    "implementation_impact": "When the container sets a non-C LANG/LC_ALL, GNU comm reports 'file 1 is not in sorted order' and exits non-zero. Under `set -e`, reset-files then always fails, giving parallel-unconfirmed or sequential-reset on every run.",
+    "suggestion": "Write `LC_ALL=C comm -13 ...` in the shared snippet, or export LC_ALL=C once at the top of every snapshot/reset script."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:28,87 (worker per-scenario hook: acquire, start_ns, run, end_ns, remove holder marker, close fd, write step marker)",
+    "issue": "The spec covers only the normal exit from the hook. It doesn't say what happens when the scenario raises inside the lock (an exception escaping `_drive_page` into drive_engine's 'gagal setelah launch' path, or BaseException), or when creating the holder marker fails after the flock is acquired. It also doesn't say whether the version process removes a reaped or crashed worker's `<holders>/<engine>` marker.",
+    "implementation_impact": "Without try/finally the lock stays held through `browser.close()`. A stale holder marker makes another engine's `lock-wait` name an exited engine as the holder. A holder-marker OSError could abort the scenario or the worker, turning an infra hiccup into a crash cell.",
+    "suggestion": "Spec: the hook releases in `finally` (remove the marker best-effort, close the fd) and writes the step marker only when the scenario completed. A holder-marker create error is ignored (logging only). On reaping a worker, the version process also deletes `<holders>/<engine>` best-effort."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:88,90 (Phases: 'rerun-seq:<engine> wraps the health check, reset and drive'; Confirmation passes: 'After the first failure ... no further reset runs')",
+    "issue": "The spec doesn't give the END outcome of `rerun-seq:<engine>` when its health check or a reset sub-phase fails. It doesn't say whether a later engine skipped after that failure still opens a `rerun-seq:<engine>` phase. It also doesn't say what that later engine's cell `errors` entry says: the original sub-phase string, or a 'skipped after <engine>' note.",
+    "implementation_impact": "`phase_durations` could show `rerun-seq` 'ok' for an unconfirmed pass, or show near-zero `rerun-seq` entries for passes that never ran, which contradicts 'a phase that did not occur is omitted'. The unit tests for the Unconfirmable row then have no expected record.",
+    "suggestion": "State: a failing routine sets `ph.status = '<sub-phase>-failed'` on `rerun-seq:<engine>`. Engines skipped afterwards open no `rerun-seq` phase. Their cell `errors` repeats the first failure's `<sub-phase>: <reason>` entry verbatim."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:42 (I/O 'Parallel clean': 'FO-only scenarios' spans overlap across engines') with :28 (barrier waits poll)",
+    "issue": "The barrier is polled. The engine that sees the last marker first starts step k at once, and the other starts up to one poll interval later. If an FO-only scenario takes less time than the poll interval, the two spans need not overlap.",
+    "implementation_impact": "The unit test for this row, using stub workers with near-instant scenarios, is flaky or fails even though the lock and barrier are correct.",
+    "suggestion": "Make the stub FO scenario last at least 2× the poll interval (name the constant), or assert FO overlap only where scenario duration exceeds the poll interval. BO non-overlap stays a strict assertion."
+  }
+]

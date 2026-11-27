@@ -51,13 +51,35 @@ FLAG ANAK (diset ps-run-layer, cell-contract.md > Runner > Child flags; CAP-3):
   - `--run-id <hex12>` = RUN_ID klaim slot yang sudah dibuat ps-run-layer; dipasang sebagai
     RUN_ID proses SEBELUM log kemajuan, registry job, maupun label (`psm.run`). Bukan
     `[0-9a-f]{12}` = exit 2.
-  - `--slot-cost <n>` (int >= 1, default 1) dicap apa adanya sebagai label `psm.slots=<n>` di
-    container PS SAJA — juga pada run langsung, jadi run langsung ikut terhitung di slot
-    seluruh daemon (tapi melewati admisi). Bukan int >= 1 = exit 2.
+  - `--slot-cost <n>` (int >= 1) dicap apa adanya sebagai label `psm.slots=<n>` di container PS
+    SAJA. Absen (run langsung) = jumlah engine yang di-drive PARALEL, atau 1 bila satu engine /
+    `--sequential-browsers` — run langsung ikut terhitung di slot seluruh daemon (tapi melewati
+    admisi). Bukan int >= 1 = exit 2.
   - `--progress-append` = log kemajuan TIDAK dikosongkan (baris `wait-slots` milik ps-run-layer).
-  - `--sequential-browsers` = engine di-drive berurutan dgn fail-fast antar-engine: sesudah
-    `fail` satu engine, engine berikutnya tak dimulai dan selnya `state: not-run`,
-    `reason: fail-fast after <ver>:<engine>`. Tanpa flag ini (run langsung) semua engine jalan.
+  - `--sequential-browsers` = engine di-drive berurutan (admisi cost 1) dgn fail-fast antar-engine:
+    sesudah `fail` satu engine, engine berikutnya tak dimulai dan selnya `state: not-run`,
+    `reason: fail-fast after <ver>:<engine>`. Dgn > 1 engine: `snapshot-db` sesudah `warmup-bo`,
+    lalu reset penuh (`reset-db`, `reset-files`, `reset-opcache`, `wait-http`, `warmup-bo`)
+    sebelum tiap engine berikutnya; snapshot/reset gagal = engine yang belum jalan
+    `inconclusive`, reason `sequential-reset`, sub-fase gagal di `errors` sel itu.
+
+BROWSER PARALEL (CAP-7, cell-contract.md > Parallel browsers):
+  - >= 2 engine terprobe tanpa `--sequential-browsers` (run langsung termasuk) = mode paralel
+    (`browser_mode: parallel`): proses versi mengambil `snapshot-db`, lalu menelurkan satu
+    subproses `--engine-worker <spec.json>` per engine (Job ID & RUN_ID sama, ctx sendiri,
+    screenshot `<shots>/<ver>/<engine>`, baris log kemajuan ke log versi, tak pernah `DONE`).
+    Satu engine / `--sequential-browsers` = di-drive dalam proses (`browser_mode: sequential`).
+  - Worker: tiap skenario memegang `flock` `<tmp>/psm-locks/<job>-<ver>.bo.lock` (LOCK_EX bila
+    ada `goto` BO, else LOCK_SH; tunggu = fase `lock-wait:<engine>`) dan maju lockstep per
+    skenario lewat penanda `<job>-<ver>.step/<engine>.<k>` (tunggu = `barrier-wait:<engine>`).
+    Kedua tunggu tanpa batas waktu sendiri, tak pernah SLOW. Worker tanpa hasil terbaca = sel
+    `inconclusive`, reason `crash`, exit code di `browser_notes`.
+  - Konfirmasi sekuensial sesudah semua worker selesai (urut `psm_e2e_browsers`, maks satu pass
+    per engine, tiap pass diawali reset penuh ke snapshot): login BO engine gagal sementara
+    engine lain sukses → pass ulang `browser:<engine>#2` yang menggantikan pass pertama; engine
+    bertemuan, atau yang men-drive skenario bertemuan di engine mana pun → `rerun-seq:<engine>`.
+    Temuan paralel yang tak terulang pindah ke `parallel_only` (tak memblok); snapshot/health/
+    reset gagal = `inconclusive`, reason `parallel-unconfirmed`. Exit code melihat hasil terkonfirmasi.
 
 Format spec skenario authored (`<module>/tests/e2e/*.json`):
   {"name": "configure-save",
@@ -75,19 +97,27 @@ Format spec skenario authored (`<module>/tests/e2e/*.json`):
    ]}
 Placeholder yang disubstitusi di `path`/`url`/`text`/`value`: {mod} {fo} {bo} {browser}.
 Area default `fo`. {browser} = engine aktif — pakai untuk nama data unik per-browser
-(browser berbagi satu DB per versi; duplikat data = temuan memblok palsu).
+(dalam satu step lockstep engine berbagi satu DB; duplikat data = temuan memblok palsu).
+Hanya di pass konfirmasi sesudah run paralel (`rerun-seq`, fallback login BO) {browser} =
+`<engine>-seq`, supaya data pass itu tak bertabrakan dgn pass pertama.
 
 Prasyarat browser (sekali, host): `uv run --with playwright playwright install chromium firefox`
 — lewat playwright yang sama dgn yang diprovisi header PEP723 skrip ini, supaya build browser
 yang di-install cocok dgn yang di-drive.
 """
 import argparse
+import contextlib
+import fcntl
 import importlib.util
 import json
+import os
 import re
+import shutil
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -143,6 +173,18 @@ WAIT_TEXT_POLL_MS = 250           # jeda antar-cek; polling dipilih agar permuka
                                   # logika ini tetap teruji dengan page-tiruan.
 SETTLE_TIMEOUT_MS = 15000         # batas tunggu settle (networkidle login BO / 'load'
                                   # sebelum expect_text) — BO polling XHR, jangan tunggu selamanya
+
+# --- Browser paralel (CAP-7, cell-contract.md > Parallel browsers) -------------------------
+WORKER_FLAG = "--engine-worker"
+# Perintah worker engine; path spec.json ditambahkan di belakangnya. Seam test: diganti wrapper
+# yang memuat skrip ini, men-stub drive_engine, lalu memanggil worker_main yang asli.
+WORKER_CMD = [sys.executable, str(Path(__file__).resolve()), WORKER_FLAG]
+LOCKSTEP_POLL = 0.25          # detik antar-poll kunci BO & barrier lockstep
+WORKER_REAP_GRACE = 10        # detik total menunggu worker sesudah SIGTERM sebelum SIGKILL —
+                              # jauh di dalam JOB_STOP_GRACE stop_job
+# Sel yang state-nya DISET anak dan dipertahankan apa adanya (tanpa derive_state).
+CHILD_SET_REASONS = ("crash", "parallel-unconfirmed", "sequential-reset")
+PS_DOCROOT = "/var/www/html"  # docroot flashlight (sama dgn INSTALL_BLOCK_SH)
 
 # Tanda PHP fatal / error server yang bikin "shop rusak" (white-screen / 500).
 FATAL_SIGNS = (
@@ -303,15 +345,17 @@ def substitute(text, ctx):
     """Substitusi placeholder {mod}/{fo}/{bo}/{browser} di string spec.
 
     {browser} = engine aktif (ctx['engine']) — dipakai spec pembuat data supaya
-    nama unik per-browser: chromium & firefox berbagi satu DB per versi, data
-    duplikat dari browser pertama bikin browser kedua gagal palsu (memblok).
+    nama unik per-browser: dalam satu step lockstep engine berbagi satu DB, data
+    duplikat dari browser pertama bikin browser kedua gagal palsu (memblok). Pass
+    konfirmasi (`rerun-seq`, fallback login BO) memasang ctx['browser_token'] =
+    `<engine>-seq`, satu-satunya yang membacanya adalah substitusi ini.
     """
     if not text:
         return text
     return (text.replace("{mod}", ctx["mod"])
                 .replace("{fo}", ctx["fo"])
                 .replace("{bo}", ctx["bo"])
-                .replace("{browser}", ctx.get("engine", "")))
+                .replace("{browser}", ctx.get("browser_token") or ctx.get("engine", "")))
 
 
 def universal_smoke():
@@ -800,6 +844,14 @@ def _bo_login(page, ctx):
             page.fill("input[name=passwd]", ctx["admin_password"])
             page.click("#submit_login")
             try:
+                # Login 1.7/8 = POST AJAX lalu redirect via JS: di Firefox networkidle bisa
+                # tercapai SEBELUM redirect itu (verified 8.1.6 — sesi sudah login, URL masih
+                # AdminLogin) → negatif palsu. Tunggu (berbatas) URL meninggalkan AdminLogin dulu.
+                page.wait_for_url(lambda u: "controller=AdminLogin" not in u,
+                                  timeout=SETTLE_TIMEOUT_MS)
+            except Exception:  # noqa: BLE001 — login gagal / page tiruan: cek struktural di bawah
+                pass
+            try:
                 # BO punya polling XHR — networkidle bisa tak pernah tercapai; batasi,
                 # lalu fallback ke "load".
                 page.wait_for_load_state("networkidle", timeout=SETTLE_TIMEOUT_MS)
@@ -818,6 +870,9 @@ def _drive_page(browser, engine, scenarios, ctx):
 
     Terpisah dari drive_engine agar jalur setelah-launch (new_context/new_page/listener/
     _bo_login) teruji dengan browser-tiruan; kegagalannya diangkat & ditangani drive_engine.
+    `ctx['scenario_hook']` (opsional) = callable `(k, skenario) -> context manager` yang
+    membungkus run tiap skenario k (0-based): span `scenario_spans` pass pertama, dan di worker
+    paralel juga kunci lintas-engine + barrier lockstep. `_bo_login` berjalan di luarnya.
     """
     context = browser.new_context(ignore_https_errors=True)
     page = context.new_page()
@@ -833,15 +888,19 @@ def _drive_page(browser, engine, scenarios, ctx):
     base["engine"] = engine
     base["console_sink"] = console_sink
     base["doc"] = doc_sink
+    # Hook per skenario (ScenarioSpans / LockstepHook) — objek proses, tak pernah ke spec.json;
+    # dicabut dari base supaya tak ikut ke ctx lokal skenario.
+    hook = base.pop("scenario_hook", None)
     base["bo_authed"] = _bo_login(page, base) if _needs_bo(scenarios) else False
     out = []
-    for sc in scenarios:
+    for k, sc in enumerate(scenarios):
         start = len(console_sink)
         local = dict(base)
         local["scenario"] = sc["name"]
         local["console_base"] = start
         local["_shots"] = []
-        results = run_steps(page, sc["steps"], local)
+        with (hook(k, sc) if hook is not None else contextlib.nullcontext()):
+            results = run_steps(page, sc["steps"], local)
         out.append({
             "name": sc["name"], "source": sc["source"], "results": results,
             "console_errors": console_sink[start:], "screenshots": local["_shots"],
@@ -894,8 +953,10 @@ def _new_cell():
     """Sel satu engine sebelum engine-nya jalan. Field yang belum diproduksi engine = None.
 
     Dipancarkan untuk tiap engine yang lolos probe di SETIAP jalur return (boot/install gagal
-    termasuk, dengan started_at/finished_at None — ps-run-layer mengisinya). Hook yang ditunda
-    (scenario_spans, parallel_only: CAP-7) tetap None.
+    termasuk, dengan started_at/finished_at None — ps-run-layer mengisinya). `scenario_spans`
+    diisi pass pertama engine; `parallel_only` = [] di mode paralel (sel ber-hasil worker),
+    else tetap None. Sel ini tak punya kunci `errors` (hanya sel parallel-unconfirmed /
+    sequential-reset yang mendapatkannya).
     """
     return {"started_at": None, "finished_at": None, "scenario_set": "full",
             "scenarios_run": None, "findings": None, "inconclusive": None,
@@ -932,15 +993,813 @@ def _fill_cell(cell, eng, full_ver, scenarios):
     })
 
 
+# ---------------------------------------------------------------------------
+# Lockstep lintas-engine (CAP-7): kunci BO + barrier step. Helper ber-path EKSPLISIT, tanpa
+# fase/sink/log — yang membungkusnya dgn fase tunggu adalah LockstepHook di worker.
+# ---------------------------------------------------------------------------
+def lockstep_paths(full_ver, job_id=None):
+    """Path kunci & penanda lockstep satu versi di fl.LOCK_DIR: {lock, holders, step}.
+
+    `<job>-<ver>.bo.lock` (flock lintas-engine), `<job>-<ver>.bo.holders/<engine>` (siapa
+    memegangnya, utk detail `lock-wait`), `<job>-<ver>.step/<engine>.<k>` (barrier).
+    """
+    job = job_id or fl._JOB.get("id") or f"run-{fl.RUN_ID}"
+    base = f"{job}-{re.sub(r'[^A-Za-z0-9_.-]', '_', full_ver)}"
+    d = Path(fl.LOCK_DIR)
+    return {"lock": d / f"{base}.bo.lock", "holders": d / f"{base}.bo.holders",
+            "step": d / f"{base}.step"}
+
+
+def bo_lock_try(lock_path, exclusive):
+    """Satu percobaan flock NON-blocking pada `lock_path` (LOCK_EX bila `exclusive`, else
+    LOCK_SH). Return fd (kunci dipegang; lepas = os.close) atau None (dipegang engine lain)."""
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o666)
+    try:
+        fcntl.flock(fd, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def bo_lock_wait(lock_path, exclusive, poll_hook=None):
+    """Poll bo_lock_try tiap LOCKSTEP_POLL sampai dapat. Tanpa batas waktu sendiri: lamanya =
+    skenario engine lain yang memegangnya (dibatasi timeout langkahnya). `poll_hook()`
+    dipanggil di tiap poll yang masih menunggu (boleh raise utk keluar). Return fd."""
+    while True:
+        fd = bo_lock_try(lock_path, exclusive)
+        if fd is not None:
+            return fd
+        if poll_hook is not None:
+            poll_hook()
+        time.sleep(LOCKSTEP_POLL)
+
+
+def lock_holders(holders_dir):
+    """Engine yang penanda pemegangnya ada di `holders_dir` (urut nama); error baca = []."""
+    try:
+        return sorted(p.name for p in Path(holders_dir).iterdir())
+    except OSError:
+        return []
+
+
+def holder_mark(holders_dir, engine):
+    """Penanda pemegang `<holders_dir>/<engine>` — best-effort, error diabaikan."""
+    try:
+        (Path(holders_dir) / engine).touch()
+    except OSError:
+        pass
+
+
+def holder_unmark(holders_dir, engine):
+    """Hapus penanda pemegang — best-effort, error diabaikan."""
+    try:
+        (Path(holders_dir) / engine).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def step_mark(step_dir, engine, k):
+    """Penanda `<step_dir>/<engine>.<k>`: engine ini selesai step k (apa pun hasilnya).
+    Best-effort: gagal tulis hanya menahan engine lain sampai worker ini keluar (`.done`)."""
+    try:
+        (Path(step_dir) / f"{engine}.{k}").touch()
+    except OSError:
+        pass
+
+
+def step_done(step_dir, engine):
+    """Penanda `<engine>.done` (dibuat proses versi saat worker-nya keluar / gagal ditelurkan)
+    = setiap step engine itu selesai, jadi barrier tak pernah menunggu worker yang sudah tiada."""
+    try:
+        (Path(step_dir) / f"{engine}.done").touch()
+    except OSError:
+        pass
+
+
+def barrier_pending(step_dir, engines, engine, k):
+    """Engine LAIN yang belum selesai step k (tanpa `<e>.<k>` maupun `<e>.done`)."""
+    d = Path(step_dir)
+    return [e for e in engines if e != engine
+            and not (d / f"{e}.{k}").exists() and not (d / f"{e}.done").exists()]
+
+
+def barrier_wait(step_dir, engines, engine, k, poll_hook=None):
+    """Poll tiap LOCKSTEP_POLL sampai tiap engine lain selesai step k — tanpa batas waktu
+    sendiri. `poll_hook(pending)` dipanggil di tiap poll yang masih menunggu (boleh raise)."""
+    while True:
+        pending = barrier_pending(step_dir, engines, engine, k)
+        if not pending:
+            return
+        if poll_hook is not None:
+            poll_hook(pending)
+        time.sleep(LOCKSTEP_POLL)
+
+
+class ScenarioSpans:
+    """Hook skenario pass PERTAMA dalam proses (satu engine / fallback sekuensial): catat
+    `scenario_spans` saja, distempel tepat di sekitar run skenario.
+
+    `spans` = {nama skenario: [start_ns, end_ns]} dari time.monotonic_ns() — jam seluruh host,
+    sebanding lintas proses. Pass konfirmasi tak memakai hook (tak mencatat span).
+    """
+
+    def __init__(self):
+        self.spans = {}
+
+    @contextlib.contextmanager
+    def __call__(self, k, sc):
+        start = time.monotonic_ns()
+        yield
+        self.spans[sc["name"]] = [start, time.monotonic_ns()]
+
+
+class ParentGone(BaseException):
+    """Proses versi pemilik worker sudah tiada (os.getppid() berubah): worker keluar 1 tanpa hasil."""
+
+
+class LockstepHook(ScenarioSpans):
+    """Hook skenario worker paralel (cell-contract.md > Parallel browsers > lock, Lockstep).
+
+    Per skenario k: tunggu tiap engine lain selesai step k-1 (`barrier-wait:<engine>`), ambil
+    kunci BO (LOCK_EX bila skenario punya `goto` BO, else LOCK_SH; fase `lock-wait:<engine>`
+    hanya bila percobaan non-blocking gagal), buat penanda pemegang, start_ns, run, end_ns,
+    hapus penanda, tutup fd, lalu tulis penanda step k. Lepas kunci di `finally`. Skenario yang
+    melempar tak menulis penanda step (drive batal; `<engine>.done` melepas barrier engine
+    lain). Sesudah penanda step terakhir tak ada tunggu. Di tiap poll tunggu: proses versi
+    hilang → ParentGone.
+    """
+
+    def __init__(self, engine, engines, lock, holders_dir, step_dir, parent_pid=None):
+        super().__init__()
+        self.engine, self.engines = engine, list(engines)
+        self.lock, self.holders_dir, self.step_dir = lock, holders_dir, step_dir
+        self.parent_pid = parent_pid
+
+    def _check_parent(self, *_):
+        if self.parent_pid is not None and os.getppid() != self.parent_pid:
+            holder_unmark(self.holders_dir, self.engine)
+            raise ParentGone()
+
+    def _barrier(self, k):
+        pending = barrier_pending(self.step_dir, self.engines, self.engine, k)
+        if not pending:
+            return
+        with fl.phase(f"barrier-wait:{self.engine}", None,
+                      f"step {k} belum selesai: {', '.join(pending)}") as ph:
+            def poll(waiting):
+                self._check_parent()
+                ph.detail = f"step {k} belum selesai: {', '.join(waiting)}"
+            barrier_wait(self.step_dir, self.engines, self.engine, k, poll_hook=poll)
+
+    def _acquire(self, exclusive):
+        fd = bo_lock_try(self.lock, exclusive)
+        if fd is not None:
+            return fd
+        mode = "LOCK_EX" if exclusive else "LOCK_SH"
+
+        def detail():
+            return f"{mode}; dipegang: {', '.join(lock_holders(self.holders_dir)) or '?'}"
+        with fl.phase(f"lock-wait:{self.engine}", None, detail()) as ph:
+            def poll():
+                self._check_parent()
+                ph.detail = detail()
+            return bo_lock_wait(self.lock, exclusive, poll_hook=poll)
+
+    @contextlib.contextmanager
+    def __call__(self, k, sc):
+        if k > 0:
+            self._barrier(k - 1)
+        fd = self._acquire(_needs_bo([sc]))
+        try:
+            holder_mark(self.holders_dir, self.engine)
+            start = time.monotonic_ns()
+            yield
+            self.spans[sc["name"]] = [start, time.monotonic_ns()]
+        finally:
+            holder_unmark(self.holders_dir, self.engine)
+            os.close(fd)
+        step_mark(self.step_dir, self.engine, k)
+
+
+def _write_json_atomic(path, data):
+    """Tulis JSON atomik: temp di folder yang sama lalu os.replace (pembaca tak melihat setengah)."""
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _worker_on_sigterm(signum, frame):
+    """Handler SIGTERM worker: abaikan SIGTERM berikutnya, lalu hentikan (JobStopped)."""
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise fl.JobStopped()
+
+
+def worker_main(spec_path):
+    """Worker engine `ps-e2e-run.py --engine-worker <spec.json>`: drive SATU engine lockstep.
+
+    Dipanggil __main__ SEBELUM run_main_with_progress, jadi worker tak pernah menulis DONE.
+    Urutan: fl.RUN_ID = run_id; progress_attach (log versi, tanpa truncate); job_register (Job
+    ID yang sama → --stop-job menjangkaunya); timing_activate; ctx sendiri dgn screenshot_dir
+    dari spec (null = tanpa screenshot); fase `browser:<engine>` membungkus drive_engine dgn
+    LockstepHook, started_at/finished_at distempel tepat di dalamnya. Hasil ditulis atomik ke
+    spec['result'] = {engine, started_at, finished_at, result, scenario_spans, timings}
+    (timings = events sink, dicatat ulang proses versi). JobStopped: SIGTERM berikutnya
+    diabaikan, tanpa hasil, exit 143. Proses versi hilang (ParentGone): tanpa hasil, exit 1.
+    """
+    spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
+    engine = spec["engine"]
+    fl.RUN_ID = spec["run_id"]
+    fl.progress_attach(spec.get("progress_file"), spec["version"], spec.get("slow_after"))
+    ctx = dict(spec["ctx"])
+    if spec.get("job_id"):
+        fl.job_register(spec["job_id"], module=ctx["mod"], layer="e2e", versions=spec["version"])
+    # Sesudah job_register (yang memasang fl._on_sigterm): SIGTERM pertama langsung memasang
+    # SIG_IGN sebelum JobStopped dilempar — SIGTERM kedua (--stop-job + reap proses versi)
+    # tak boleh memotong browser.close()/finally LockstepHook/END fase yang sedang berjalan.
+    signal.signal(signal.SIGTERM, _worker_on_sigterm)
+    try:
+        sink = fl.timing_activate()
+        ctx["screenshot_dir"] = spec.get("screenshot_dir")
+        hook = LockstepHook(engine, spec["engines"], spec["lock"], spec["holders_dir"],
+                            spec["step_dir"], spec.get("parent_pid"))
+        ctx["scenario_hook"] = hook
+        scenarios = spec["scenarios"]
+        with fl.phase(f"browser:{engine}", None, f"{len(scenarios)} skenario (worker paralel)"):
+            started = utc_now()
+            eng = drive_engine(engine, scenarios, ctx, headed=bool(spec.get("headed")))
+            finished = utc_now()
+        _write_json_atomic(spec["result"], {
+            "engine": engine, "started_at": started, "finished_at": finished, "result": eng,
+            "scenario_spans": hook.spans, "timings": [list(ev) for ev in sink.events]})
+    except fl.JobStopped:
+        return 143
+    except ParentGone:
+        holder_unmark(spec["holders_dir"], engine)
+        return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Proses versi, mode paralel: telurkan & panen worker
+# ---------------------------------------------------------------------------
+def _mkdir_best_effort(path):
+    """Buat folder (parents) best-effort. Return path str, atau None bila gagal (screenshot
+    dilewati, run tak gagal) — perlakuan yang sama dgn folder screenshot versi."""
+    try:
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return str(path)
+    except OSError:
+        return None
+
+
+def read_worker_result(path, engine):
+    """Hasil worker bila TERBACA: objek JSON dgn semua kunci kontrak dan `engine` = engine
+    worker itu (`result` dict, `timings` list). Selain itu None → sel `crash`."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    keys = ("engine", "started_at", "finished_at", "result", "scenario_spans", "timings")
+    if not isinstance(data, dict) or any(k not in data for k in keys) or data["engine"] != engine:
+        return None
+    if not isinstance(data["result"], dict) or not isinstance(data["timings"], list):
+        return None
+    return data
+
+
+def _absorb_timings(timings):
+    """Catat ulang durasi fase worker ke sink proses versi — akhiran #n berlanjut di sana dan
+    tiap fase lockstep mendahului fase pass sekuensial. Entri cacat dilewati."""
+    sink = fl.timing_current()
+    if sink is None:
+        return
+    for ev in timings:
+        if isinstance(ev, (list, tuple)) and len(ev) == 3 and isinstance(ev[0], str):
+            try:
+                sink.record(ev[0], float(ev[1]), ev[2])
+            except (TypeError, ValueError):
+                continue
+
+
+def reap_workers(procs, grace=None):
+    """SATU-SATUNYA cara mengakhiri worker yang masih hidup (finally proses versi, jalur stop
+    termasuk): SIGTERM, tunggu total <= WORKER_REAP_GRACE detik, SIGKILL sisanya, lalu tunggu."""
+    grace = WORKER_REAP_GRACE if grace is None else grace
+    live = [p for p in procs if p.poll() is None]
+    for p in live:
+        with contextlib.suppress(OSError):
+            p.send_signal(signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    for p in live:
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            p.wait(timeout=max(0.0, deadline - time.monotonic()))
+    for p in live:
+        if p.poll() is None:
+            with contextlib.suppress(OSError):
+                p.kill()
+            p.wait()
+
+
+def _cleanup_lockstep(paths, workdir):
+    """Hapus file kunci, folder pemegang & step, dan folder kerja — sesudah SEMUA worker keluar."""
+    with contextlib.suppress(OSError):
+        Path(paths["lock"]).unlink(missing_ok=True)
+    for d in (paths["holders"], paths["step"], workdir):
+        if d:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def run_parallel_workers(full_ver, engines, scenarios, ctx, *, ver_shot_dir=None, headed=False):
+    """Pass lockstep paralel: satu worker WORKER_CMD per engine terhadap container yang sama.
+
+    Return {engine: {"result": hasil terbaca | None, "rc": exit code | None, "spawn_error":
+    str | None}}. Proses versi sendiri tak men-drive browser dan tak membuka fase `browser:`.
+    Sebelum menelurkan: folder kerja privat (mkdtemp, 0700) berisi `<engine>.spec.json` &
+    `<engine>.result.json`, folder pemegang & step (dikosongkan: sisa run lama tak boleh
+    melepas barrier), dan `<shots>/<ver>/<engine>` (best-effort). Worker berjalan dgn stdout
+    DEVNULL dan stderr diwarisi. Dipanen urut selesai (semua di-poll): tiap yang keluar dapat
+    `<engine>.done`, penanda pemegangnya dihapus, hasilnya dibaca, durasi fasenya dicatat ulang
+    ke sink versi. Worker yang gagal ditelurkan langsung `.done`, yang lain jalan terus.
+    `finally` (jalur stop termasuk): reap_workers lalu _cleanup_lockstep.
+    """
+    paths = lockstep_paths(full_ver)
+    workdir, procs = None, {}
+    out = {e: {"result": None, "rc": None, "spawn_error": None} for e in engines}
+    try:
+        workdir = Path(tempfile.mkdtemp(prefix="psm-e2e-workers-"))
+        Path(fl.LOCK_DIR).mkdir(parents=True, exist_ok=True)
+        with contextlib.suppress(OSError):
+            os.chmod(fl.LOCK_DIR, 0o1777)  # /tmp dibagi lintas user (seperti slots.lock)
+        for d in (paths["holders"], paths["step"]):
+            shutil.rmtree(d, ignore_errors=True)
+            d.mkdir(parents=True, exist_ok=True)
+        shots = {e: (_mkdir_best_effort(Path(ver_shot_dir) / e) if ver_shot_dir else None)
+                 for e in engines}
+        base = {"version": full_ver, "engines": list(engines), "scenarios": scenarios,
+                "ctx": ctx, "job_id": fl._JOB.get("id"), "run_id": fl.RUN_ID,
+                "parent_pid": os.getpid(),
+                "progress_file": str(fl._PROGRESS["path"]) if fl._PROGRESS.get("path") else None,
+                "slow_after": fl._PROGRESS.get("slow_after"), "lock": str(paths["lock"]),
+                "holders_dir": str(paths["holders"]), "step_dir": str(paths["step"]),
+                "headed": bool(headed)}
+        for e in engines:
+            spec_path = workdir / f"{e}.spec.json"
+            spec = dict(base, engine=e, screenshot_dir=shots[e],
+                        result=str(workdir / f"{e}.result.json"))
+            try:
+                spec_path.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+                procs[e] = subprocess.Popen([*WORKER_CMD, str(spec_path)],
+                                            stdout=subprocess.DEVNULL)
+            except (OSError, ValueError, TypeError) as err:
+                out[e]["spawn_error"] = f"worker gagal ditelurkan: {str(err)[:180]}"
+                step_done(paths["step"], e)
+        live = dict(procs)
+        while live:
+            for e, proc in list(live.items()):
+                rc = proc.poll()
+                if rc is None:
+                    continue
+                del live[e]
+                step_done(paths["step"], e)
+                holder_unmark(paths["holders"], e)
+                out[e]["rc"] = rc
+                res = read_worker_result(workdir / f"{e}.result.json", e)
+                out[e]["result"] = res
+                if res is not None:
+                    _absorb_timings(res["timings"])
+            if live:
+                time.sleep(LOCKSTEP_POLL)
+    finally:
+        reap_workers(list(procs.values()))
+        _cleanup_lockstep(paths, workdir)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Snapshot & reset ke snapshot (shell di container PS) — rutin reset BERSAMA dipakai pass
+# konfirmasi paralel dan fallback sekuensial (CAP-5 bisa memakainya ulang; belum ada jalur warm)
+# ---------------------------------------------------------------------------
+# Kepala tiap skrip: `sh` bisa dash — tanpa pipe yang statusnya penting, tanpa process
+# substitution; LC_ALL=C supaya `sort` dan `comm` sepakat soal urutan.
+_SH_HEAD = r'''set -e
+: "${MOD_NAME:?}"
+export LC_ALL=C
+'''
+SNAPSHOT_SQL = "/tmp/psm-e2e-snapshot.sql"      # di luar docroot; terpisah dari baseline Lapis 5
+SNAPSHOT_FILES = "/tmp/psm-e2e-snapshot.files"
+CURRENT_FILES = "/tmp/psm-e2e-current.files"
+NEW_FILES = "/tmp/psm-e2e-new.files"
+# Daftar docroot (file & folder; nama ber-newline tak didukung), dijalankan DI docroot.
+_LIST_DOCROOT_SH = r'''find . \( -path ./var/cache -o -path "./modules/$MOD_NAME" \) -prune -o -print > /tmp/psm-e2e-list.tmp
+sort /tmp/psm-e2e-list.tmp > @OUT@
+'''
+_DB_CREDS = "-h $DBH -P $DBPORT -u $DBU -p$DBPW"
+
+
+def _list_docroot_sh(out):
+    return _LIST_DOCROOT_SH.replace("@OUT@", out)
+
+
+def snapshot_db_sh(prelude):
+    """`snapshot-db`: dump DB (--databases: dump-nya membuat ulang DB) + daftar docroot."""
+    return (_SH_HEAD + prelude + f"cd {PS_DOCROOT}\n"
+            + f"$MYSQLDUMP_BIN {_DB_CREDS} --single-transaction --routines --databases $DBN"
+              f" > {SNAPSHOT_SQL}\n"
+            + _list_docroot_sh(SNAPSHOT_FILES) + "echo PSM_SNAPSHOT_DB_OK\n")
+
+
+def reset_db_sh(prelude):
+    """`reset-db`: DROP DATABASE lalu muat dump (yang membuat ulang DB). Dump harus ada dulu."""
+    return (_SH_HEAD + prelude + f"[ -s {SNAPSHOT_SQL} ]\n"
+            + f'$MYSQL_BIN {_DB_CREDS} -e "DROP DATABASE \\`$DBN\\`"\n'
+            + f"$MYSQL_BIN {_DB_CREDS} < {SNAPSHOT_SQL}\n" + "echo PSM_RESET_DB_OK\n")
+
+
+# `reset-files`: buang modules/<mod>, hapus apa pun yang lahir sesudah snapshot, kosongkan
+# var/cache (foldernya tetap), lalu salin module segar TANPA install — DB yang dipulihkan sudah
+# memuat state ter-install. File docroot yang ADA saat snapshot lalu diubah tak dipulihkan.
+RESET_FILES_SH = (_SH_HEAD + f"cd {PS_DOCROOT}\n" + 'rm -rf "modules/$MOD_NAME"\n'
+                  + _list_docroot_sh(CURRENT_FILES)
+                  + f"comm -13 {SNAPSHOT_FILES} {CURRENT_FILES} > {NEW_FILES}\n"
+                  + f'while IFS= read -r p; do rm -rf -- "$p"; done < {NEW_FILES}\n'
+                  + "if [ -d var/cache ]; then find var/cache -mindepth 1 -maxdepth 1"
+                    " -exec rm -rf -- {} +; fi\n"
+                  + 'cp -r /ps-module-src "modules/$MOD_NAME"\n' + "echo PSM_RESET_FILES_OK\n")
+
+# `reset-opcache`: USR2 ke master php-fpm — SATU proses ber-comm php-fpm* yang induknya (PPid
+# dari /proc/<pid>/status; 0 / tak terbaca = bukan php-fpm) bukan php-fpm. Kandidat yang
+# comm/status-nya lenyap dilewati. php-fpm jalan tapi master tak tunggal = gagal; tanpa
+# php-fpm: `apachectl -k graceful`; selain itu gagal.
+RESET_OPCACHE_SH = _SH_HEAD + r'''any=0; n=0; master=""
+for d in /proc/[0-9]*; do
+  p=${d#/proc/}
+  c=$(cat "/proc/$p/comm" 2>/dev/null) || continue
+  case "$c" in php-fpm*) ;; *) continue ;; esac
+  any=1
+  pp=$(sed -n 's/^PPid:[[:space:]]*//p' "/proc/$p/status" 2>/dev/null) || continue
+  [ -n "$pp" ] || continue
+  pc=""
+  if [ "$pp" != "0" ]; then pc=$(cat "/proc/$pp/comm" 2>/dev/null) || pc=""; fi
+  case "$pc" in php-fpm*) continue ;; esac
+  master=$p; n=$((n + 1))
+done
+if [ "$any" = "1" ]; then
+  if [ "$n" != "1" ]; then echo "master php-fpm tak tunggal ($n)" >&2; exit 1; fi
+  kill -USR2 "$master"
+elif command -v apachectl >/dev/null 2>&1; then
+  apachectl -k graceful
+else
+  echo "tak ada php-fpm maupun apachectl" >&2; exit 1
+fi
+echo PSM_RESET_OPCACHE_OK
+'''
+
+# DB_PRELUDE dimiliki ps-scenario-run.py (Lapis 5); dimuat MALAS by-path seperti _plan_layers,
+# hanya DB_PRELUDE yang dibaca (fl milik ps-e2e-run tetap yang menjalankan _exec/phase).
+_SCENARIO_RUN = {}
+
+
+def _db_prelude():
+    if "prelude" not in _SCENARIO_RUN:
+        path = Path(__file__).resolve().parent / "ps-scenario-run.py"
+        spec = importlib.util.spec_from_file_location("ps_scenario_run", path)
+        if not (spec and spec.loader):
+            raise ImportError(f"tak bisa memuat sibling {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _SCENARIO_RUN["prelude"] = module.DB_PRELUDE
+    return _SCENARIO_RUN["prelude"]
+
+
+def _step_error(sub_phase, reason):
+    """Entri errors `<sub-phase>: <alasan>` — alasan dipadatkan, maks 200 karakter."""
+    return f"{sub_phase}: {' '.join(str(reason).split())[:200]}"
+
+
+def container_step(session, name, script_fn, timeout, mod_name):
+    """Satu sub-fase snapshot/reset = SATU fl._exec di fase `name` (timeout `--timeout`, env
+    MOD_NAME). Return None bila sukses, else entri errors. Gagal = timeout, exception (memuat
+    DB_PRELUDE termasuk, SystemExit juga), exit non-nol, atau sentinel `PSM_<SUB_PHASE>_OK`
+    absen; `ph.status` = `timeout` saat timeout, else `gagal` (END & boot_phases menunjukkannya).
+    """
+    sentinel = "PSM_" + name.upper().replace("-", "_") + "_OK"
+    with fl.phase(name, timeout) as ph:
+        try:
+            cp = fl._exec(session, {"MOD_NAME": mod_name}, script_fn(), timeout)
+        except subprocess.TimeoutExpired:
+            ph.status = "timeout"
+            return _step_error(name, f"timeout ({timeout}s)")
+        except (Exception, SystemExit) as e:  # noqa: BLE001 — sub-fase gagal, bukan crash run
+            ph.status = "gagal"
+            return _step_error(name, f"{type(e).__name__}: {e}")
+        if cp.returncode != 0 or sentinel not in (cp.stdout or ""):
+            ph.status = "gagal"
+            tail = " ".join((cp.stderr or cp.stdout or "").split())[-150:]
+            why = f"rc={cp.returncode}" if cp.returncode != 0 else f"{sentinel} tak tercetak"
+            return _step_error(name, f"{why} {tail}".strip())
+    return None
+
+
+def snapshot_db(session, mod_name, timeout):
+    """Fase `snapshot-db` sesudah `warmup-bo` (hanya boot yang men-drive > 1 engine)."""
+    return container_step(session, "snapshot-db", lambda: snapshot_db_sh(_db_prelude()),
+                          timeout, mod_name)
+
+
+def _wait_http_phase(fo, startup_timeout, fail_status=None):
+    """Fase `wait-http` boot pertama, dipakai ulang rutin reset (yang memberi `fail_status`
+    `gagal` saat tak ada respons sama sekali). Return (ok, status, responded)."""
+    with fl.phase("wait-http", startup_timeout, fo) as ph:
+        reach_ok, rstatus, responded = wait_http(fo + "/", startup_timeout)
+        if not responded and fail_status:
+            ph.status = fail_status
+    return reach_ok, rstatus, responded
+
+
+def _warmup_bo(bo, scenarios, startup_timeout):
+    """Warm-up BO sebelum browser men-drive (verified: login cold-container 1.7/8 flaky karena
+    kompilasi halaman login lambat) — best-effort, gagal tak memvonis."""
+    if _needs_bo(scenarios):
+        with fl.phase("warmup-bo", startup_timeout):
+            wait_http(f"{bo}/index.php?controller=AdminLogin", startup_timeout)
+
+
+def reset_routine(session, mod_name, fo, bo, scenarios, *, op_timeout, startup_timeout,
+                  full_ver=""):
+    """Rutin reset BERSAMA ke snapshot: health (`healthy`), `reset-db`, `reset-files`,
+    `reset-opcache`, `wait-http` (tanpa respons = gagal), `warmup-bo` (best-effort; 5xx juga
+    tetap best-effort seperti boot pertama). Berhenti di kegagalan pertama. Return None bila
+    sukses, else entri errors (`health: <status>`, `wait-http: no response`, `<sub>: <alasan>`)
+    yang juga dicetak ke stderr. Tak pernah menyentuh `errors` level-versi.
+    """
+    status = fl._health_status(session["ps_container"])
+    err = None if status == "healthy" else _step_error("health", status)
+    steps = (("reset-db", lambda: reset_db_sh(_db_prelude())),
+             ("reset-files", lambda: RESET_FILES_SH),
+             ("reset-opcache", lambda: RESET_OPCACHE_SH))
+    for name, fn in steps:
+        if err is not None:
+            break
+        err = container_step(session, name, fn, op_timeout, mod_name)
+    if err is None:
+        _ok, _st, responded = _wait_http_phase(fo, startup_timeout, fail_status="gagal")
+        if responded:
+            _warmup_bo(bo, scenarios, startup_timeout)
+        else:
+            err = "wait-http: no response"
+    if err is not None:
+        print(f"versi {full_ver}: reset ke snapshot gagal — {err}", file=sys.stderr)
+    return err
+
+
+# ---------------------------------------------------------------------------
+# Sel & pass per mode (proses versi)
+# ---------------------------------------------------------------------------
+def _add_note(res, engines, text):
+    """Catatan per-browser: daftar lama (run langsung) + sel engine bersangkutan saja. Engine
+    yang di-drop probe tak punya sel, jadi catatannya tak mendarat di sel mana pun."""
+    res["browser_notes"].append(text)
+    for e in engines:
+        if e in res["cells"]:
+            res["cells"][e]["browser_notes"].append(text)
+
+
+def _launch_note(res, engine, launch_error, headed):
+    # Gagal luncur SATU engine = masalah per-browser -> browser_notes (BUKAN errors). Jangan
+    # cemari kanal infra version-level: temuan konklusif engine lain harus tetap.
+    _add_note(res, [engine],
+              f"browser {engine} gagal diluncurkan: {launch_error} "
+              f"(jalankan 'playwright install {engine}'{'' if not headed else ' / --headed butuh display'})")
+
+
+def _child_state(cell, reason, errors=None):
+    """Sel ber-state yang DISET anak (CHILD_SET_REASONS): inconclusive + reason; `errors` sel
+    hanya utk `parallel-unconfirmed`/`sequential-reset` (sub-fase yang gagal)."""
+    cell.update(state="inconclusive", conclusive=False, reason=reason)
+    if errors is not None:
+        cell["errors"] = list(errors)
+    return cell
+
+
+def _finding_key(item):
+    return (item.get("scenario"), item.get("step"), item.get("action"))
+
+
+def _unconfirmed(cell, entry):
+    """Temuan paralel yang tak bisa dikonfirmasi: `findings: []`, temuan itu ke `parallel_only`,
+    entri kegagalan di `errors` sel; field lain pass paralel dipertahankan."""
+    cell["parallel_only"] = list(cell.get("findings") or [])
+    cell["findings"] = []
+    _child_state(cell, "parallel-unconfirmed", [entry])
+
+
+def _merge_rerun(cell, eng, full_ver, scenarios, finished):
+    """Gabung `rerun-seq` ke sel (Confirmation merge): pass rerun memasok scenarios_run,
+    authored_assertions, bo_authed, launch_error, console_errors, screenshots, finished_at;
+    started_at & scenario_spans tetap dari lockstep. `findings` = temuan rerun; temuan paralel
+    yang (skenario, step, aksi)-nya tak ada di sana pindah ke `parallel_only`; `inconclusive` =
+    pass pertama ∪ rerun (dedup pada kunci itu)."""
+    first_findings = list(cell.get("findings") or [])
+    first_inc = list(cell.get("inconclusive") or [])
+    _fill_cell(cell, eng, full_ver, scenarios)
+    cell["finished_at"] = finished
+    confirmed = {_finding_key(f) for f in cell["findings"]}
+    cell["parallel_only"] = [f for f in first_findings if _finding_key(f) not in confirmed]
+    seen, merged = set(), []
+    for item in first_inc + cell["inconclusive"]:
+        if _finding_key(item) not in seen:
+            seen.add(_finding_key(item))
+            merged.append(item)
+    cell["inconclusive"] = merged
+
+
+def _confirmation_plan(cells, first, scenarios):
+    """Pass sekuensial yang dibutuhkan tiap engine ber-hasil-paralel sah (`first`: tanpa crash /
+    launch_error). Return ({engine: 'fallback'|'rerun'}, engine yang login BO-nya sukses).
+
+    fallback = login BO-nya gagal (skenario butuh BO, bo_authed false) sementara engine lain
+    sukses; rerun = ia punya temuan, atau men-drive (scenario_spans lockstep) skenario yang
+    bertemuan di pass paralel engine mana pun (pass pertama yang dibuang termasuk)."""
+    needs_bo = _needs_bo(scenarios)
+    login_ok = [e for e, eng in first.items() if eng.get("bo_authed")]
+    bad = {f.get("scenario") for e in first for f in (cells[e].get("findings") or [])}
+    plan = {}
+    for e, eng in first.items():
+        if needs_bo and not eng.get("bo_authed") and login_ok:
+            plan[e] = "fallback"
+        elif cells[e].get("findings") or set(cells[e].get("scenario_spans") or {}) & bad:
+            plan[e] = "rerun"
+    return plan, login_ok
+
+
+def _confirm_ctx(ctx, engine, ver_shot_dir):
+    """ctx pass konfirmasi: `{browser}` = `<engine>-seq`, screenshot ke `<shots>/<ver>/<engine>-seq`."""
+    c = dict(ctx, bo_authed=False, browser_token=f"{engine}-seq")
+    c["screenshot_dir"] = (_mkdir_best_effort(Path(ver_shot_dir) / f"{engine}-seq")
+                           if ver_shot_dir else None)
+    return c
+
+
+def _drive_parallel(res, full_ver, browsers, scenarios, ctx, *, headed, ver_shot_dir, reset,
+                    snapshot_err):
+    """Mode paralel: pass lockstep lewat worker, lalu pass konfirmasi sekuensial (Design Notes
+    CAP-7 > Confirmation passes/merge). `reset()` = rutin reset bersama; `snapshot_err` = entri
+    kegagalan `snapshot-db` (pass lockstep tetap jalan, tiap engine yang butuh pass jadi
+    `parallel-unconfirmed`)."""
+    runs = run_parallel_workers(full_ver, browsers, scenarios, ctx, ver_shot_dir=ver_shot_dir,
+                                headed=headed)
+    first = {}
+    for engine in browsers:
+        cell, run = res["cells"][engine], runs.get(engine) or {}
+        parsed = run.get("result")
+        if parsed is None:
+            why = run.get("spawn_error") or f"exit code {run.get('rc')}"
+            _child_state(cell, "crash")
+            _add_note(res, [engine], f"worker {engine} keluar tanpa hasil terbaca ({why}) — sel crash")
+            continue
+        eng = parsed["result"]
+        _fill_cell(cell, eng, full_ver, scenarios)
+        cell.update(started_at=parsed["started_at"], finished_at=parsed["finished_at"],
+                    scenario_spans=parsed["scenario_spans"], parallel_only=[])
+        if eng.get("launch_error"):
+            _launch_note(res, engine, eng["launch_error"], headed)
+        else:
+            first[engine] = eng
+
+    plan, login_ok = _confirmation_plan(res["cells"], first, scenarios)
+    fail_entry = snapshot_err
+    for engine in browsers:
+        kind = plan.get(engine)
+        if kind is None:
+            continue
+        cell = res["cells"][engine]
+        if fail_entry is not None:  # snapshot / reset sebelumnya gagal: tak ada reset lagi
+            _unconfirmed(cell, fail_entry)
+            continue
+        cctx = _confirm_ctx(ctx, engine, ver_shot_dir)
+        if kind == "rerun":
+            with fl.phase(f"rerun-seq:{engine}", None,
+                          f"konfirmasi sekuensial: reset + {len(scenarios)} skenario") as ph:
+                fail_entry = reset()
+                if fail_entry is not None:
+                    ph.status = f"{fail_entry.split(':', 1)[0]}-failed"
+                else:
+                    eng = drive_engine(engine, scenarios, cctx, headed=headed)
+                    finished = utc_now()
+            if fail_entry is not None:
+                _unconfirmed(cell, fail_entry)
+                continue
+            _merge_rerun(cell, eng, full_ver, scenarios, finished)
+        else:
+            fail_entry = reset()
+            if fail_entry is not None:
+                _unconfirmed(cell, fail_entry)
+                continue
+            msg = (f"fallback login BO: login {engine} gagal di pass paralel sementara "
+                   f"{', '.join(login_ok)} sukses — pass pertama dibuang, {engine} di-drive "
+                   "ulang sendiri")
+            print(f"versi {full_ver}: {msg}", file=sys.stderr)
+            with fl.phase(f"browser:{engine}", None, msg):
+                eng = drive_engine(engine, scenarios, cctx, headed=headed)
+            finished = utc_now()
+            _fill_cell(cell, eng, full_ver, scenarios)  # temuan & inconclusive pass ini saja
+            cell["finished_at"] = finished
+        if eng.get("launch_error"):
+            _launch_note(res, engine, eng["launch_error"], headed)
+
+
+def sequential_notice(engines):
+    """Catatan mode sekuensial (stderr sekali per run; detail START `browser:` pertama tiap versi)."""
+    return (f"mode browser sekuensial: {', '.join(engines)} di-drive berurutan dalam satu boot, "
+            "reset ke snapshot sebelum tiap engine berikutnya; sesudah engine `fail`, engine "
+            "berikutnya not-run")
+
+
+def _drive_sequential(res, full_ver, browsers, scenarios, ctx, *, headed, sequential_browsers,
+                      reset, snapshot_err):
+    """Satu engine, atau fallback `--sequential-browsers`: engine di-drive dalam proses, urut.
+
+    Fallback dgn > 1 engine: reset ke snapshot sebelum tiap engine sesudah yang pertama;
+    snapshot/reset gagal = engine itu & sisanya `sequential-reset` (snapshot gagal: semua).
+    Fail-fast: sesudah `fail` satu engine, sisanya `not-run` tanpa reset. Pass pertama tiap
+    engine mencatat `scenario_spans`.
+    """
+    notice = sequential_notice(browsers) if sequential_browsers and len(browsers) > 1 else ""
+    fail_entry = snapshot_err
+    for idx, engine in enumerate(browsers):
+        if fail_entry is None and idx > 0:
+            fail_entry = reset()
+        if fail_entry is not None:
+            for rest in browsers[idx:]:
+                res["cells"][rest] = _child_state(_new_cell(), "sequential-reset", [fail_entry])
+            break
+        cell = res["cells"][engine]
+        spans = ScenarioSpans()
+        detail = f"{len(scenarios)} skenario" + (f"; {notice}" if idx == 0 and notice else "")
+        cell["started_at"] = utc_now()
+        with fl.phase(f"browser:{engine}", None, detail):
+            eng = drive_engine(engine, scenarios, dict(ctx, scenario_hook=spans), headed=headed)
+        cell["finished_at"] = utc_now()
+        _fill_cell(cell, eng, full_ver, scenarios)
+        if eng.get("launch_error"):
+            cell["scenario_spans"] = {}
+            _launch_note(res, engine, eng["launch_error"], headed)
+            continue
+        cell["scenario_spans"] = spans.spans
+        if sequential_browsers and _engine_failed(res, engine):
+            # Fail-fast antar-engine (cell-contract.md > Runner > Fail-fast): engine
+            # berikutnya tak dimulai (tanpa reset); selnya not-run dgn sel penyebab.
+            why = f"fail-fast after {full_ver}:{engine}"
+            for rest in browsers[idx + 1:]:
+                res["cells"][rest] = _not_run_cell(why)
+            break
+
+
+def _counted(cell):
+    """Engine yang pass penghitungnya jalan tanpa launch_error (bukan crash / sequential-reset /
+    not-run / tak ter-drive) — dasar field lama level-versi."""
+    if cell.get("state") == "not-run" or cell.get("reason") in ("crash", "sequential-reset"):
+        return False
+    return cell.get("scenarios_run") is not None and not cell.get("launch_error")
+
+
+def _rollup(res):
+    """Field lama level-versi dibangun ulang dari sel FINAL (semua mode): `browsers`, `findings`,
+    `inconclusive`, `screenshots`, `console_errors`, `authored_assertions`, `pass` (ada engine,
+    tanpa temuan, tanpa sel parallel-unconfirmed), `skipped_browser` (tak ada engine teruji).
+
+    Error console SENGAJA TIDAK masuk `browser_notes`: field itu memikul CELAH CAKUPAN yang
+    memang menjatuhkan `ready`; error console adalah OBSERVASI yang tak memblok (yang mau
+    menegakkan memakai aksi `expect_no_console_error`, konklusif per skenario).
+    """
+    engines = [e for e, c in res["cells"].items() if _counted(c)]
+    cells = [res["cells"][e] for e in engines]
+    res["browsers"] = engines
+    res["findings"] = [f for c in cells for f in (c.get("findings") or [])]
+    res["inconclusive"] = [i for c in cells for i in (c.get("inconclusive") or [])]
+    res["screenshots"] = [s for c in cells for s in (c.get("screenshots") or [])]
+    res["console_errors"] = sum(c.get("console_errors") or 0 for c in cells)
+    res["authored_assertions"] = sum(c.get("authored_assertions") or 0 for c in cells)
+    unconfirmed = any(c.get("reason") == "parallel-unconfirmed" for c in res["cells"].values())
+    res["pass"] = bool(engines) and not res["findings"] and not unconfirmed
+    res["skipped_browser"] = not engines
+
+
 def run_one_version(module_dir, mod_name, full_ver, tag, browsers, scenarios, *,
                     scenario_notes=(), **kwargs):
     """Satu boot versi + durasi fasenya (cell-contract.md > Phase timings).
 
     Satu sink durasi per panggilan: diaktifkan di sini, lalu `boot_wall_clock` diukur dari
     masuk sampai fungsi dalam kembali — SESUDAH `_teardown` di `finally`-nya selesai, jadi
-    masa hidup container (browser termasuk) terhitung penuh. Fase `browser:<engine>[#n]`
-    masuk ke `phase_durations` sel engine itu, sisanya ke `boot_phases` (`{}` bila tak ada
-    fase yang jalan). `scenario_notes` (catatan spec level-run) disalin ke tiap versi.
+    masa hidup container (browser termasuk) terhitung penuh. Fase sel (`browser:`,
+    `lock-wait:`, `barrier-wait:`, `rerun-seq:` + engine, `#n`) masuk ke `phase_durations` sel
+    engine itu, sisanya ke `boot_phases` (`{}` bila tak ada fase yang jalan). `scenario_notes`
+    (catatan spec level-run) disalin ke tiap versi.
     """
     t0 = time.monotonic()
     sink = fl.timing_activate()
@@ -979,30 +1838,28 @@ def _run_one_version_inner(module_dir, mod_name, full_ver, tag, browsers, scenar
     untuk rekaman histori (`run_id`, `boot`, `boot_id`, `image_tag`, `browser_mode`, `errors`,
     `install`, `boot_log`) dan `cells.<engine>` untuk tiap engine yang lolos probe, di setiap
     jalur return (cell-contract.md > Evidence record > Producers).
+
+    Mode (CAP-7): >= 2 engine tanpa `sequential_browsers` = paralel (worker per engine +
+    konfirmasi sekuensial), selain itu in-process berurutan. Boot yang men-drive > 1 engine
+    mengambil `snapshot-db` sesudah `warmup-bo`.
     """
     requested_browsers = requested_browsers if requested_browsers is not None else list(browsers)
     image_ref = f"{fl.IMAGE}:{tag}"
+    parallel = len(browsers) >= 2 and not sequential_browsers
     fl.progress_version(full_ver)
     res = {"version": full_ver, "tag": tag, "image": image_ref, "orchestrator": None,
            "browsers": [], "install": None, "findings": [], "inconclusive": [],
            "errors": [], "browser_notes": [], "console_errors": 0, "screenshots": [],
            "skipped_browser": False, "pass": False,
            "run_id": fl.RUN_ID, "boot": "cold", "boot_id": fl.RUN_ID, "image_tag": tag,
-           "browser_mode": "sequential", "boot_phases": {}, "boot_wall_clock": None,
-           "boot_log": None, "cells": {e: _new_cell() for e in browsers}}
-
-    def note(engines, text):
-        # Catatan per-browser: daftar lama (run langsung) + sel engine bersangkutan saja.
-        # Engine yang di-drop probe tak punya sel, jadi catatannya tak mendarat di sel mana pun.
-        res["browser_notes"].append(text)
-        for e in engines:
-            if e in res["cells"]:
-                res["cells"][e]["browser_notes"].append(text)
+           "browser_mode": "parallel" if parallel else "sequential", "boot_phases": {},
+           "boot_wall_clock": None, "boot_log": None,
+           "cells": {e: _new_cell() for e in browsers}}
 
     # Engine diminta tapi binary-nya tak lolos probe (di-drop di main) — catat coverage, tak memblok.
     probe_missed = [e for e in requested_browsers if e not in browsers]
     if probe_missed:
-        note(probe_missed,
+        _add_note(res, probe_missed,
              f"engine tak dijalankan (binary belum di-'playwright install'): {','.join(probe_missed)}")
 
     # Gerbang browser DULU (termurah): tanpa binary browser sama sekali, boot container sia-sia.
@@ -1091,8 +1948,7 @@ def _run_one_version_inner(module_dir, mod_name, full_ver, tag, browsers, scenar
             return res
 
         fo, bo = base_urls(ps_domain_eff, admin_path)
-        with fl.phase("wait-http", startup_timeout, fo):
-            reach_ok, rstatus, responded = wait_http(fo + "/", startup_timeout)
+        reach_ok, rstatus, responded = _wait_http_phase(fo, startup_timeout)
         if not reach_ok and not responded:
             # Tak ada respons TCP sama sekali → port publish / boot memang gagal (infra jujur).
             res["errors"].append(f"PS tak terjangkau di {fo} ({rstatus}) — port publish/boot gagal")
@@ -1101,74 +1957,38 @@ def _run_one_version_inner(module_dir, mod_name, full_ver, tag, browsers, scenar
         # terpublish → JANGAN return. Biarkan smoke universal (goto '/' + expect_no_fatal)
         # men-drive & memvonis toko yang rusak — itu justru yang Lapis 4 ada untuk menangkap.
 
-        # Warm-up BO sebelum browser men-drive (verified: login cold-container 1.7/8
-        # flaky karena kompilasi halaman login lambat) — best-effort, gagal tak memvonis:
-        # login tetap best-effort di _bo_login (plus satu retry di sana).
-        if _needs_bo(scenarios):
-            with fl.phase("warmup-bo", startup_timeout):
-                wait_http(f"{bo}/index.php?controller=AdminLogin", startup_timeout)
+        # Warm-up BO sebelum browser men-drive — login tetap best-effort di _bo_login (+ retry).
+        _warmup_bo(bo, scenarios, startup_timeout)
+
+        # Snapshot hanya bila boot ini men-drive > 1 engine (paralel atau fallback sekuensial).
+        # Gagal: dicetak SEKALI di sini, tak pernah ke `errors` level-versi.
+        snapshot_err = None
+        if len(browsers) > 1:
+            snapshot_err = snapshot_db(session, mod_name, op_timeout)
+            if snapshot_err is not None:
+                print(f"versi {full_ver}: snapshot gagal — {snapshot_err}", file=sys.stderr)
 
         ver_shot_dir = None
         if screenshot_dir:
-            ver_shot_dir = str(Path(screenshot_dir) / re.sub(r"[^A-Za-z0-9_.-]", "_", full_ver))
-            try:
-                Path(ver_shot_dir).mkdir(parents=True, exist_ok=True)
-            except OSError:
-                ver_shot_dir = None  # gagal buat folder -> lewati screenshot, jangan gagalkan run
+            # gagal buat folder -> lewati screenshot, jangan gagalkan run
+            ver_shot_dir = _mkdir_best_effort(
+                Path(screenshot_dir) / re.sub(r"[^A-Za-z0-9_.-]", "_", full_ver))
         ctx = {"fo": fo, "bo": bo, "mod": mod_name, "nav_timeout": nav_timeout,
                "admin_email": admin_email, "admin_password": admin_password, "bo_authed": False,
                "screenshot_dir": ver_shot_dir}
-        driven = []
-        for idx, engine in enumerate(browsers):
-            cell = res["cells"][engine]
-            cell["started_at"] = utc_now()
-            with fl.phase(f"browser:{engine}", None, f"{len(scenarios)} skenario"):
-                eng = drive_engine(engine, scenarios, ctx, headed=headed)
-            cell["finished_at"] = utc_now()
-            _fill_cell(cell, eng, full_ver, scenarios)
-            if eng.get("launch_error"):
-                # Gagal luncur SATU engine = masalah per-browser -> browser_notes (BUKAN errors).
-                # Jangan cemari kanal infra version-level: temuan konklusif engine lain harus tetap.
-                note([engine],
-                     f"browser {engine} gagal diluncurkan: {eng['launch_error']} "
-                     f"(jalankan 'playwright install {engine}'{'' if not headed else ' / --headed butuh display'})")
-                continue
-            res["browsers"].append(engine)
-            driven.append(eng)
-            if sequential_browsers and _engine_failed(res, engine):
-                # Fail-fast antar-engine (cell-contract.md > Runner > Fail-fast): engine
-                # berikutnya tak dimulai; selnya not-run dgn sel penyebab.
-                why = f"fail-fast after {full_ver}:{engine}"
-                for rest in browsers[idx + 1:]:
-                    res["cells"][rest] = _not_run_cell(why)
-                break
 
-        if not res["browsers"]:
-            # Semua engine yang diprobe lolos ternyata gagal luncur -> tak ada yg teruji.
-            res["skipped_browser"] = True
-            return res
-
-        # Rollup artefak visual: hitungan error console/JS (advisory) + path screenshot.
-        # SENGAJA TIDAK masuk `browser_notes`. Field itu memikul CELAH CAKUPAN (engine tak
-        # jalan, binary absen) yang memang harus menjatuhkan `ready`; error console adalah
-        # OBSERVASI yang desainnya sendiri nyatakan tak memblok. Menyatukan keduanya bikin
-        # `ready` tak deterministik: modul & spec yang sama persis menghasilkan ready=true
-        # saat toko diam dan ready=false saat satu skrip pihak-ketiga kebetulan berisik
-        # (kureproduksi: console_errors 0 -> ready true, lalu 3 -> ready false, kode identik).
-        # Hitungannya sudah punya kanal sendiri di bawah; yang mau menegakkan memakai aksi
-        # `expect_no_console_error` — pilihan sadar, per-skenario, dan konklusif.
-        res["console_errors"] = sum(len(sc.get("console_errors", []))
-                                    for eng in driven for sc in eng.get("scenarios", []))
-        res["screenshots"] = [s for eng in driven for sc in eng.get("scenarios", [])
-                              for s in sc.get("screenshots", [])]
-        # Cakupan authored versi ini, DIHITUNG di sini karena hanya di sini langkah per-skenario
-        # terlihat; agregat cuma menerima ringkasan dan tak bisa menurunkannya sendiri.
-        res["authored_assertions"] = count_authored_assertions(driven)
-
-        findings, inconclusive = assemble_findings(full_ver, driven)
-        res["findings"] = findings
-        res["inconclusive"] = inconclusive
-        res["pass"] = len(findings) == 0
+        def reset():
+            return reset_routine(session, mod_name, fo, bo, scenarios, op_timeout=op_timeout,
+                                 startup_timeout=startup_timeout, full_ver=full_ver)
+        if parallel:
+            _drive_parallel(res, full_ver, browsers, scenarios, ctx, headed=headed,
+                            ver_shot_dir=ver_shot_dir, reset=reset, snapshot_err=snapshot_err)
+        else:
+            _drive_sequential(res, full_ver, browsers, scenarios, ctx, headed=headed,
+                              sequential_browsers=sequential_browsers, reset=reset,
+                              snapshot_err=snapshot_err)
+        # Cakupan, temuan & artefak visual level-versi DIHITUNG dari sel final (semua mode).
+        _rollup(res)
         return res
     finally:
         fl._teardown(session)
@@ -1195,10 +2015,13 @@ def _plan_layers():
 def cell_state(vres, engine):
     """State-rule satu sel yang dipancarkan, dgn field level-versi (`errors`, `install`)
     digabung seperti ps-run-layer menggabungkannya ke rekaman. Return {state, conclusive, reason}.
-    Sel `not-run` (fail-fast antar-engine) mempertahankan state-nya, seperti di ps-run-layer."""
+    Sel ber-state yang DISET anak dipertahankan apa adanya (tanpa derive_state), seperti di
+    ps-run-layer: `not-run` (fail-fast antar-engine) dan `inconclusive` ber-reason `crash`,
+    `parallel-unconfirmed` atau `sequential-reset`."""
     cell = vres.get("cells", {}).get(engine) or {}
-    if cell.get("state") == "not-run":
-        return {"state": "not-run", "conclusive": False, "reason": cell.get("reason")}
+    if cell.get("state") == "not-run" or (cell.get("state") == "inconclusive"
+                                          and cell.get("reason") in CHILD_SET_REASONS):
+        return {"state": cell["state"], "conclusive": False, "reason": cell.get("reason")}
     merged = {"errors": vres.get("errors"), "install": vres.get("install")}
     merged.update(cell)
     return _plan_layers().derive_state(merged, engine)
@@ -1281,14 +2104,16 @@ def main():
     ap.add_argument("-o", "--output", help="File output JSON (default: stdout)")
     ap.add_argument("--run-id", help="Diset ps-run-layer: RUN_ID klaim slot [0-9a-f]{12} — dipakai "
                                      "untuk label psm.run, registry job & log kemajuan")
-    ap.add_argument("--slot-cost", default="1",
-                    help="Biaya slot yang dicap sbg label psm.slots di container PS (int >= 1, "
-                         "default 1; juga run langsung)")
+    ap.add_argument("--slot-cost", default=None,
+                    help="Biaya slot yang dicap sbg label psm.slots di container PS (int >= 1). "
+                         "Absen (run langsung): jumlah engine yang di-drive paralel, atau 1 bila "
+                         "satu engine / --sequential-browsers")
     ap.add_argument("--progress-append", action="store_true",
                     help="Diset ps-run-layer: jangan kosongkan --progress-file (baris wait-slots)")
     ap.add_argument("--sequential-browsers", action="store_true",
-                    help="Diset ps-run-layer: drive engine berurutan; sesudah engine `fail`, "
-                         "engine sisanya tak dimulai (sel not-run)")
+                    help="Diset ps-run-layer (admisi cost 1): drive engine berurutan, reset ke "
+                         "snapshot sebelum tiap engine berikutnya; sesudah engine `fail`, engine "
+                         "sisanya tak dimulai (sel not-run)")
     fl.add_progress_args(ap)
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
@@ -1299,7 +2124,7 @@ def main():
                   file=sys.stderr)
             return 2
         fl.RUN_ID = args.run_id
-    slot_cost = fl.slot_cost_value(args.slot_cost)
+    slot_cost = fl.slot_cost_value(args.slot_cost) if args.slot_cost is not None else 0
     if slot_cost is None:
         print(f"error: --slot-cost tak valid: {args.slot_cost!r} — harus bilangan bulat >= 1",
               file=sys.stderr)
@@ -1339,12 +2164,12 @@ def main():
 
     # Probe binary browser SEKALI di muka — versi mewarisi daftar yang benar-benar terpasang.
     usable = [e for e in requested if browser_available(e)]
+    if not slot_cost:
+        # Run langsung tanpa --slot-cost: label = engine yang di-drive PARALEL, else 1.
+        slot_cost = len(usable) if len(usable) >= 2 and not args.sequential_browsers else 1
     if args.sequential_browsers and len(usable) > 1:
-        # Admisi interim cost 1 (CAP-3, sampai CAP-7) — BUKAN kekurangan slot; sekali saja,
-        # tak pernah ke browser_notes/errors (bukan celah cakupan).
-        print(f"mode browser sekuensial: {', '.join(usable)} di-drive berurutan dalam satu boot "
-              "(admisi interim cost 1); sesudah engine `fail`, engine berikutnya not-run",
-              file=sys.stderr)
+        # Sekali saja; tak pernah ke browser_notes/errors (bukan celah cakupan).
+        print(sequential_notice(usable), file=sys.stderr)
     authored, notes = discover_scenarios(module_dir)
     scenarios = [universal_smoke()] + authored
 
@@ -1378,5 +2203,16 @@ def main():
     return exit_code(result)
 
 
+def _entry(argv):
+    """Titik masuk skrip: `--engine-worker <spec.json>` (argv[1]) = worker engine CAP-7, TANPA
+    run_main_with_progress (worker tak pernah menulis DONE); selain itu run biasa."""
+    if len(argv) > 1 and argv[1] == WORKER_FLAG:
+        if len(argv) != 3:
+            print(f"error: {WORKER_FLAG} butuh tepat satu path spec.json", file=sys.stderr)
+            return 2
+        return worker_main(argv[2])
+    return fl.run_main_with_progress(main)
+
+
 if __name__ == "__main__":
-    sys.exit(fl.run_main_with_progress(main))
+    sys.exit(_entry(sys.argv))

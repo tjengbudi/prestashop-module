@@ -1,0 +1,170 @@
+[
+  {
+    "location": "Boundaries > Always (bullet 2, 'Every pass records `scenario_spans`'); Tasks > ps-e2e-run.py ('`scenario_spans` in every pass'); Design Notes > `scenario_spans` and > Confirmation merge",
+    "issue": "These contradict each other. Boundaries and Tasks say every pass records `scenario_spans`. Design Notes say spans come only from the cell's first pass (the lockstep pass) and that 'sequential passes are timed only by their phases'. The merge note then says the BO-login fallback's second pass 'replaces the cell's driven fields wholesale' but never says whether `scenario_spans` is one of those fields. Live test (c) reads spans from (b)'s parallel records, so the answer decides what (c) can check.",
+    "implementation_impact": "The implementer has to guess whether the rerun-seq pass, the BO-login fallback pass and the sequential-fallback engines emit spans, and whether a fallback record keeps the lockstep spans, takes the second pass's spans or gets null. Unit tests and live test (c) will assert different things depending on the guess.",
+    "suggestion": "State one rule per pass type. For example: lockstep worker pass and every sequential-fallback engine emit spans; rerun-seq and BO-login fallback passes do not, and the record keeps the lockstep spans. Then remove 'Every pass records' or correct it, and list `scenario_spans` explicitly as kept or replaced in the BO-fallback merge."
+  },
+  {
+    "location": "I/O matrix row 'Parallel-only failure' ('reset phases `#2` in boot_phases'); Boundaries bullet 3 ('`#n` suffixes'); cell-contract Parallel-only failures ('suffixed `#2`, `#3`')",
+    "issue": "`TimingSink.record` (ps-flashlight-run.py:464) leaves the first occurrence of a name unsuffixed and gives repeats `#2`, `#3`. The first reset in a boot is the first `reset-db`/`reset-files`/`reset-opcache`, so the sink records it as `reset-db`, not `reset-db#2`. Only `wait-http#2`/`warmup-bo#2` get the suffix naturally. The spec (and contract) expect `#2` on the reset phases of the first sequential pass.",
+    "implementation_impact": "The I/O row is untestable as written unless the implementer special-cases reset names (numbering by pass) or changes TimingSink semantics, and either choice may also break CAP-5's later reuse of the routine (a warm iteration's first reset has no suffix).",
+    "suggestion": "Decide whether the reset phases follow TimingSink (first reset `reset-db`, second `reset-db#2`) or are numbered by pass (first pass = `#1` implicit, sequential passes `#2`, `#3`). Rewrite the I/O row with the exact expected `boot_phases` keys for a one-rerun and a two-rerun case."
+  },
+  {
+    "location": "Boundaries/Tasks/Design Notes on `rerun-seq:<engine>`; Tasks > docs (SKILL.md lists both `rerun-seq:` and `browser:<e>#2`); I/O 'BO-login fallback'",
+    "issue": "The spec never says what `rerun-seq:<engine>` wraps. It could cover the reset phases plus the drive, or only the drive, and the rerun may or may not also open a `browser:<engine>#2` phase. Contract Phase timings gives `browser:<engine>#2` only for the BO-login fallback. Separately, the rerun sets `{browser}` to `<engine>-seq`. If the drive code builds its phase name from the token (as today, where `{browser}` = `ctx['engine']`), it records `browser:chromium-seq`, which lands in `phase_durations['chromium-seq']` and is dropped.",
+    "implementation_impact": "The implementer has to guess the nesting and naming. That changes which keys appear in `phase_durations`, whether `derive_state`'s `_driven` check (`browser:<engine>` or `browser:<engine>#n`) sees the counting pass, and what the docs tell operators to watch.",
+    "suggestion": "Specify the phase tree for each sequential pass. For example: rerun = `rerun-seq:<engine>` around [reset-db, reset-files, reset-opcache, wait-http, warmup-bo, drive], with no extra `browser:` phase; BO fallback = reset phases then `browser:<engine>#2`. Also state that the phase name always uses the engine name, never the `{browser}` token value."
+  },
+  {
+    "location": "Tasks > ps-e2e-run.py ('`--engine-worker <spec.json>`, parsed before the normal argparse', 'worker timings re-recorded into the version sink in order'); Boundaries bullet 1 ('reads each worker's result file')",
+    "issue": "The spec.json schema, the result-file path and format, and the shape of the worker timing data are all undefined. Re-recording 'in order so suffixes continue' cannot use `TimingSink.as_dict()`, whose keys are already suffixed, so the worker must emit an ordered list of (base name, seconds, outcome) entries. The spec also doesn't say how the pre-parse avoids catching the existing `--engines` flag or argparse prefix abbreviations of it.",
+    "implementation_impact": "This is the worker/version-process interface. Two engineers (or the unit-test stub worker) would invent incompatible formats. Getting the timing shape wrong breaks the `#n` continuity the spec requires.",
+    "suggestion": "Add a short schema: spec.json fields (version, engine, scenarios, ctx minus page handles, job_id, run_id, progress_file, lock path, step dir, result path, screenshot dir, headed, nav_timeout, engine order) and result JSON (engine result as `drive_engine` returns it, plus `timings: [[name, seconds, outcome], ...]` in record order, plus `scenario_spans`). Require an exact `argv[1] == '--engine-worker'` match."
+  },
+  {
+    "location": "Boundaries bullet 1 (worker 'lines appended to the version's progress log, never `DONE`') vs cell-contract Parallel browsers bullet 1",
+    "issue": "Two load-bearing claims from the contract are missing. First, 'Only the version process calls `progress_init`'. Second, worker lines are 'tagged `browser:<engine>`'. That matters here because `fl.phase` and `fl.progress` write only once `_PROGRESS['path']` is set, and only `progress_init` sets it. `fl.run_main_with_progress` also always writes `DONE`.",
+    "implementation_impact": "A worker that calls `progress_init(..., truncate=False)` breaks the contract. One that doesn't call it writes nothing, so `lock-wait`/`barrier-wait` heartbeats vanish. If the worker reuses `run_main_with_progress`, it writes `DONE`. Line tagging is unspecified either way.",
+    "suggestion": "State the mechanism. For example, add a flashlight helper that points `_PROGRESS` at an existing log without truncating (or write through `progress_to`). Name the tag form (the phase field `browser:<engine>`, or a detail prefix). Say that the worker entry bypasses `run_main_with_progress`."
+  },
+  {
+    "location": "Tasks > ps-e2e-run.py ('cross-engine lock + holder markers'); Boundaries bullet 2 ('`lock-wait:<engine>` naming the holders')",
+    "issue": "'Holder markers' appear only in Tasks and are never defined: no location, no file format, no create/delete order relative to `flock`, no stale-marker handling after a crash. `flock` itself cannot name its holders. The cleanup rule lists only the lock file and the step dir.",
+    "implementation_impact": "The implementer has to invent a marker scheme. The ALIVE detail and the unit tests ('lock and barrier with real flock/files across threads') can't be written against a fixed expectation, and leftover markers in `<tmp>/psm-locks` aren't covered by cleanup.",
+    "suggestion": "Define the markers, e.g. `<LOCK_DIR>/<job>-<ver>.bo.holders/<engine>` created after the flock is acquired and removed before release. A crashed worker's marker is ignored once `<engine>.done` exists. The version process deletes the holders dir with the lock file and step dir."
+  },
+  {
+    "location": "Boundaries bullet 2 (lock and barrier waits); cell-contract Phase timings ('`lock-wait:<engine>` and `barrier-wait:<engine>` per scenario that waits')",
+    "issue": "Several mechanics are left open. The spec doesn't say whether `lock-wait`/`barrier-wait` open only when a non-blocking attempt fails (the contract says 'per scenario that waits'; the spec omits this), what the poll interval is, or whether the barrier index k is 0- or 1-based. It also doesn't say whether k counts the universal smoke, or when (relative to `_bo_login`) the first barrier and lock apply.",
+    "implementation_impact": "Unit tests that count `lock-wait:<engine>#n` entries, and the live test (c) step ordering, depend on these choices. An always-open wait phase would add an entry for every scenario.",
+    "suggestion": "Carry over 'opened only when the first non-blocking try fails'. Name a poll constant (e.g. 0.5 s, patchable in tests). Fix k as the 0-based index into the discovery-ordered list including the smoke at 0. Say that `_bo_login` runs before step 0 with no lock and no barrier."
+  },
+  {
+    "location": "Design Notes > 'Snapshot failure in the sequential fallback' vs cell-contract Parallel browsers > Slots and Boundaries > Ask First",
+    "issue": "The contract says that when the snapshot or a reset fails, 'every engine not yet driven gets `state: inconclusive`, reason `sequential-reset`'. A snapshot failure happens right after `warmup-bo`, before any engine has run, so every engine is 'not yet driven', the first included. The spec's 'the first engine still runs' changes that contract rule, which Ask First reserves for the human. The spec also doesn't say which wins when the snapshot failed and the first engine then fails: fail-fast `not-run` or `sequential-reset`.",
+    "implementation_impact": "The implementer can't follow both the contract and the spec, and has no rule for the not-run vs sequential-reset precedence. The resulting records differ (`not-run` is not an infra cause; `sequential-reset` is, and feeds `blocked-infra`).",
+    "suggestion": "Either get the contract amended (the first engine may run because it needs no reset) or follow the contract (every engine `sequential-reset`). Add an I/O row: snapshot fails + chromium `fail` → firefox reason = ? (suggest `not-run`, since fail-fast comes first and no reset is attempted)."
+  },
+  {
+    "location": "Boundaries bullet 1 ('at most one sequential pass per contract before teardown'); Design Notes > Snapshot failure; I/O 'Unconfirmable'",
+    "issue": "The spec doesn't cover what happens when a reset fails partway through parallel confirmation. If chromium's reset fails, does firefox still attempt its own reset and pass, or does it become `parallel-unconfirmed` without trying? The state of a BO-login-fallback engine is also unspecified when its reset fails or the container is unhealthy. Its first pass is discarded and it may have no findings, so `parallel-unconfirmed` with an empty `parallel_only` is possible, as is keeping the discarded pass or another inconclusive reason. For the unhealthy-container case, the 'sub-phase in cell errors' has no phase name to record.",
+    "implementation_impact": "There are several plausible implementations with different records and exit codes. Tests for the 'Unconfirmable' row can't pin down what the other engine does.",
+    "suggestion": "Add rules and I/O rows for: (1) a failed reset for engine A → engines later in order skip their reset and become `parallel-unconfirmed`, or still try (pick one); (2) a BO-fallback engine whose reset fails → state, reason, and what `parallel_only` holds; (3) the `errors` text when health ≠ healthy (e.g. `health: <status>`)."
+  },
+  {
+    "location": "cell-contract Parallel browsers bullet 3 ('When every engine's login fails, or the second login fails too, ... with no further rerun') vs Boundaries 'Honesty law' (a parallel finding blocks only when the sequential rerun reproduces it)",
+    "issue": "The spec doesn't settle whether 'no further rerun' stops `rerun-seq` confirmation for an engine whose BO login failed in the parallel pass but which has (FO) findings. If it does, those parallel findings would block unconfirmed, which breaks the honesty law the spec restates. If it doesn't, the contract wording is misleading. Neither the spec nor the I/O matrix covers 'all logins fail + findings'.",
+    "implementation_impact": "The implementer has to pick. One choice lets an unconfirmed parallel finding block. The other contradicts the contract text.",
+    "suggestion": "Add an I/O row: both logins fail, chromium has FO finding F → `rerun-seq:chromium` still runs (no BO-fallback pass), and F counts only if reproduced. Reword 'no further rerun' as 'no further BO-login fallback pass'."
+  },
+  {
+    "location": "Boundaries 'Honesty law'; Design Notes > Confirmation merge; I/O 'Unconfirmable'",
+    "issue": "The rerun itself can degrade, and the spec doesn't say how. Cases: (a) the engine fails to launch in the rerun (`launch_error`); (b) BO login fails in the rerun, so BO finding F becomes an inconclusive step, moves to `parallel_only`, and the cell ends `pass` with inconclusive steps; (c) `wait-http` gets no response, or `warmup-bo` fails, after the reset. The 'unconfirmable' rule covers only snapshot, reset phases and container health.",
+    "implementation_impact": "In case (b) a blocking parallel finding turns into a non-blocking `pass` while `bo_authed` (kept from the first pass) still reads true. Cases (a) and (c) may come out as `launch-error`/`errors` instead of `parallel-unconfirmed`. Any of these could break the identical-findings guarantee without anyone noticing.",
+    "suggestion": "Classify each case explicitly. Suggested: a rerun with `launch_error`, a failed BO login while a parallel BO finding is pending, or `wait-http` with no response → `parallel-unconfirmed` with the parallel findings in `parallel_only` and the failing sub-phase in cell `errors`."
+  },
+  {
+    "location": "Design Notes > Confirmation merge (field list) and BO-login fallback ('replaces the cell's driven fields wholesale'); `_run_one_version_inner` version-level fields",
+    "issue": "The merge list leaves out `scenarios_run`, `browser_notes` (rerun notes), `launch_error` and `phase_durations`, including whether the discarded fallback first pass keeps its `browser:<e>`/`lock-wait` entries. 'Driven fields' is never defined. Keeping `bo_authed` and `authored_assertions` from the first pass can contradict the rerun's inconclusive BO steps. The legacy version-level output (`findings`, `inconclusive`, `pass`, `browsers`, `screenshots`, `console_errors`, `authored_assertions`), which direct runs print and `overall_pass` uses, is built today from the in-process `driven` list. The spec doesn't say whether it reflects confirmed or parallel results.",
+    "implementation_impact": "The implementer has to make a merge decision for each field, and those decisions show up in history records and in direct-run JSON (the quickstart TDD loop reads `findings`/`pass`). Tests can't be written against an expected record.",
+    "suggestion": "Give the full per-field merge table for rerun-seq and for the BO fallback (define 'driven fields' as the `_fill_cell` keys plus `started_at`/`finished_at`/`scenario_spans`). State that the version-level legacy fields are rebuilt from the final (confirmed) cells."
+  },
+  {
+    "location": "Boundaries bullet 1 ('direct runs included'); SPEC Constraints ('E2E concurrency (... plus CAP-7 browsers) respects one configurable host-wide cap'); cell-contract Config keys (`--slot-cost` '1 when absent, e.g. a direct ps-e2e-run.py run')",
+    "issue": "After this change a direct two-engine `ps-e2e-run.py` run drives both browsers in parallel, but it stamps `psm.slots=1` because `--slot-cost` defaults to 1. The daemon-wide cap then undercounts CAP-7 browsers, which contradicts the SPEC constraint. The spec doesn't address the direct-run cost at all.",
+    "implementation_impact": "The implementer has to choose between following the contract default (undercounting parallel direct runs) and stamping n (departing from the contract text). The CAP-3 'Labels' test (no `--slot-cost` → 1) may then need changing.",
+    "suggestion": "Decide explicitly. Either a direct parallel run without `--slot-cost` stamps n (contract amendment, update the Labels test), or record a deliberate exception ('direct runs bypass admission and count 1, as documented') and update the docs to say so."
+  },
+  {
+    "location": "I/O row 'Parallel clean' ('spans overlap, `browser:<e>` phases overlap')",
+    "issue": "The universal smoke has a BO step and takes the lock exclusively, so its spans can never overlap across engines. 'Spans overlap' can hold only for FO-only scenarios, and the row doesn't say which. `phase_durations` entries are just `{seconds, outcome}` with no timestamps, so a record can't show that `browser:<e>` phases overlap.",
+    "implementation_impact": "A literal test would either fail (smoke spans) or be unwritable (phase overlap from records). The implementer has to guess what to assert.",
+    "suggestion": "Rewrite: 'FO-only scenarios' spans overlap across engines; BO scenarios' spans don't; cells' `started_at`/`finished_at` overlap (the stand-in for the browser phase overlap); progress-log START/END of both `browser:<e>` lines interleave'."
+  },
+  {
+    "location": "Acceptance Criteria 1 ('a two-engine version admitted at cost 2 ... boots once and its two cells' started_at/finished_at overlap'); Tasks > tests ('child rows with a stubbed parallel driver')",
+    "issue": "The spec doesn't say which test proves AC 1. With a stubbed parallel driver the overlap comes from the stub itself, so the check proves nothing. Only 'the worker spawn path once with a real stub worker subprocess' or the live suite exercise real concurrency. 'Boots once' has no observable either: one `bring-up` in `boot_phases`, one `boot_id` across both records, or one container label.",
+    "implementation_impact": "AC 1 could be 'met' by a tautological test, and reviewers can't check it reproducibly.",
+    "suggestion": "Tie AC 1 to a named test: ps-run-layer with a real child and stub worker subprocess (or the live suite), asserting both records share `boot_id`, `boot_phases` holds exactly one `bring-up`, both have `browser_mode: parallel`, and max(started_at) < min(finished_at)."
+  },
+  {
+    "location": "Tasks > tests ('the worker spawn path once with a real stub worker subprocess')",
+    "issue": "The spec gives no seam for swapping in a stub worker. The real worker is `sys.executable ps-e2e-run.py --engine-worker ...`, which imports Playwright and launches browsers. There's no env var, spec.json field or module constant for redirecting the spawn command or stubbing `drive_engine` inside a separate process.",
+    "implementation_impact": "The implementer has to add an undocumented test hook, or the test drives real Playwright, which unit tests can't do since they run without Playwright or Docker.",
+    "suggestion": "Name the seam, e.g. a module-level `WORKER_CMD` (list) patched by tests to run a tiny stub script that writes a canned result file and creates step files. Alternatively, a spec.json `stub_result` field honoured only when an env var like `PSM_E2E_TEST_STUB_WORKER=1` is set."
+  },
+  {
+    "location": "Tasks > tests/live/test-cap7-live.py; Acceptance Criteria 2; Verification command 3 ('expected: exit 0')",
+    "issue": "Several live-test points are open. (1) A skipped run (Docker, browsers or images absent) presumably exits 0, which looks identical to a pass, so 'exit 0' can't prove that (a)–(c) passed. (2) The test isn't required to assert `browser_mode: parallel` and `--slot-cost 2`. On the shared daemon, missing free slots make ps-run-layer admit at cost 1 sequentially, so (b)/(c) would silently test the sequential fallback, or (c) would fail with spans that aren't lockstep. (3) It's unspecified how (a) boots a container per version: through ps-e2e-run internals, or a special spec. (4) The test needs a PEP723 header with `playwright` to drive the sessions in (a) itself. (5) (b) needs `--session` (`--new-session`), `--tier`, a `--config` (require_config rejects a missing one when psm-config.json exists) and a temp reports dir, none of which are specified. (6) The scope of the 'mismatch reruns once' retry (parallel run only, or the baselines too) isn't defined.",
+    "implementation_impact": "The live suite can pass while testing nothing, or fail for environmental reasons. The implementer has to invent the harness.",
+    "suggestion": "Require: skip = a distinct exit code or a printed 'SKIPPED' that the verification command checks; assert `browser_mode == 'parallel'` on both (b) records, and treat a sequential admission as 'retry or fail with a message'. Specify the (a) boot path, the PEP723 deps, the config/session/tier/reports-dir setup for (b), and that the mismatch retry reruns the whole (parallel + both baselines) triple once."
+  },
+  {
+    "location": "Design Notes > Reset in shell ('`reset-db` = drop the DB with the prelude creds, then load the `--databases` dump'); Boundaries bullet 3 (`DB_PRELUDE`)",
+    "issue": "`DB_PRELUDE` (ps-scenario-run.py:80) defines `$MYSQL` and `$MYSQLDUMP` with `$DBN` already appended as a positional database. After `DROP DATABASE`, loading with `$MYSQL < dump` connects to the now-missing `$DBN` and fails with 'Unknown database'. The spec also doesn't say where the dump and the docroot list live. They must sit outside `/var/www/html` (or `reset-files` sees them) and must not collide with Layer 5's `/tmp/psm-scenario-baseline.sql`.",
+    "implementation_impact": "A literal implementation of 'drop then load with the prelude creds' fails at every reset, so every confirmation ends `parallel-unconfirmed`. Paths have to be guessed.",
+    "suggestion": "Specify the commands: dump `$MYSQLDUMP_BIN -h $DBH -P $DBPORT -u $DBU -p$DBPW --databases $DBN > /tmp/psm-e2e-snapshot.sql`, load with `$MYSQL_BIN` without a default DB, docroot list at `/tmp/psm-e2e-snapshot.files`. State that the user from `parameters.php` must be able to DROP/CREATE that database."
+  },
+  {
+    "location": "Boundaries bullet 3 ('`DB_PRELUDE` (lazily `load_sibling`ed)'); Code Map ('ps-scenario-run.py -- `DB_PRELUDE`, `load_sibling` (reused, unchanged)')",
+    "issue": "The spec doesn't say which `load_sibling` to use. ps-scenario-run.py's own `load_sibling` can't load ps-scenario-run.py itself. ps-e2e-run.py has no `load_sibling`, only `_plan_layers()`. ps-aggregate.py has one. Loading ps-scenario-run.py also runs its top-level `fl = load_sibling(ps-flashlight-run.py)`, which creates a second ps-flashlight-run instance with its own `_PROGRESS`, `_TIMING`, `_JOB` and `RUN_ID`, and its `load_sibling` calls `sys.exit(2)` on failure.",
+    "implementation_impact": "An implementer may call the wrong loader or accidentally use the second `fl` instance's `_exec`/`phase`. Its timing sink and progress state are inactive, so phases recorded through it are lost. A load failure in the middle of a run would exit 2 from inside the version process.",
+    "suggestion": "Say: load ps-scenario-run.py with a local loader in ps-e2e-run (the `_plan_layers` pattern), read only `DB_PRELUDE` from it, and always use ps-e2e-run's own `fl` for `_exec`/`phase`. A load failure counts as a `snapshot-db` failure, not an exit."
+  },
+  {
+    "location": "Design Notes > Reset in shell ('`reset-opcache` = `kill -USR2` the php-fpm master found via `/proc/*/comm`')",
+    "issue": "On the nginx flashlight images the php-fpm master and its pool workers have the same comm (`php-fpm`, or a version-suffixed name truncated to 15 characters). `/proc/*/comm` alone can't identify the master. That needs the ppid (from `/proc/<pid>/stat`) or the cmdline `php-fpm: master process`.",
+    "implementation_impact": "If USR2 goes to every matching pid, or to the first one, the opcache reload may miss the master or signal workers in unpredictable ways. The tests and the CAP-5 reuse depend on getting this right.",
+    "suggestion": "Specify the selection: pids whose comm starts with `php-fpm` and whose parent's comm does not (or whose cmdline contains `master process`). Exactly one must match, otherwise the step fails. Add a unit test over a fake /proc listing."
+  },
+  {
+    "location": "Boundaries bullet 3 (reset routine); Design Notes > Mode; Evidence record fields `boot`/`boot_id`",
+    "issue": "The spec never says that records produced after a reset (a rerun-seq counting pass, or a sequential-fallback later engine) keep `boot: cold` and the version's `boot_id`. Gate-grade requires `boot: cold`. Because the routine is 'written so CAP-5 can reuse it', and CAP-5 warm iterations use `boot: warm` and a composite `<keeper boot_id>#<RUN_ID>`, an implementer could mark reset passes as warm or give them a new `boot_id`.",
+    "implementation_impact": "That would make every confirmed or fallback cell non-gate-grade, or count the boot twice in `e2e_phase_durations`.",
+    "suggestion": "Add: 'reset passes stay within the same cold boot — `boot: cold`, unchanged `boot_id`, one `boot_phases` object holding the reset phases.'"
+  },
+  {
+    "location": "Boundaries bullet 5 (Runner: '`parallel-unconfirmed` (read once before admission)'); Code Map ps-plan-layers `read_history`",
+    "issue": "The spec doesn't say what happens if the history read fails. `read_history` raises `PlanInputError` on OS errors, so it's unclear whether that means exit 2, or a warning plus parallel admission. It also doesn't say how 'newest record' is defined when the file has a corrupt tail, or whether the cells checked are all configured cells of the version or only the admitted ones. For n == 1 it's unclear whether `--sequential-browsers` is still passed when forced. The spec's wording ('a version driving n engines ... else at cost 1 with `--sequential-browsers` when n > 1') leaves both n == 1 cases unstated.",
+    "implementation_impact": "Each of these is a guess that changes the child argv and test expectations, e.g. the 'Unconfirmed history' row on a corrupt file.",
+    "suggestion": "Pin down: an unreadable history → InputError exit 2 before spawn (consistent with other pre-spawn checks); 'newest' = last valid record whatever the corrupt tail; all configured browsers of the version are checked; n == 1 → cost 1 without `--sequential-browsers`."
+  },
+  {
+    "location": "Boundaries bullet 1 ('one engine stays in-process and `sequential`')",
+    "issue": "The wording is ambiguous. It can be read as 'in parallel mode one of the engines runs in-process and the others in workers', which contradicts 'spawns one `--engine-worker` subprocess per engine'. The intended reading is probably 'a version process driving one engine runs it in-process with `browser_mode: sequential`'.",
+    "implementation_impact": "One reading leads to the wrong architecture (n-1 workers).",
+    "suggestion": "Rephrase: 'A version process driving a single probed engine, or started with `--sequential-browsers`, drives in-process with `browser_mode: sequential`.'"
+  },
+  {
+    "location": "cell-contract Slots ('... drives its browsers one after another ... and logs the fallback') and Parallel browsers bullet 3 ('The fallback is logged'); existing ps-e2e-run.py `main` stderr message",
+    "issue": "The existing stderr message for `--sequential-browsers` still reads '(admisi interim cost 1)' and the CAP-3 comment says 'BUKAN kekurangan slot'. Under CAP-7 the sequential mode means slot shortage or `parallel-unconfirmed` forcing, so the message is wrong. The spec doesn't mention updating it, and doesn't say where the BO-login fallback is logged. It needs to go somewhere other than `browser_notes`/`errors`, since `browser_notes` would drop `ready`.",
+    "implementation_impact": "Stale or misleading operator messages ship. The implementer may log the BO-fallback in `browser_notes` and silently make the cell non-passing.",
+    "suggestion": "Specify both log lines: the sequential-fallback reason (slots or unconfirmed history, ideally passed by ps-run-layer or just 'sequential mode') on stderr and the progress log; the BO-login fallback on stderr and the progress log only, never in `browser_notes`/`errors`."
+  },
+  {
+    "location": "Tasks > docs (SKILL.md, run-phases.md, e2e-quickstart.md, README)",
+    "issue": "Several existing passages are left stale. SKILL.md line 47 ('sampai CAP-4/5/7 selalu dingin & skenario penuh') and run-phases.md line ~136 ('Interim sampai CAP-4/5/7 ... browser berurutan sesuai admisi slot') still describe sequential browsers. e2e-quickstart.md 'DB bersama antar-browser' (line ~207) and the screenshot path example `.../9.1/chromium-<scenario>-*.png` (line ~152) are now wrong. The visual-review instruction 'tinjau `<run dir>/<ver>/`' (SKILL.md line 47, run-phases.md line ~198) doesn't cover the `<ver>/<engine>/` and `<ver>/<engine>-seq/` folders, or which pass's images count. README has no 'E2E concurrency' section, so where the slot-cost text goes is a guess.",
+    "implementation_impact": "Operators get docs that contradict the new behaviour. They may review the discarded first-pass screenshots instead of the counting pass.",
+    "suggestion": "Add these passages to the docs task: replace 'CAP-4/5/7' with 'CAP-4/5' in both interim notes; rewrite the quickstart shared-DB gotcha (lockstep + reset; `{browser}` still needed for same-step data) and the path example; tell visual review to use the record's `screenshots` (counting pass). For README, point the text at the `psm_e2e_slots` table row and the `--slots` mentions (lines ~59/86/91/357)."
+  },
+  {
+    "location": "Boundaries bullet 1 (screenshots in `<shots>/<ver>/<engine>`); Design Notes / contract ('`<shots>/<ver>/<engine>-seq`' for sequential passes)",
+    "issue": "The screenshot directory is specified for workers and for sequential passes only. It's unspecified for the sequential fallback's engines and for a single-engine version, whether they stay in `<shots>/<ver>/` as today or move to `<shots>/<ver>/<engine>/`. The spec also doesn't say whether the discarded BO-fallback first pass's images are kept or deleted.",
+    "implementation_impact": "The layout varies by mode in ways that tests and the docs can't predict, and stale first-pass PNGs may sit next to the counting ones.",
+    "suggestion": "Choose one layout for every mode (suggested: always `<shots>/<ver>/<engine>[-seq]/`) and say that discarded-pass images stay on disk but are absent from the record's `screenshots`."
+  },
+  {
+    "location": "Boundaries bullet 1 ('forwards SIGTERM'; 'A worker that leaves no parseable result → ... `crash`'); Never ('producing `stopped` records')",
+    "issue": "Workers are registered under the Job ID, so `--stop-job` sends SIGTERM to them directly as well as to the version process. The spec doesn't say what the version process emits when a worker exits 143 or is killed. A worker killed by its own signal (e.g. OOM, or someone signalling its pid) would become `crash` with rc in `browser_notes`. But when the version process is itself stopped, it should exit 143 with no output. The ordering and race between the two cases is unspecified.",
+    "implementation_impact": "There's a risk of emitting `crash` cells (an infra cause feeding `blocked-infra`) for an operator stop, or of hanging while waiting for already-signalled workers.",
+    "suggestion": "State: once the version process has received SIGTERM, it forwards it, reaps workers with a bound (e.g. `JOB_STOP_GRACE`), tears down and exits 143 without emitting cells. A worker rc of 143/-15 while the version process was not signalled → `crash` with rc noted."
+  },
+  {
+    "location": "Design Notes > `scenario_spans` ('`{<scenario name>: [start_ns, end_ns]}`'); Boundaries bullet 2 (lockstep)",
+    "issue": "Spans are keyed by scenario name, but today `discover_scenarios` doesn't reject duplicate effective names (that check is CAP-4's `requires` validation, which is deferred). Two specs with the same `name` would overwrite each other's span, and lockstep step identity by name would be ambiguous.",
+    "implementation_impact": "Live test (c) and the lock-overlap checks could pass or fail spuriously for modules with duplicate names. The implementer has to choose between keying by index and keying by name.",
+    "suggestion": "Either key spans by step index (with the name inside) or state that duplicate names are not handled until CAP-4 and that the barrier uses the step index k, never the name."
+  }
+]

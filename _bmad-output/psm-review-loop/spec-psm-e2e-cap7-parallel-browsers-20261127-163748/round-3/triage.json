@@ -1,0 +1,17 @@
+{"round": 3, "critical_high": 15, "fixed": 13, "escalated": 2, "dropped": 0, "code_defects": 0,
+ "questions_for_budi": [
+  {"id": "20261127-163748.r3-q1", "finding": "Kontrak (Parallel browsers, butir 3) masih bilang 'no further rerun' saat semua login BO gagal, padahal spec tetap menjalankan rerun-seq untuk engine yang punya temuan. Mana yang benar?", "options": ["Ubah kalimat kontrak: 'tak ada pass fallback BO-login lagi; rerun-seq tetap jalan' + baris I/O baru", "Ikuti kontrak harfiah: tanpa rerun-seq, temuan tak terkonfirmasi"], "recommended": "Ubah kalimat kontrak: 'tak ada pass fallback BO-login lagi; rerun-seq tetap jalan' + baris I/O baru", "oscillation": false},
+  {"id": "20261127-163748.r3-q2", "finding": "Blok frozen (Honesty law) bilang rerun dengan login BO gagal 'never passing gate-grade', padahal langkah BO goto/expect_no_fatal tetap konklusif tanpa login, jadi rerun itu bisa lulus.", "options": ["Lunakkan kalimat: berlaku sama seperti run satu engine", "Tambah aturan yang memaksa tak lulus (mis. browser_note)"], "recommended": "Lunakkan kalimat: berlaku sama seperti run satu engine", "oscillation": false}
+ ],
+ "medium_low": [
+  {"location": "Always > Child bullet 2 / contract Cross-engine lock", "issue": "goto BO lewat `url` tanpa area 'bo' diklasifikasi FO (LOCK_SH); celah tingkat kontrak, perlakuan sama dengan hari ini (login & konklusivitas juga per area)"},
+  {"location": "Code Map > _drive_page/drive_engine", "issue": "seam mode per pass (worker/first pass/sequential) tak dinamai, mis. hook=None; perilaku tiap pass sudah ditetapkan"},
+  {"location": "Design Notes > Confirmation merge (BO-login fallback)", "issue": "fallback pass yang gagal luncur membuang temuan pass pertama tanpa parallel_only; sel tetap inconclusive, tak lolos diam-diam"},
+  {"location": "Always > Child (psm.slots)", "issue": "--slot-cost < n eksplisit di run langsung paralel; kontrak: dicap apa adanya"},
+  {"location": "Always > Child / Confirmation passes (urutan)", "issue": "sumber urutan psm_e2e_browsers di run langsung tanpa config; ps-run-layer sudah mengirim --engines urut config"},
+  {"location": "Design Notes > Snapshot and reset (reset-opcache)", "issue": "USR2 reload asinkron; wait-http bisa kena jendela reload (spekulatif)"},
+  {"location": "Design Notes > Snapshot and reset (find)", "issue": "file lenyap saat find di bawah set -e bisa menggagalkan snapshot/reset; kecil kemungkinannya saat tak ada browser jalan"},
+  {"location": "Always > lockstep barrier / Worker interface", "issue": "gagal tulis step marker atau <engine>.done (disk penuh) bisa menggantung barrier"},
+  {"location": "Design Notes > Worker interface (Parseable)", "issue": "tipe result/scenario_spans/timings tak divalidasi; hasil cacat dari bug worker bisa meng-crash versi"},
+  {"location": "Acceptance Criteria 2 / live test", "issue": "live (b)/(c) bergantung beban daemon bersama; tak reproducible saat slot sibuk"}
+ ]}

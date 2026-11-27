@@ -1,0 +1,56 @@
+[
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:90 (Design Notes > Confirmation merge, BO-login fallback)",
+  "issue": "The BO-login fallback pass cannot launch (launch_error), or fails after launch. Its first pass was already discarded, and only the parallel-unconfirmed path says where the discarded first-pass findings go (parallel_only). Here the merge says findings and inconclusive are 'that pass's alone'.",
+  "implementation_impact": "Conclusive FO findings from the discarded lockstep pass disappear without a trace. The cell reads inconclusive launch-error with empty findings and parallel_only, which breaks the honesty law ('unconfirmable findings never pass silently').",
+  "suggestion": "State that when the fallback pass returns launch_error, the discarded first pass's findings move to parallel_only (as in the parallel-unconfirmed rule), and its findings are []."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:90 (Confirmation merge field list) / :91 (Worker interface)",
+  "issue": "The merge names which pass supplies each cell field, but browser_notes is not listed. Today the version loop's note() writes the 'browser X gagal diluncurkan' note. The spec does not say whether the version process writes this note for a worker's launch_error, or for a rerun or fallback pass that cannot launch.",
+  "implementation_impact": "A launch-error cell may carry no explanatory browser_notes entry, or the version-level legacy browser_notes may differ by implementation. Operators lose the remediation hint, and unit tests cannot pin the expected notes.",
+  "suggestion": "Add browser_notes to the merge: the first pass's notes plus a launch-error note (same text as today) for each pass whose launch_error is set. The version process writes it for worker results too."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:27 (Always > Child, psm.slots stamping)",
+  "issue": "A direct run passes an explicit --slot-cost lower than n (e.g. --slot-cost 1) with two probed engines and no --sequential-browsers. The child runs in parallel mode and stamps psm.slots=1. Only the no-flag case (stamp n) is defined.",
+  "implementation_impact": "The daemon-wide slot count under-reports a parallel boot. Concurrent ps-run-layer admissions over-subscribe the host by one browser per such run.",
+  "suggestion": "Specify one: reject --slot-cost < n in parallel mode (exit 2), force parallel mode off (behave as --sequential-browsers), or stamp max(--slot-cost, n)."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:27, :89 ('in psm_e2e_browsers order')",
+  "issue": "The confirmation-pass order and the sequential-fallback order are defined as psm_e2e_browsers order. The child gets its engine set from --engines (runner) or --browsers (direct run), possibly in a different order, and may have no --config at all.",
+  "implementation_impact": "The order of sequential passes and of the sequential fallback depends on the code path. It decides which engine gets not-run after fail-fast and which engine becomes parallel-unconfirmed after a reset failure, so the same inputs can yield different records.",
+  "suggestion": "Define the order source: psm_e2e_browsers from --config when present, filtered to the driven engines; otherwise the --engines/--browsers order. Have the runner pass --engines in config order."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:93 (reset-opcache master detection)",
+  "issue": "The set -e script reads /proc/<pid>/comm for every process and its parent. A php-fpm worker can exit between the /proc scan and the read (pm dynamic/ondemand), or a parent can be pid 0. The spec does not say how a vanished or unreadable /proc entry is handled.",
+  "implementation_impact": "A routine race aborts the set -e script before the sentinel, so reset-opcache fails spuriously. Every later engine needing a pass gets parallel-unconfirmed, or sequential-reset in the fallback, and the next run is forced to cost 1.",
+  "suggestion": "Specify that unreadable or vanished /proc entries are skipped, e.g. c=$(cat /proc/$p/comm 2>/dev/null) || continue, and that only the final count of masters (exactly one) decides failure."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:93 (reset-opcache success = sentinel after kill -USR2)",
+  "issue": "kill -USR2 only signals the php-fpm master; the reload (re-exec, children respawned) completes asynchronously after the sentinel is printed. Nothing defines waiting for the reload to finish.",
+  "implementation_impact": "wait-http can succeed against pre-reload children, so the rerun's first request may hit the reload window (502 or reset connection). A rerun failure always blocks, so this becomes a false blocking finding.",
+  "suggestion": "Require reset-opcache to wait until the master pid serves again, e.g. poll until new child pids exist (children whose ppid is the master and whose start time is after the kill), with a bound under --timeout, before echoing PSM_RESET_OPCACHE_OK."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:93 (docroot listing under set -e)",
+  "issue": "The find listing runs in a set -e script. A file that vanishes during traversal (log rotation, tmp cleanup by a still-running php-fpm request) makes find exit non-zero. The spec does not say whether that is a snapshot-db or reset-files failure.",
+  "implementation_impact": "A transient vanish fails snapshot-db, or fails reset-files and makes the cell parallel-unconfirmed or sequential-reset, even though the listing is otherwise complete.",
+  "suggestion": "Specify find ... -print > <tmp> || true, followed by a check that <tmp> is non-empty, or state explicitly that any non-zero find exit is a failure and accept it."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:28 (lockstep barrier) / :91 (.done creation)",
+  "issue": "Writing a step marker (worker) or creating <engine>.done (version process) can fail with OSError: disk full, dir removed, EACCES. Both waits poll with no timeout and never emit SLOW, and the spec defines no reaction to a failed marker write.",
+  "implementation_impact": "The other workers wait in barrier-wait forever. The version process waits forever on workers that never exit, so the run hangs silently until --stop-job.",
+  "suggestion": "Specify that a worker whose step-marker write fails exits without a result (crash), and that a failed .done creation marks every remaining step done for that engine some other way, or kills every worker and records crash cells."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:91 (Worker interface, 'Parseable')",
+  "issue": "A result counts as parseable when it is a JSON object with the listed keys and the matching engine. The type of result (drive_engine's return), scenario_spans and timings is not constrained, so result: null or non-list scenarios passes the check.",
+  "implementation_impact": "_fill_cell or the timing re-record raises in the version process on a malformed but 'parseable' result. That crashes the whole version instead of one engine's cell being marked crash.",
+  "suggestion": "Extend 'parseable' to require that result is an object with a list scenarios, scenario_spans is an object and timings is a list of [str, number, str]. Anything else is crash."
+ }
+]

@@ -1930,8 +1930,9 @@ def test_e2e_own_queue():
 
 
 def test_e2e_slots_suffice():
-    """Slot cukup: cleanup tetap sekali & sebelum hitungan; tiap anak menerima --run-id <klaim>
-    --slot-cost 1 --progress-append --sequential-browsers; log ditutup DONE bila anak tak menulisnya."""
+    """Slot cukup: cleanup tetap sekali & sebelum hitungan; tiap anak (dua engine) menerima
+    --run-id <klaim> --progress-append --slot-cost 2 TANPA --sequential-browsers (CAP-7: biaya n
+    paralel); log ditutup DONE bila anak tak menulisnya."""
     ok = True
     with tempfile.TemporaryDirectory() as tmp:
         rep, m = _e2e_env(tmp)
@@ -1956,11 +1957,11 @@ def test_e2e_slots_suffice():
                     and all(t and t[0][0] == "START" for t in calls["cleanup"][0][1].values()))
         ok &= check("cleanup: ringkasannya di stderr", "cleanup-orphans otomatis" in err)
         ids = fake.arg("--run-id")
-        ok &= check("tiap anak: --run-id <klaim hex12 unik> --slot-cost 1 --progress-append "
-                    "--sequential-browsers",
+        ok &= check("tiap anak: --run-id <klaim hex12 unik> --progress-append --slot-cost 2, "
+                    "tanpa --sequential-browsers",
                     all(re.fullmatch(r"[0-9a-f]{12}", i or "") for i in ids) and len(set(ids)) == 2
-                    and fake.arg("--slot-cost") == ["1", "1"]
-                    and all("--progress-append" in c and "--sequential-browsers" in c
+                    and fake.arg("--slot-cost") == ["2", "2"]
+                    and all("--progress-append" in c and "--sequential-browsers" not in c
                             for c in fake.cmds))
         recs = _hist(rep, "9.1", "chromium") + _hist(rep, "8.1", "firefox")
         ok &= check("pass pertama: rekaman membawa wait-slots outcome ok",
@@ -2389,6 +2390,205 @@ def test_e2e_tier_passthrough():
     return ok
 
 
+# --- CAP-7: browser paralel — admisi biaya n / biaya 1, state yang diset anak -------------
+SIX = "9.1:chromium+firefox,8.1:chromium+firefox,1.7.8:chromium+firefox"
+
+
+def _cost_of(fake):
+    """{versi: (--slot-cost, ada --sequential-browsers?)} per anak yang di-spawn."""
+    return {_ver_of(c): (c[c.index("--slot-cost") + 1] if "--slot-cost" in c else None,
+                         "--sequential-browsers" in c) for c in fake.cmds}
+
+
+def _seed_hist(rep, ver, browser, *reasons, corrupt_tail=False):
+    """Histori sel berisi rekaman minimal (urutan = urutan append; terakhir = terbaru)."""
+    path = PL.history_path(rep, "mymod", ver, browser)
+    for i, reason in enumerate(reasons):
+        PL.append_record(path, {"version": ver, "browser": browser, "started_at": _iso(i),
+                                "state": "inconclusive" if reason else "pass",
+                                "reason": reason})
+    if corrupt_tail:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("{rusak\n")
+    return path
+
+
+def test_e2e_cap7_admission():
+    """I/O 'Admission' & 'Admission short': biaya n paralel bila n slot bebas, else biaya 1
+    `--sequential-browsers`; klaim slot membawa biaya yang sama; tak muat = tunggu."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        calls = {"n": 0}
+
+        def usage():
+            calls["n"] += 1
+            return 0, [], None
+        fake = E2EChild()
+        rc, _err, _out = _run_full(_e2e(rep, m, cfg, "--cells", SIX, more=["--slots", "6"]),
+                                   fake, usage=usage)
+        ok &= check("Admission: --slots 6, hitungan 0 -> tiga anak di pass pertama, biaya 2 "
+                    "masing-masing, tanpa --sequential-browsers",
+                    rc == 0 and calls["n"] == 1 and _cost_of(fake)
+                    == {v: ("2", False) for v in ("9.1", "8.1", "1.7.8")})
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        seen, claims = {}, {}
+        fake = E2EChild(delay={"9.1": 0.3, "8.1": 0.3},
+                        hook=lambda v: claims.setdefault(v, [
+                            c for es in FL._registry_entries().values() for e in es
+                            if e.get("pid") == FL.OWNER_PID for c in e.get("slot_claims") or []]))
+
+        def spawn(cmd):
+            seen[_ver_of(cmd)] = list(fake.done)  # anak yang sudah selesai saat ini di-spawn
+            return fake(cmd)
+        rc, err, _out = _run_full(_e2e(rep, m, cfg, "--cells", SIX, more=["--slots", "3"]),
+                                  spawn, usage=_usage(0))
+        cost = _cost_of(fake)
+        ok &= check("Admission short: 9.1 biaya 2 paralel; 8.1 biaya 1 --sequential-browsers",
+                    rc == 0 and cost.get("9.1") == ("2", False)
+                    and cost.get("8.1") == ("1", True))
+        ok &= check("Admission short: 1.7.8 menunggu (di-spawn baru sesudah anak lain di-reap)",
+                    seen.get("9.1") == [] and seen.get("8.1") == [] and seen.get("1.7.8")
+                    and _hist(rep, "1.7.8", "chromium")[0]["phase_durations"]["wait-slots"]
+                    ["seconds"] > 0)
+        ok &= check("Admission short: klaim slot di registry membawa biaya admisi (2 dan 1)",
+                    sorted(c["cost"] for c in claims.get("9.1") or []) == [1, 2])
+        ok &= check("Admission short: fallback sekuensial di-log menyebut versinya",
+                    "8.1" in err and "--sequential-browsers" in err)
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        fake = E2EChild()
+        rc, _err, _out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium,8.1:firefox",
+                                        more=["--slots", "6"]), fake, usage=_usage(0))
+        ok &= check("satu engine: biaya 1, tanpa --sequential-browsers",
+                    rc == 0 and _cost_of(fake) == {"9.1": ("1", False), "8.1": ("1", False)})
+    return ok
+
+
+def test_e2e_cap7_unconfirmed_history():
+    """I/O 'Unconfirmed history': rekaman TERBARU satu sel terkonfigurasi ber-reason
+    `parallel-unconfirmed` -> biaya 1 `--sequential-browsers`, berapa pun slot bebas."""
+    ok = True
+    for label, seed, want91, want81 in (
+            ("8.1:firefox terbaru parallel-unconfirmed",
+             lambda rep: _seed_hist(rep, "8.1", "firefox", None, "parallel-unconfirmed"),
+             ("2", False), ("1", True)),
+            ("parallel-unconfirmed LAMA, terbaru pass -> tak dipaksa",
+             lambda rep: _seed_hist(rep, "8.1", "firefox", "parallel-unconfirmed", None),
+             ("2", False), ("2", False)),
+            ("sel terkonfigurasi di luar --cells (8.1:firefox) tetap memaksa 8.1",
+             lambda rep: _seed_hist(rep, "8.1", "firefox", "parallel-unconfirmed"),
+             ("2", False), ("1", True)),
+            ("ekor histori rusak -> dipaksa sekuensial (rekaman terbaru tak diketahui)",
+             lambda rep: _seed_hist(rep, "8.1", "chromium", None, corrupt_tail=True),
+             ("2", False), ("1", True))):
+        with tempfile.TemporaryDirectory() as tmp:
+            rep, m = _e2e_env(tmp)
+            cfg = _cfg(tmp, browsers="chromium,firefox,webkit")
+            seed(rep)
+            cells = ("9.1:chromium+firefox,8.1:chromium+webkit" if "di luar" in label
+                     else "9.1:chromium+firefox,8.1:chromium+firefox")
+            fake = E2EChild()
+            rc, err, _out = _run_full(_e2e(rep, m, cfg, "--cells", cells, more=["--slots", "6"]),
+                                      fake, usage=_usage(0))
+            cost = _cost_of(fake)
+            ok &= check(f"{label}: 9.1 {want91}, 8.1 {want81}",
+                        rc == 0 and cost.get("9.1") == want91 and cost.get("8.1") == want81)
+            if want81[1]:
+                ok &= check(f"{label}: alasan pemaksaan di-log", "8.1" in err
+                            and ("parallel-unconfirmed" in err or "rusak" in err))
+    return ok
+
+
+def test_e2e_cap7_child_set_states():
+    """State yang DISET anak (`parallel-unconfirmed`, `sequential-reset`, `crash`) dipertahankan
+    tanpa derive_state; `errors` sel ditambahkan SESUDAH `errors` level-versi, tak ke saudara."""
+    ok = True
+    v_err = ["catatan level-versi"]
+
+    def behave_pu(v, e):
+        p = _child_payload(v, e)
+        vres = p["versions"][v]
+        vres["errors"] = list(v_err)
+        vres["browser_mode"] = "parallel"
+        vres["cells"]["chromium"].update(
+            state="inconclusive", conclusive=False, reason="parallel-unconfirmed",
+            errors=["reset-db: exit 1"], findings=[],
+            parallel_only=[{"scenario": "a", "action": "expect_text", "step": 3}])
+        return p, 1
+
+    def behave_sr(v, e):
+        p = _child_payload(v, e)
+        vres = p["versions"][v]
+        vres["errors"] = list(v_err)
+        e2e = mod.e2e_module()
+        vres["cells"]["chromium"] = e2e._child_state(e2e._new_cell(), "crash")
+        vres["cells"]["firefox"] = e2e._child_state(e2e._new_cell(), "sequential-reset",
+                                                    ["reset-files: timeout"])
+        return p, 1
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        rc, _err, _out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium+firefox"),
+                                   E2EChild(behave_pu), usage=_usage(0))
+        ch = (_hist(rep, "9.1", "chromium") or [{}])[0]
+        ff = (_hist(rep, "9.1", "firefox") or [{}])[0]
+        ok &= check("parallel-unconfirmed: state/conclusive/reason dipertahankan (bukan "
+                    "derive_state)",
+                    (ch.get("state"), ch.get("conclusive"), ch.get("reason"))
+                    == ("inconclusive", False, "parallel-unconfirmed")
+                    and PL.derive_state(ch, "chromium")["reason"] != "parallel-unconfirmed")
+        ok &= check("parallel-unconfirmed: errors = level-versi lalu level-sel; parallel_only "
+                    "dibawa", ch.get("errors") == [*v_err, "reset-db: exit 1"]
+                    and ch.get("parallel_only") == [{"scenario": "a", "action": "expect_text",
+                                                     "step": 3}])
+        ok &= check("saudara (firefox, state derive_state): errors = level-versi saja",
+                    ff.get("reason") != "parallel-unconfirmed" and ff.get("errors") == v_err
+                    and set(ff) == RECORD_FIELDS and set(ch) == RECORD_FIELDS)
+        ok &= check("parallel-unconfirmed -> exit 1", rc == 1)
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        rc, _err, _out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium+firefox"),
+                                   E2EChild(behave_sr), usage=_usage(0))
+        ch = (_hist(rep, "9.1", "chromium") or [{}])[0]
+        ff = (_hist(rep, "9.1", "firefox") or [{}])[0]
+        ok &= check("crash worker (diset anak): inconclusive/crash dipertahankan, errors tanpa "
+                    "tambahan sel, timestamp diisi",
+                    (ch.get("state"), ch.get("reason")) == ("inconclusive", "crash")
+                    and ch.get("errors") == v_err and bool(PL.parse_utc(ch.get("started_at")))
+                    and bool(PL.parse_utc(ch.get("finished_at"))))
+        ok &= check("sequential-reset: dipertahankan, errors = level-versi + sub-fase sel",
+                    (ff.get("state"), ff.get("conclusive"), ff.get("reason"))
+                    == ("inconclusive", False, "sequential-reset")
+                    and ff.get("errors") == [*v_err, "reset-files: timeout"])
+        ok &= check("crash/sequential-reset -> exit 1", rc == 1)
+    return ok
+
+
+def test_e2e_cap7_engine_worker_reserved():
+    """`--engine-worker` (mode internal anak) DILARANG di passthrough, singkatannya juga."""
+    ok = check("RESERVED_PASSTHROUGH memuat --engine-worker",
+               "--engine-worker" in mod.RESERVED_PASSTHROUGH)
+    ok &= check("--engine-worker & singkatan --engine-w tertangkap",
+                mod.reserved_in_passthrough(["--engine-worker"]) == ["--engine-worker"]
+                and mod.reserved_in_passthrough(["--engine-w"]) == ["--engine-worker"])
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        for extra in (["--engine-worker"], ["--engine-wo"]):
+            fake = E2EChild()
+            rc, err, out = _run_full(_e2e(rep, m, cfg, "--versions", "9.1", extra=extra), fake)
+            ok &= check(f"{extra[0]} di passthrough -> exit 2, tak spawn, tanpa baris output",
+                        rc == 2 and fake.cmds == [] and out.strip() == ""
+                        and "--engine-worker" in err)
+    return ok
+
+
 def main():
     ok = True
     for name, fn in (("test_pure", test_pure),
@@ -2439,6 +2639,11 @@ def main():
                      ("test_e2e_tier_bad_input", test_e2e_tier_bad_input),
                      ("test_e2e_tier_stamped", test_e2e_tier_stamped),
                      ("test_e2e_tier_passthrough", test_e2e_tier_passthrough),
+                     ("test_e2e_cap7_admission", test_e2e_cap7_admission),
+                     ("test_e2e_cap7_unconfirmed_history", test_e2e_cap7_unconfirmed_history),
+                     ("test_e2e_cap7_child_set_states", test_e2e_cap7_child_set_states),
+                     ("test_e2e_cap7_engine_worker_reserved",
+                      test_e2e_cap7_engine_worker_reserved),
                      ("test_help_prints_docstring", test_help_prints_docstring)):
         print(f"{name}:")
         ok &= fn()
