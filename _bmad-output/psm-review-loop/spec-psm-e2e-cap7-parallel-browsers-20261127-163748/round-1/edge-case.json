@@ -1,0 +1,176 @@
+[
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:28 (Always, lock + lockstep)",
+    "issue": "Order of lock release vs barrier wait is unspecified: 'releases it before the engine's next scenario' permits holding the bo.lock while blocked in barrier-wait for step k+1.",
+    "implementation_impact": "Engine A holds LOCK_EX/LOCK_SH at the barrier while engine B blocks in lock-wait on the same file for step k; neither has a timeout, so the version deadlocks forever.",
+    "suggestion": "State explicitly: the scenario's flock is released (fd closed) as soon as the scenario ends and before the step-k marker is created / barrier-wait begins; add a unit test with two threads where a BO scenario is followed by a barrier."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:27 (Always, parallel driver reaping)",
+    "issue": "Reaping order of workers is unspecified; '.done' is created only 'when it reaps a worker'.",
+    "implementation_impact": "If the version process blocks on wait() for worker A while worker B has already crashed, B's '<engine>.done' is never created, A waits in barrier-wait forever (no timeout) and the 'barrier never hangs' row fails.",
+    "suggestion": "Require reaping in completion order (os.waitpid(-1)/poll loop over all workers) with '.done' created immediately on each exit; test with a stub worker that exits 1 at step 0 while the other is still at the barrier."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:27,58 (worker entry in main)",
+    "issue": "Worker entry is placed in main, but main is wrapped by fl.run_main_with_progress, which always writes a DONE line (rc, crash or stopped).",
+    "implementation_impact": "Workers write DONE into the version's progress log in the middle of the run, which breaks the 'never DONE' rule and makes watchers treat the version as finished early.",
+    "suggestion": "Specify that --engine-worker is dispatched before run_main_with_progress (e.g. in __main__) or that the wrapper skips DONE/progress_init in worker mode; add a test asserting no DONE line from a stub worker."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:27 (SIGTERM / --stop-job)",
+    "issue": "No behavior is given for a stop arriving during or before the sequential confirmation passes, or for a worker SIGTERMed directly by --stop-job before the version process.",
+    "implementation_impact": "A worker killed by --stop-job leaves no result and is recorded as 'crash' rather than stopped. The version process may also start a reset plus rerun after SIGTERM and overrun JOB_STOP_GRACE (SIGKILL), so no teardown runs.",
+    "suggestion": "Add rule: once SIGTERM is received (or any worker exits with -15/143), skip all confirmation/fallback passes and resets, go straight to teardown and exit 143; never classify a signal-terminated worker as crash."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:27 (one engine stays in-process)",
+    "issue": "Wording 'one engine stays in-process and sequential' is ambiguous: it can mean a single-engine version, or that one of the parallel engines runs in-process instead of in a worker.",
+    "implementation_impact": "An implementer may run one parallel engine in-process. That contradicts 'one --engine-worker subprocess per engine' and puts two sync Playwright instances in one process.",
+    "suggestion": "Reword: 'a version process driving exactly one probed engine drives it in-process with browser_mode: sequential; in parallel mode every engine runs in its own worker'."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:85 (Confirmation merge)",
+    "issue": "Merge rule does not say whether launch_error, browser_notes, scenarios_run and authored_assertions come from the first pass or the rerun when the rerun's in-process browser fails to launch or crashes after launch.",
+    "implementation_impact": "A rerun with launch_error yields empty findings, so every parallel finding moves to parallel_only. The cell can then read pass (first-pass launch_error null) or launch-error inconclusive, never parallel-unconfirmed, so an unconfirmed finding can pass silently.",
+    "suggestion": "Add: a rerun with launch_error or an exception after launch is unconfirmable, so the cell is inconclusive with reason parallel-unconfirmed, every parallel finding goes to parallel_only, and the launch error goes to cell errors and browser_notes."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:85 (Confirmation merge, inconclusive at same key)",
+    "issue": "A parallel finding whose (scenario, step, action) is inconclusive in the rerun (e.g. rerun BO login failed) is treated as 'not reproduced'.",
+    "implementation_impact": "F moves to parallel_only without being confirmed or refuted. The cell becomes pass with inconclusive steps instead of parallel-unconfirmed, so the next admission is not forced sequential and the plan sees inconclusive-steps.",
+    "suggestion": "Specify: a parallel finding whose key is inconclusive in the rerun counts as unconfirmed, so the cell is inconclusive with reason parallel-unconfirmed and F goes to parallel_only; add an I/O row."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:85 (bo_authed kept from first pass)",
+    "issue": "bo_authed stays from first pass even when the rerun's BO login failed and made BO steps inconclusive.",
+    "implementation_impact": "The record says bo_authed=true while the counting pass's BO steps are inconclusive for lack of auth. The record is self-contradictory and misleads infra diagnosis.",
+    "suggestion": "Define bo_authed as first-pass AND rerun login result (or add rerun_bo_authed), and note the rerun login failure in browser_notes."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:46 + cell-contract Parallel browsers (BO-login fallback + reset failure)",
+    "issue": "BO-login fallback engine whose pre-pass reset or health check fails (or snapshot failed) has no defined state or parallel_only content; its first pass was discarded.",
+    "implementation_impact": "The implementation must guess whether to keep the discarded first pass, emit parallel-unconfirmed with empty parallel_only, or emit sequential-reset. Records diverge from the contract's honesty law.",
+    "suggestion": "Add I/O row: fallback engine + reset/snapshot failure → inconclusive, parallel-unconfirmed, parallel_only = discarded first-pass findings (or []), failing sub-phase in cell errors."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:27,32 (sequential passes after a confirmed fail)",
+    "issue": "Unspecified whether later engines still get their reset + rerun after an earlier engine's rerun confirms a fail, and whether a reset failure for engine 1 stops attempts for engine 2.",
+    "implementation_impact": "The child may skip later reruns, which leaves their cells unconfirmed. It may also retry resets on a broken container, which wastes boot time. Either way the records are not reproducible across implementations.",
+    "suggestion": "State: in parallel confirmation every engine needing a pass gets one (no inner fail-fast); after the first reset/health failure every remaining engine needing a pass is parallel-unconfirmed with that sub-phase, no further reset attempted."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:84 vs cell-contract Runner > Fail-fast (sequential fallback)",
+    "issue": "Precedence is unspecified when the snapshot fails AND the first engine fails: the design note gives later engines sequential-reset, while fail-fast gives them not-run.",
+    "implementation_impact": "Later engines get sequential-reset (an infra cause that counts toward blocked-infra) or not-run, depending on code order. That changes plan derivation and admission.",
+    "suggestion": "Add rule: fail-fast wins, so after a first-engine fail the remaining engines are not-run even when the snapshot failed; sequential-reset applies only when the engine would otherwise have started."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:86 (reset-db)",
+    "issue": "The prelude's $MYSQL includes $DBN as the default database; after dropping it, loading the --databases dump through $MYSQL fails with 'Unknown database'.",
+    "implementation_impact": "Every reset-db fails. Every rerun becomes parallel-unconfirmed and every later sequential-fallback engine becomes sequential-reset, which breaks the core CAP-7 confirmation path.",
+    "suggestion": "Specify the loader connects without a default DB (\"$MYSQL_BIN -h $DBH -P $DBPORT -u $DBU -p$DBPW < dump\") and the dump invocation (\"$MYSQLDUMP_BIN ... --single-transaction --routines --databases $DBN\")."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:29,86 (snapshot storage location)",
+    "issue": "Where the dump and docroot list are stored (container path, host tmp) and their cleanup are unspecified.",
+    "implementation_impact": "If they are stored under the docroot after the listing, reset-files deletes them (comm -13) and the next reset (#3) cannot restore. If they are stored on the host, the in-container shell cannot read them.",
+    "suggestion": "Fix paths outside /var/www/html inside the PS container (e.g. /tmp/psm-cap7-snapshot.sql, /tmp/psm-cap7-docroot.lst), created before use and removed by teardown."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:86 (reset-opcache)",
+    "issue": "Picking the php-fpm master via /proc/*/comm is ambiguous, because master and pool workers share the same comm (php-fpm / php-fpmX.Y).",
+    "implementation_impact": "USR2 sent to workers (or to all php-fpm processes) does not reload opcache, or it kills in-flight workers. Stale opcache then serves the pre-reset module code to the rerun.",
+    "suggestion": "Define master selection: php-fpm process whose PPid is not a php-fpm process (or read pid from the fpm pid file); if more than one or none, fall back to apachectl, else fail."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:29,86 (wait-http / warmup-bo after reset)",
+    "issue": "Unspecified whether wait-http or warmup-bo failing after a reset counts as a 'reset phase failed'; today warmup-bo is best-effort and wait-http continues on 5xx-but-responded.",
+    "implementation_impact": "A rerun against a shop still returning 5xx after reset may produce confirmed findings that are reset artefacts, or the same condition may yield parallel-unconfirmed. Either outcome changes the gate.",
+    "suggestion": "Specify: after a reset, wait-http with no response → reset failure (parallel-unconfirmed / sequential-reset); 5xx-but-responded and warmup-bo outcome keep first-boot semantics (best-effort)."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:86 (health check before reset)",
+    "issue": "The health check is one-shot 'healthy'. _health_status also returns 'unknown' (docker timeout), 'starting' and 'nohealth', and no handling is given for these.",
+    "implementation_impact": "A transient docker CLI timeout turns a confirmable cell into parallel-unconfirmed and forces the next run sequential. The error text naming the sub-phase is also undefined.",
+    "suggestion": "Use wait_healthy with a bounded timeout (retry on unknown/starting), treat gone/unhealthy/timeout as failure, and name the sub-phase 'health' in cell errors."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:86 (reset-files, module source)",
+    "issue": "The fresh module copy comes from the live /ps-module-src bind mount, so a module patched on the host mid-run yields rerun code different from the parallel pass.",
+    "implementation_impact": "The rerun confirms or refutes findings against different code, so the parallel_only and findings split is meaningless for that run.",
+    "suggestion": "Snapshot the installed modules/$MOD_NAME tree in-container at snapshot-db time and restore from that copy, or record that the source fingerprint must be rechecked before the rerun."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:86 (reset-files, deleted files)",
+    "issue": "Docroot files present at the snapshot but deleted during a pass (outside modules/$MOD_NAME) are neither restored nor mentioned; only 'modified' files are called out.",
+    "implementation_impact": "A scenario that deletes core or theme files leaves the rerun with a damaged shop. Rerun failures then count as blocking confirmed findings.",
+    "suggestion": "Either detect missing snapshot paths (comm -23) and fail the reset (unconfirmed / sequential-reset), or document deletions alongside modifications as a known non-restored case."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:70 (TimingSink re-recording / browser phase ownership)",
+    "issue": "The spec does not say whether the worker or the version process records 'browser:<engine>' for the parallel pass. It also does not say whether rerun-seq:<engine> contains a nested browser:<engine>#2 and the reset phases.",
+    "implementation_impact": "If both processes record it, a spurious 'browser:<e>#2' appears, which is indistinguishable from the BO-login fallback pass. Rerun timings also differ depending on implementation.",
+    "suggestion": "State: only the worker records browser:<e> (re-recorded once); rerun-seq:<e> wraps reset + drive and emits no browser:<e>#n; the fallback pass emits browser:<e>#2 after its reset."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:74 + ps-e2e-run.py substitute/assemble_findings ({browser} = <engine>-seq)",
+    "issue": "Sequential passes set {browser} to '<engine>-seq'. Today {browser}, finding 'browser', message prefix and drive_engine's engine all read the same ctx['engine'] value.",
+    "implementation_impact": "Rerun findings may carry browser 'chromium-seq'. Identical-findings comparison on (version, browser, scenario, step, action) then fails, and getattr(p, 'chromium-seq') cannot launch.",
+    "suggestion": "Specify a separate substitution token value (ctx['browser_token']) for {browser}; the engine name in findings, inconclusive and launch stays '<engine>'."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:83 (scenario_spans keying)",
+    "issue": "scenario_spans is keyed by scenario name, but discover_scenarios does not dedupe names: two specs can share 'name', or an authored spec can be named like the universal smoke.",
+    "implementation_impact": "Spans overwrite each other, so the live overlap and lockstep tests (c) check incomplete data and can pass falsely.",
+    "suggestion": "Key spans by step index or source (e.g. '<k>:<source>'), or reject/notes duplicate names at discovery."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:27 (version-level legacy fields)",
+    "issue": "Version-level fields res['findings'], ['inconclusive'], ['pass'], ['browsers'], ['screenshots'] and result['pass'] in parallel mode are unspecified: first pass, confirmed result, or which pass's screenshots.",
+    "implementation_impact": "Direct runs (the quickstart TDD loop reads findings) show unconfirmed parallel findings or miss confirmed rerun findings, which diverges from the cells and the exit code.",
+    "suggestion": "State: version-level fields are rebuilt from the cells' confirmed results (findings = union of cell findings, pass = no cell fail, screenshots = counting passes)."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:27 (all workers crash / launch fail)",
+    "issue": "When every worker crashes or fails to launch, skipped_browser, res['browsers'] and whether confirmation passes run are unspecified.",
+    "implementation_impact": "The version may be reported as skipped_browser (a coverage gap), or as crash cells only. Both are inconsistent with the sequential path, where all-launch-failed sets skipped_browser.",
+    "suggestion": "Add I/O row: all workers crash → each cell crash, no sequential pass, skipped_browser false, exit 1; all launch_error → existing skipped_browser semantics."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:27 (direct runs in parallel, slot cost)",
+    "issue": "Direct runs go parallel by default but keep --slot-cost default 1, so the psm.slots label under-counts the browsers actually driven.",
+    "implementation_impact": "Concurrent ps-run-layer admissions count a two-browser direct run as one slot, which oversubscribes the daemon cap.",
+    "suggestion": "Specify that a direct parallel run stamps psm.slots = number of engines driven when --slot-cost is not given (or state that direct runs are knowingly exempt)."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:27-28 (lock file / step dir I/O errors and orphans)",
+    "issue": "Behavior on OSError when creating or opening <job>-<ver>.bo.lock or the .step dir is unspecified, as is who creates the step dir and cleanup after a SIGKILLed version process.",
+    "implementation_impact": "Workers may crash (cells become 'crash') or run without lock/barrier and silently mask cross-engine interference. Stale lock files and step dirs also accumulate in /tmp/psm-locks.",
+    "suggestion": "Version process creates the step dir (mode 1777 parent as slots.lock does) before spawning; on failure fall back to --sequential-browsers behaviour with a logged note; cleanup_orphans removes <job>-* of dead jobs."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:27 (worker hang)",
+    "issue": "There is no bound on a worker that hangs outside step timeouts (sync_playwright startup, browser.close, launch); lock-wait and barrier-wait are explicitly unbounded.",
+    "implementation_impact": "One hung worker stalls the other engine indefinitely and holds n slots forever. Only --stop-job recovers.",
+    "suggestion": "Add a per-worker wall-clock limit (e.g. scenarios x steps x nav_timeout + launch margin) after which the version process kills it and records crash with a note."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:31 (parallel-unconfirmed history read)",
+    "issue": "Admission forcing reads history 'once before admission', but there is no handling for an unreadable history file (OSError) or a history whose newest line is corrupt.",
+    "implementation_impact": "The runner crashes, or the forcing is silently skipped, so a version with an unconfirmed history is driven in parallel again.",
+    "suggestion": "Specify: history read error → input error (exit 2) or treat as forced sequential; corrupt-history cell → forced sequential."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:27 (worker result schema)",
+    "issue": "'Parseable result' covers only JSON parse. A parseable result with missing or wrong-typed keys, or with a cell for a different engine, is unspecified.",
+    "implementation_impact": "A malformed result raises KeyError in the version process (crashing the whole version) or yields an incomplete cell that is later read as incomplete-record.",
+    "suggestion": "Validate the worker result shape (engine matches, required cell keys present); any mismatch → that cell crash with the exit code and reason in browser_notes."
+  },
+  {
+    "location": "spec-psm-e2e-cap7-parallel-browsers.md:73 (live test image presence)",
+    "issue": "Behavior when only some default-tag images are present locally is unspecified (skip the whole suite or only those versions).",
+    "implementation_impact": "The live suite either skips entirely (and hides results for present versions) or fails on a missing image. The acceptance criterion 'pass on every default target version' then becomes unverifiable.",
+    "suggestion": "Specify: skip the whole suite with a message naming missing images, unless PSM_LIVE_VERSIONS narrows to versions whose images are all present."
+  }
+]

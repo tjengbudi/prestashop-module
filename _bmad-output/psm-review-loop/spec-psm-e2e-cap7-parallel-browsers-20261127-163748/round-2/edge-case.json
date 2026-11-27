@@ -1,0 +1,56 @@
+[
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:28 (Always, cross-engine lock) vs :27 (lock file deleted after all workers exit)",
+  "issue": "The rule says 'every scenario holds fcntl.flock' and keeps a holders marker, with no mode qualifier. It does not say whether in-process passes take the lock: single-engine mode, the sequential fallback, rerun-seq and the BO-login fallback. Cleanup is defined only in the parallel driver, after all workers exit and before the sequential passes.",
+  "implementation_impact": "If in-process passes lock, they recreate <job>-<ver>.bo.lock and the holders dir after cleanup (or in modes with no cleanup), so the files leak into LOCK_DIR on every run. They also record spurious lock-wait phases.",
+  "suggestion": "State: the lock, holder markers and lock-wait apply only to engine workers in the lockstep pass; in-process passes (single engine, sequential fallback, rerun-seq, BO-login fallback) take no lock and create no lock files."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:27 (parallel driver: spawn, reap, <engine>.done)",
+  "issue": "<engine>.done is created only when a worker process exits. Nothing covers a worker that never starts: Popen raising OSError/ENOMEM, or a spec.json write failure for the second engine after the first worker is already running.",
+  "implementation_impact": "The running worker waits in barrier-wait forever, because no marker or .done ever appears for the unspawned engine. The barrier has no timeout, and that engine's cell has no defined state.",
+  "suggestion": "On a spawn failure for engine E: create <step_dir>/E.done at once, give E's cell inconclusive reason crash with the spawn error in browser_notes, and continue with the workers that did start."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:88 (Confirmation passes: BO-login fallback trigger) + drive_engine launch_error path",
+  "issue": "A worker result with launch_error (failed before launch, or 'gagal setelah launch' with scenarios discarded) always has bo_authed False and may carry partial scenario_spans. The spec does not say whether that counts as a failed BO login that triggers the fallback pass. It also does not say whether its partial spans make it eligible for rerun-seq, or whether a launch-error or crashed engine counts when deciding 'every engine's BO login failed'.",
+  "implementation_impact": "A launch-error engine may get a reset plus a fallback pass that fails again, or a rerun that silently turns a launch-error cell into pass. A crashed peer may also suppress or permit the fallback inconsistently.",
+  "suggestion": "Define 'BO login failed' as launch_error is None and bo_authed is False. Launch-error and crash engines get no sequential pass and are ignored when deciding whether every engine's login failed. Spans from a launch-error pass are not used for rerun eligibility."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:84,88 (snapshot-db failure in parallel mode)",
+  "issue": "The spec defines a snapshot failure's effect only for engines needing a pass (parallel-unconfirmed, sub-phase in cell errors). It does not say whether the failed snapshot-db also goes into version-level errors, which are copied into every cell.",
+  "implementation_impact": "If it lands in version errors, every cell, clean ones included, derives inconclusive (reason errors) and the version can never pass after a snapshot hiccup. If it does not, the failure is visible only in boot_phases.",
+  "suggestion": "State: in parallel mode a snapshot-db failure is recorded only in boot_phases (outcome fail) and in the cell errors of engines that need a pass; version-level errors stay untouched, so clean engines keep pass."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:29 (shared reset routine) vs :88 (health check and wait-http/warmup-bo rules under 'Confirmation passes (parallel mode)')",
+  "issue": "The health check before each reset ('_health_status must be healthy', sub-phase 'health: <status>') and the rule 'wait-http no response fails, 5xx and warmup-bo best-effort' are given only for parallel confirmation passes. The contract requires the sequential fallback to check that the container is 'up and healthy before an engine', but the spec does not apply either rule to it.",
+  "implementation_impact": "The sequential fallback may skip the health check or treat a 5xx or failed warmup-bo as a reset failure. Firefox then gets sequential-reset where the parallel path would have proceeded, or the reverse.",
+  "suggestion": "Move the health-check precondition and the wait-http/warmup-bo failure semantics into the shared reset routine's definition, used identically by confirmation passes and by the sequential fallback (failure -> sequential-reset with the same sub-phase names)."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:92 (reset-files: comm -13 removal)",
+  "issue": "The paths that comm -13 emits are removed line by line, but the spec gives no quoting or delimiter rule. Docroot paths with spaces or newlines (uploaded images, scenario-created files) are unhandled, and the current list must be built with the same find/prune/LC_ALL=C sort as the snapshot.",
+  "implementation_impact": "Word-split rm deletes the wrong paths or leaves new files behind. If the current list's sort or prune differs, comm treats existing snapshot files as new and deletes them.",
+  "suggestion": "Specify: the current list uses the identical find (var/cache pruned) | LC_ALL=C sort; removal is 'comm -13 snap cur | while IFS= read -r p; do rm -rf -- \"$p\"; done' (paths with newlines unsupported, documented)."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:92 (snapshot-db / reset-db / reset-files via fl._exec)",
+  "issue": "No timeout is given for the _exec calls running snapshot-db, reset-db, reset-files and reset-opcache, and the spec does not say whether a timeout counts as that sub-phase failing.",
+  "implementation_impact": "A stalled mysqldump or DB load (DB container hung) either blocks the version indefinitely or ends with an unnamed failure. Neither maps clearly to parallel-unconfirmed or sequential-reset.",
+  "suggestion": "Name a timeout for each snapshot/reset exec (e.g. reuse the startup timeout) and state that a timeout is that sub-phase's failure, named in cell errors like any other reset failure."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:27,88-89 (in-process sequential passes: rerun-seq, BO-login fallback, sequential fallback)",
+  "issue": "drive_engine catches only launch and in-drive exceptions. An exception raised outside them is not covered: 'with sync_playwright()' start, the merge, or a reset helper raising in the version process. The spec says nothing about whether such an exception is confined to that engine's cell.",
+  "implementation_impact": "An uncaught exception in one engine's pass propagates out of _run_one_version_inner. Every cell of the version is lost, including engines already confirmed, and the version becomes a crash.",
+  "suggestion": "State: each sequential pass runs under a per-engine guard; an unexpected exception gives only that cell inconclusive (parallel-unconfirmed for confirmation passes, sequential-reset/crash for the fallback) with the error in its cell errors, and later engines continue."
+ },
+ {
+  "location": "spec-psm-e2e-cap7-parallel-browsers.md:90 (Worker interface: spec.json and result paths)",
+  "issue": "The spec does not say where spec.json and the result file are created, whether a stale result file at that path is removed before spawn, or who deletes both files afterwards.",
+  "implementation_impact": "A crashed worker could be credited with a leftover parseable result from an earlier run at the same path. Spec files holding ctx (admin credentials) would also accumulate in tmp.",
+  "suggestion": "Create both in a fresh per-version temp dir (e.g. under LOCK_DIR/<job>-<ver>.work), never reuse paths, and delete the dir together with the lock file, holders dir and step dir after all workers exit."
+ }
+]

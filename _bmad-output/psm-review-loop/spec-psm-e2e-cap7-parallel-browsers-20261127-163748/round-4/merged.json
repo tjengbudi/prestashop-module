@@ -1,0 +1,157 @@
+{
+ "run_id": "20261127-163748",
+ "round": 4,
+ "complete": true,
+ "lenses": {
+  "adversarial": {
+   "reported": 3,
+   "valid": true,
+   "count": 3
+  },
+  "edge-case": {
+   "reported": 6,
+   "valid": true,
+   "count": 6
+  },
+  "implementer": {
+   "reported": 7,
+   "valid": true,
+   "count": 7
+  }
+ },
+ "invalid": [],
+ "missing": [],
+ "unexpected": [],
+ "findings": [
+  {
+   "id": "adversarial-1",
+   "lens": "adversarial",
+   "location": "Acceptance Criteria 1 (live: (b), 'max(started_at) < min(finished_at) of the worker-stamped times') vs Design Notes > Confirmation merge ('the counting pass supplies ... finished_at; started_at ... always stay from the lockstep pass')",
+   "issue": "In live (b), the step-55 fault fails on every engine, so every engine always gets a rerun-seq. Each record's finished_at is then the rerun's end, stamped by the version process, not by the worker. The records hold no worker-stamped finished_at, so the live half of AC1 cannot be checked as written. Checked against the record fields instead, it always passes: a lockstep pass whose engines ran fully serialized still gives max(started_at) < min(finished_at), because the confirmation passes push every finished_at past the other engine's start.",
+   "implementation_impact": "The implementer either asserts on record started_at/finished_at, which can never fail, or has to invent another data source. The SPEC CAP-7 success claim (the browser phases overlap) is then never actually verified live.",
+   "suggestion": "Say which record data the live overlap check uses when a rerun happened. Options: the lockstep scenario_spans (monotonic_ns, comparable across the two records of one boot, e.g. the first span start of each engine versus the last span end of the other), or started_at plus phase_durations['browser:<engine>'].seconds as the worker-stamped end. Alternatively, keep AC1's live clause to a (b)-independent clean parallel run."
+  },
+  {
+   "id": "adversarial-2",
+   "lens": "adversarial",
+   "location": "Tasks > tests/live/test-cap7-live.py (b) ('a mismatch reruns once'; '(b) and (c) assert browser_mode: parallel ... and fail, naming the counted slots, when admission fell back to sequential') vs Always > Runner ('a version any of whose configured cells has a newest record with reason parallel-unconfirmed ... is always admitted at cost 1 sequential')",
+   "issue": "If (b)'s first parallel attempt for V ends parallel-unconfirmed (a snapshot, health or reset failure), its confirmed findings are [], which counts as a mismatch, so (b) reruns. The retry's ps-run-layer reads the same histories and finds a newest record with reason parallel-unconfirmed. The runner rule then forces V to cost 1 with --sequential-browsers whatever slots are free. The retry is therefore always sequential, and the test fails with the slot-shortage message even though slots were free. The same happens whenever the reports dir still holds a parallel-unconfirmed record from an earlier suite run.",
+   "implementation_impact": "A transient reset failure turns into an unrecoverable live failure with the wrong diagnosis (counted slots). The one-retry rule never gets a second parallel attempt in exactly the case it exists for.",
+   "suggestion": "Give each (b) attempt (first run and retry) a fresh, empty reports dir. Also make the failure message tell apart history-forced admission (a newest parallel-unconfirmed record), which should be reported as such with the record's errors, from slot-forced admission. Or state that a parallel-unconfirmed first attempt fails (b) with that cause instead of counting as a findings mismatch."
+  },
+  {
+   "id": "adversarial-3",
+   "lens": "adversarial",
+   "location": "I/O matrix row 'Parallel clean' ('FO-only scenarios' spans overlap across engines') / Tasks > tests ('every I/O row ... lock and barrier with real flock/files across threads')",
+   "issue": "The mechanism does not guarantee the asserted overlap. Both engines leave step k-1's barrier by polling for the other's marker. The engine that finishes last proceeds at once, and the other notices only on its next poll. An FO-only scenario shorter than that poll latency (stub scenarios, or a quick real FO page) can finish on one engine before the other engine starts it, so the spans do not overlap even though the implementation is correct. The poll interval is not named, so the test cannot size its stub scenarios against it.",
+   "implementation_impact": "A unit test that asserts the row literally is timing-dependent and flaky, or passes only on a lucky stub duration. An implementer who shortens the poll to make it pass spends CPU in every lock and barrier wait.",
+   "suggestion": "Name the poll constant (e.g. LOCKSTEP_POLL) and require the row's stub FO scenarios to run for well over it (e.g. ≥ 5× the poll). Or drop the FO-overlap clause from the unit row and assert only the guaranteed properties: no BO span overlaps, and every step k+1 span starts after every step k span ends."
+  },
+  {
+   "id": "edge-case-1",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap7-parallel-browsers.md:91 (Confirmation merge: 'version-level legacy fields ... are rebuilt from the final cells as today')",
+   "issue": "The spec says the legacy fields are rebuilt 'as today' but doesn't map the new child-set cells into them. A crash cell (launch_error null, findings null), a parallel-unconfirmed cell (findings []) and a sequential-reset cell (never driven) have no defined place in `browsers`, `pass` or `skipped_browser`.",
+   "implementation_impact": "Applied literally, today's rules put a crashed engine in `browsers` and set `pass: true` for a version whose findings are unconfirmed or whose engines crashed or were never driven. The direct-run `pass` then reads green while the exit code is 1, so unconfirmed findings pass silently in the legacy output.",
+   "suggestion": "Add one sentence: legacy `browsers` lists only engines whose cell is not crash, parallel-unconfirmed, sequential-reset, not-run or launch_error; legacy `pass` is false when any cell is parallel-unconfirmed (or define pass = all cells pass); `skipped_browser` is true when `browsers` is empty. Add one unit test per child-set state."
+  },
+  {
+   "id": "edge-case-2",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap7-parallel-browsers.md:94 (reset-opcache: 'its parent's does not [start with php-fpm]' + 'a /proc entry that ... cannot be read is skipped')",
+   "issue": "The php-fpm master can be the container's PID 1 (CMD `php-fpm -F`), so its parent is pid 0 and /proc/0 does not exist. The skip-on-unreadable rule then drops the master itself. The spec also doesn't say how the parent pid is read (/proc/<p>/stat field 4 breaks on a comm with spaces or parens; /proc/<p>/status has a PPid line).",
+   "implementation_impact": "Every reset-opcache sees zero masters and fails, so on such an image every confirmation pass becomes parallel-unconfirmed and every later engine in the sequential fallback becomes sequential-reset.",
+   "suggestion": "Read the parent from `/proc/$p/status` (`PPid:`). Treat PPid 0, or a parent whose comm cannot be read, as 'parent is not php-fpm'. Skip on unreadable applies only to the candidate's own comm/status. Add a unit fixture with the master at PID 1."
+  },
+  {
+   "id": "edge-case-3",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap7-parallel-browsers.md:94 (reset-files: 'LC_ALL=C sort' listing, then 'comm -13 /tmp/psm-e2e-snapshot.files /tmp/psm-e2e-current.files')",
+   "issue": "Only `sort` is pinned to LC_ALL=C. `comm` runs in the container's own locale. GNU comm checks input order by its locale collation when there are unpairable lines, which the new files always are.",
+   "implementation_impact": "When the container sets a non-C LANG/LC_ALL, GNU comm reports 'file 1 is not in sorted order' and exits non-zero. Under `set -e`, reset-files then always fails, giving parallel-unconfirmed or sequential-reset on every run.",
+   "suggestion": "Write `LC_ALL=C comm -13 ...` in the shared snippet, or export LC_ALL=C once at the top of every snapshot/reset script."
+  },
+  {
+   "id": "edge-case-4",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap7-parallel-browsers.md:28,87 (worker per-scenario hook: acquire, start_ns, run, end_ns, remove holder marker, close fd, write step marker)",
+   "issue": "The spec covers only the normal exit from the hook. It doesn't say what happens when the scenario raises inside the lock (an exception escaping `_drive_page` into drive_engine's 'gagal setelah launch' path, or BaseException), or when creating the holder marker fails after the flock is acquired. It also doesn't say whether the version process removes a reaped or crashed worker's `<holders>/<engine>` marker.",
+   "implementation_impact": "Without try/finally the lock stays held through `browser.close()`. A stale holder marker makes another engine's `lock-wait` name an exited engine as the holder. A holder-marker OSError could abort the scenario or the worker, turning an infra hiccup into a crash cell.",
+   "suggestion": "Spec: the hook releases in `finally` (remove the marker best-effort, close the fd) and writes the step marker only when the scenario completed. A holder-marker create error is ignored (logging only). On reaping a worker, the version process also deletes `<holders>/<engine>` best-effort."
+  },
+  {
+   "id": "edge-case-5",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap7-parallel-browsers.md:88,90 (Phases: 'rerun-seq:<engine> wraps the health check, reset and drive'; Confirmation passes: 'After the first failure ... no further reset runs')",
+   "issue": "The spec doesn't give the END outcome of `rerun-seq:<engine>` when its health check or a reset sub-phase fails. It doesn't say whether a later engine skipped after that failure still opens a `rerun-seq:<engine>` phase. It also doesn't say what that later engine's cell `errors` entry says: the original sub-phase string, or a 'skipped after <engine>' note.",
+   "implementation_impact": "`phase_durations` could show `rerun-seq` 'ok' for an unconfirmed pass, or show near-zero `rerun-seq` entries for passes that never ran, which contradicts 'a phase that did not occur is omitted'. The unit tests for the Unconfirmable row then have no expected record.",
+   "suggestion": "State: a failing routine sets `ph.status = '<sub-phase>-failed'` on `rerun-seq:<engine>`. Engines skipped afterwards open no `rerun-seq` phase. Their cell `errors` repeats the first failure's `<sub-phase>: <reason>` entry verbatim."
+  },
+  {
+   "id": "edge-case-6",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap7-parallel-browsers.md:42 (I/O 'Parallel clean': 'FO-only scenarios' spans overlap across engines') with :28 (barrier waits poll)",
+   "issue": "The barrier is polled. The engine that sees the last marker first starts step k at once, and the other starts up to one poll interval later. If an FO-only scenario takes less time than the poll interval, the two spans need not overlap.",
+   "implementation_impact": "The unit test for this row, using stub workers with near-instant scenarios, is flaky or fails even though the lock and barrier are correct.",
+   "suggestion": "Make the stub FO scenario last at least 2× the poll interval (name the constant), or assert FO overlap only where scenario duration exceeds the poll interval. BO non-overlap stays a strict assertion."
+  },
+  {
+   "id": "implementer-1",
+   "lens": "implementer",
+   "location": "Tasks > tests (\"existing sequential/argv expectations updated\"); Boundaries > Always > Child (\"With >= 2 probed engines and no --sequential-browsers (direct runs included) it runs in parallel mode\")",
+   "issue": "Several existing unit tests call run_one_version with two engines and no sequential flag (tests/test-ps-e2e-run.py `_rov([\"chromium\", \"firefox\"])` at lines 325, 377, 397, 458 and 615). Under CAP-7 they enter parallel mode: snapshot-db through fl._exec, then real `--engine-worker` subprocesses. Those subprocesses do not see the in-process `drive_engine` stubs these tests install. One of them, \"tanpa --sequential-browsers (run langsung): engine lain tetap jalan\" (line 616), asserts in-process sequential semantics (`seen == ['chromium','firefox']`), which CAP-7 now contradicts. The spec names only CAP-3's Labels test as an expectation to update. It does not say whether these tests should add `sequential_browsers=True` (which changes what they cover: snapshot plus reset between engines) or go through the stubbed parallel driver.",
+   "implementation_impact": "Running the current suite after the change either spawns real workers that try to launch Playwright, or fails/hangs. The implementer must decide test by test whether a test is about cell/timing shape (switch it to the stubbed parallel driver) or about in-process driving (add the flag, and accept snapshot/reset stubs). Done criterion 'no FAILED line' depends on that choice.",
+   "suggestion": "List the affected tests in Tasks > tests and state the rule. For example: tests about cell/timing shape use the stubbed parallel driver. Line 615's check is rewritten to assert parallel mode (no in-process drive, workers spawned through the seam). Single-engine tests stay as they are."
+  },
+  {
+   "id": "implementer-2",
+   "lens": "implementer",
+   "location": "Design Notes > Confirmation merge (\"The version-level legacy fields (`findings`, `inconclusive`, `pass`, `browsers`, ... `skipped_browser`) are rebuilt from the final cells as today\")",
+   "issue": "\"As today\" is undefined for the new child-set cell states. Today `pass` = no findings in the driven engines, `browsers` = engines driven without launch_error, and `skipped_browser` = true when no engine drove. Consider a `parallel-unconfirmed` cell (findings [] with F in parallel_only), a `crash` cell (no result), or a `sequential-reset` cell (never driven). Taken literally, the rebuild gives `pass: true` for a version whose only finding could not be confirmed, or whose second engine crashed. With both workers crashed it gives `browsers: []`, which today's code reads as `skipped_browser: true`, as if no browser binary existed.",
+   "implementation_impact": "The direct-run output (quickstart TDD loop, SKILL.md Lapis 4 direct runs) can show `pass: true` while the exit code is 1 and a finding went unconfirmed. The Honesty law says unconfirmable findings never pass silently. The implementer has to guess how each legacy field treats crash, parallel-unconfirmed and sequential-reset cells.",
+   "suggestion": "Define the rebuild explicitly. `pass` = every cell's state is `pass` (or keep the old meaning, but also require no child-set inconclusive cell). `browsers` = engines whose cell was driven (a `browser:<engine>` phase exists). `skipped_browser` = true only when every probed engine had launch_error (never for crash or reset failures). Add one assertion for a parallel-unconfirmed version."
+  },
+  {
+   "id": "implementer-3",
+   "lens": "implementer",
+   "location": "Design Notes > Phases (\"`rerun-seq:<engine>` wraps the health check, reset and drive\"); Design Notes > Snapshot and reset (health check = `_health_status` must be `healthy`); Tasks > docs (run-phases.md remediation: \"check container health and the snapshot/reset lines of the progress log\")",
+   "issue": "The health check is not a phase, so a health failure writes no progress-log line of its own. The spec also never says what outcome `END rerun-seq:<engine>` (or the bare reset sequence before a BO-login fallback or a later sequential-fallback engine) carries when the routine fails and the drive is skipped. `fl.phase` writes `ok` unless `ph.status` is set or an exception escapes. So a health failure can show up in the log only as `END rerun-seq:chromium ok` with no reset lines. The docs then tell the operator to find the cause in 'the snapshot/reset lines of the progress log', and run-phases.md 'Sebab infra per versi V' says to name the cause 'dari stderr dan log kemajuan'.",
+   "implementation_impact": "The implementer must guess whether the health check gets its own phase (which would change `boot_phases` and the I/O rows' expected phase lists), whether `rerun-seq` END gets a failure status, and whether anything goes to stderr. The operator-facing remediation can point at lines that do not exist.",
+   "suggestion": "State that a failed reset routine sets the wrapping phase's status (e.g. `END rerun-seq:<engine> parallel-unconfirmed(<sub-phase>)`) and prints one stderr line with the cell `errors` entry. Keep the health check out of `boot_phases` (as the I/O rows assume), and have the docs point to that END line and stderr."
+  },
+  {
+   "id": "implementer-4",
+   "lens": "implementer",
+   "location": "Design Notes > Confirmation merge (\"BO-login fallback: `findings` and `inconclusive` are that pass's alone\"; \"`parallel_only` = `[]` ... unless filled above\")",
+   "issue": "Take an engine that gets the BO-login fallback, whose discarded parallel pass had a finding F (for example an FO step) that the fallback pass does not reproduce. F vanishes: it is not in `findings`, and `parallel_only` is filled only for rerun-seq and parallel-unconfirmed cells. An engine that got `rerun-seq` instead records the same kind of non-reproduced finding in `parallel_only`. Meanwhile the same discarded F is counted as 'a finding in any engine's parallel pass' and forces other engines to rerun. So it is treated as real evidence for others but not kept for its own cell. (Round 3 noted only the sub-case where the fallback pass fails to launch.)",
+   "implementation_impact": "The implementer cannot tell whether the omission is intended. Tests for the 'BO-login fallback' row cannot assert `parallel_only` for this case, and the operator loses the only trace of a parallel-only observation that made sibling engines rerun.",
+   "suggestion": "Say explicitly that a fallback engine's discarded parallel findings whose (scenario, step, action) is absent from the fallback pass's findings go to `parallel_only`, as for a rerun. Or say explicitly that they are dropped, and why. Add the case to the 'BO-login fallback' I/O row."
+  },
+  {
+   "id": "implementer-5",
+   "lens": "implementer",
+   "location": "Design Notes > `scenario_spans` (\"after the last step's marker the worker leaves `browser:<engine>` with no barrier wait\"); I/O row 'Parallel clean' (\"`started_at`/`finished_at` overlap\"); SPEC CAP-7 success (\"both start before either ends\")",
+   "issue": "With no barrier wait after the last step, overlap of the two `browser:<engine>` phases is guaranteed only when the driven list has at least 2 steps. With 2 or more steps, an engine cannot pass step 0's barrier before the other engine has written its step-0 marker. A module with only the universal smoke has one step (BO, so LOCK_EX). There engine A can take the lock, finish, write marker 0 and leave its browser phase before engine B's worker has even started its `browser:` phase (slow interpreter start or browser launch). Then max(started_at) > min(finished_at). The I/O row states overlap unconditionally.",
+   "implementation_impact": "A stub test for 'Parallel clean' or AC1 that uses a smoke-only scenario list can be flaky or fail. The implementer has to guess whether the overlap claim needs a final barrier (as the contract's Lockstep mechanism literally describes: 'then waits until that file exists for every other engine') or whether it is limited to lists of 2 or more steps.",
+   "suggestion": "Either keep a final barrier wait inside `browser:<engine>` (which matches the contract mechanism and guarantees overlap), or limit the overlap claim in 'Parallel clean' and AC1 to driven lists of 2 or more steps and require the unit/stub tests to use at least two scenarios."
+  },
+  {
+   "id": "implementer-6",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Child (worker `crash` cell); ps-run-layer `_on_reaped` (`if any(r[\"reason\"] == \"crash\" ...): self.keep = True`); Design Notes > Worker interface (work dir deleted in the version process's `finally`)",
+   "issue": "ps-run-layer keeps its temp dir 'for diagnosis' whenever any appended record has reason `crash`, which it assumes comes from an unreadable child output. Under CAP-7 the child itself emits `crash` cells for workers. ps-run-layer will then retain the child's perfectly readable `-o` output and log 'bukti per-versi DIPERTAHANKAN untuk diagnosis'. Meanwhile the version process has deleted the worker's spec.json and work dir, the only worker-side artifacts. A partial result file would have been there too, but a crash means no parseable result. The spec says nothing about this interaction.",
+   "implementation_impact": "The implementer must decide whether child-set `crash` cells should trigger `keep`, and whether a crashed worker's work dir should be kept. Either choice is a guess, and the operator gets a misleading diagnosis message.",
+   "suggestion": "State that `keep` stays tied to ps-run-layer-written `crash` records only (child output unreadable), not child-set ones. Also state where a worker crash can be diagnosed: stderr is inherited, so the child's stderr, plus `browser_notes` with the exit code. Optionally keep the work dir when a worker crashed."
+  },
+  {
+   "id": "implementer-7",
+   "lens": "implementer",
+   "location": "Boundaries > Never (\"the reset routine is written so CAP-5 can reuse it, but no warm path exists\") vs cell-contract.md > Warm container > Reset per iteration",
+   "issue": "'Written so CAP-5 can reuse it' is a constraint with no testable criterion, and the two resets differ in the contract. The CAP-5 baseline is taken after `wait-healthy` and before the first install. CAP-5's `reset-files` has no module copy, and each iteration then runs `install`. CAP-7's snapshot is taken after `warmup-bo` (installed state), and its `reset-files` ends with `cp -r /ps-module-src` and no install. The spec does not say which parts must be parameterized: the snapshot file names, the module-copy step, or the wait-http/warmup-bo tail.",
+   "implementation_impact": "The implementer must guess the routine's interface (flags or parameters for 'copy module', 'snapshot paths', 'tail phases'). A reviewer cannot check the constraint, and CAP-5 may still have to refactor it.",
+   "suggestion": "Either drop the sentence, or name the seam. For example: `reset_routine(session, mod_name, *, snapshot=('/tmp/psm-e2e-snapshot.sql', '/tmp/psm-e2e-snapshot.files'), copy_module=True, tail=True)`, where CAP-7 always passes the defaults. Do not add any test for the CAP-5 variants."
+  }
+ ],
+ "duplicates_removed": [],
+ "clusters": []
+}

@@ -64,3 +64,23 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-psm-e2e-cap1-tiered-gate.md`
   summary: Pin one meaning of "newest record" in the plan predicates (append order vs `started_at`) and test histories where the two disagree.
   evidence: CAP-1 step-04 review — `_focus_cell` picks each cell's failing record by append order (`_newest`, inherited from CAP-2/6) but ranks cells by `started_at`; with daemon-wide slots (CAP-3) concurrent jobs for one cell can append out of `started_at` order, so the focus cell could point at an older run.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-psm-e2e-cap7-parallel-browsers.md`
+  summary: Decide in cell-contract.md whether a parallel finding may move to non-blocking `parallel_only` when the `rerun-seq` pass left that same step inconclusive (failed BO login, aborted scenario) instead of running it conclusively.
+  evidence: CAP-7 step-04 review — per the contract the rerun is judged like a cold single-engine run, so a BO finding demoted by a rerun whose BO login failed leaves the cell `pass` (BO steps only in `inconclusive`); this matches today's single-engine semantics but lets a real defect pass when the rerun's login flakes.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-psm-e2e-cap7-parallel-browsers.md`
+  summary: Decide whether engines that hit `launch_error`/`crash` in the parallel pass (or whose `rerun-seq` cannot launch) should get a sequential retry in the same run and/or force cost-1 sequential admission next run, like `parallel-unconfirmed`.
+  evidence: CAP-7 step-04 review — launch failures caused by two browsers starting at once (RAM) are never retried sequentially and `_unconfirmed_versions` reacts only to `parallel-unconfirmed`, so such a cell can stay inconclusive run after run.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-psm-e2e-cap7-parallel-browsers.md`
+  summary: Make `reset-files` restore the module directory as it was at snapshot time (e.g. tar it in `snapshot-db`) instead of copying fresh source from `/ps-module-src`.
+  evidence: CAP-7 step-04 review — files a module's install() writes inside its own directory are lost by the reset while the DB still says installed, so confirmation and sequential-fallback passes can see a state no cold boot produces (bankwire is unaffected).
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-psm-e2e-cap7-parallel-browsers.md`
+  summary: Make the shared reset routine fail on a post-reset 5xx that the first boot did not have, and retry the single health check briefly, so a reset-broken shop maps to `parallel-unconfirmed`/`sequential-reset` instead of confirmed findings.
+  evidence: CAP-7 step-04 review — the contract keeps 5xx best-effort and health checked once; a reset that breaks the shop would turn into a blocking `fail` blamed on the module, and a transient `unknown` health forces an unneeded sequential next run.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-psm-e2e-cap7-parallel-browsers.md`
+  summary: Harden lockstep setup/teardown against filesystem errors — `mkdtemp`/mkdir OSError in `run_parallel_workers` and swallowed marker writes on a full /tmp that leave `barrier_wait` (no deadline) waiting forever.
+  evidence: CAP-7 step-04 review — both paths are unhandled; unlikely on a healthy host but they crash the version or hang until `--stop-job`.

@@ -33,7 +33,8 @@ adanya sesudah `--`, jadi flag baru di skrip lapis tak perlu didaftarkan ulang d
 
 `--config <psm-config.json>` berlaku untuk SEMUA lapis dan diteruskan apa adanya ke tiap anak
 (Lapis 2/5 tak memvalidasinya). `--config`, `--browsers`, `--engines`, `--run-id`, `--slot-cost`,
-`--progress-append`, `--sequential-browsers`, `--tier` (dan flag lain milik skrip ini, termasuk
+`--progress-append`, `--sequential-browsers`, `--engine-worker`, `--tier` (dan flag lain milik
+skrip ini, termasuk
 singkatan awalan >= 4 karakter, mis. `--slo`; khusus `--tier` baru mulai `--tie`, karena `--ti`
 adalah singkatan `--timeout` anak yang sah) DILARANG di passthrough sesudah `--`.
 
@@ -55,7 +56,7 @@ LAPIS E2E (cell-contract.md > Evidence record, Runner):
     exit 2 menyebut key-nya, apa pun `psm_e2e_enabled`). `--per-version`
     atau `--jobs` (juga dgn --merge-only) = exit 2. Browser dipilih lewat `--cells`/config,
     BUKAN `--browsers` sesudah `--` (anak menerima `--engines` dari skrip ini).
-  - SLOT (CAP-3): admisi per slot SEDAEMON — N = `--slots` (override manual), else
+  - SLOT (CAP-3/CAP-7): admisi per slot SEDAEMON — N = `--slots` (override manual), else
     `psm_e2e_slots` dari `--config` (divalidasi walau --slots diberikan; kosong = default),
     else 6; bukan bilangan bulat >= 1 = exit 2. Terpakai = jumlah label `psm.slots` semua
     container yang JALAN di daemon (satu `docker ps`; gagal/timeout = penuh) + klaim
@@ -63,8 +64,15 @@ LAPIS E2E (cell-contract.md > Evidence record, Runner):
     dihitung di bawah `<tmp>/psm-locks/slots.lock`. Tiap versi antre = fase `wait-slots` di log
     kemajuannya (dibuka begitu run mulai; ALIVE menyebut isi cap; tak pernah SLOW); di dalamnya
     `--cleanup-orphans` jalan SEKALI sebelum hitungan pertama (hanya yang pemiliknya terbukti
-    mati). Kepala antrean (urutan tertulis) diadmisi selama muat, biaya 1, dengan
-    `--sequential-browsers`. Cap penuh selama batas startup (`--startup-timeout` passthrough,
+    mati). Kepala antrean (urutan tertulis) diadmisi selama muat (cell-contract.md > Parallel
+    browsers > Slots): versi yang men-drive n engine berbiaya n (browser paralel dalam satu
+    boot, anak TANPA `--sequential-browsers`) bila n slot bebas; selain itu, bila 1 slot bebas,
+    biaya 1 dengan `--sequential-browsers` bila n > 1 (n = 1: biaya 1, tanpa flag); tak satu
+    slot pun bebas = tunggu. Versi yang salah satu sel terkonfigurasinya (browser terkonfigurasi
+    x versi itu) punya rekaman TERBARU ber-reason `parallel-unconfirmed` SELALU diadmisi biaya 1
+    sekuensial, berapa pun slot bebas — histori dibaca SEKALI sebelum admisi; histori tak
+    terbaca atau ber-ekor rusak (rekaman terbaru tak diketahui) juga dipaksa sekuensial, dengan
+    satu baris log. Cap penuh selama batas startup (`--startup-timeout` passthrough,
     else psm_flashlight_startup_timeout, else 180 s; dihitung hanya saat tak ada anak sendiri
     yang jalan) -> tiap sel yang masih antre = rekaman `inconclusive`, reason `no-slots`
     (`errors` = isi cap).
@@ -74,12 +82,16 @@ LAPIS E2E (cell-contract.md > Evidence record, Runner):
     `input-error after <ver>` (versi itu sendiri tanpa rekaman). Log versi yang tak satu sel pun
     mulai = satu baris `DONE rc=not-run <reason>`.
   - Tiap anak `ps-e2e-run.py --versions <ver> --engines <engine versi itu> --run-id <klaim>
-    --slot-cost 1 --progress-append --sequential-browsers` (+ `--config`); begitu anak di-reap,
+    --progress-append --slot-cost <biaya admisi> [--sequential-browsers]` (+ `--config`), argv
+    disusun SAAT admisi; klaim slot membawa biaya yang sama. Begitu anak di-reap,
     satu rekaman per sel yang diadmisi di-APPEND ke histori selnya: hasil sel anak + field
     level-versi + `session`, `source_fingerprint` (dihitung SEKALI sebelum admisi), `job_id`,
     `run_id` (= klaim), `state/conclusive/reason`, `phase_durations.wait-slots`. Sel tanpa hasil:
-    `browser-unavailable` (engine di-drop probe binary) atau `crash`; sel `not-run` anak
-    (fail-fast antar-engine) dipertahankan. Tak ada `<module>-e2e*.json`.
+    `browser-unavailable` (engine di-drop probe binary) atau `crash`. State yang DISET anak
+    dipertahankan apa adanya (tanpa derive_state): `not-run` (fail-fast antar-engine) dan
+    `inconclusive` ber-reason `crash` (worker), `parallel-unconfirmed` atau `sequential-reset`;
+    `errors` level-sel dua yang terakhir (sub-fase yang gagal) ditambahkan SESUDAH `errors`
+    level-versi rekaman sel itu saja. Tak ada `<module>-e2e*.json`.
   - Baris terakhir stdout: satu JSON `{"e2e_status": "ran"|"skipped", "reason",
     "appended": ["<ver>:<browser>", ...], "source_fingerprint"}` — dicetak di setiap exit
     kecuali error input pra-spawn dan stop.
@@ -136,12 +148,14 @@ SERIAL_LAYERS = {
 # `--run-id`, `--slot-cost`, `--progress-append`, `--sequential-browsers`: diset skrip ini pada
 # tiap anak E2E (klaim slot, biaya, log wait-slots, mode sekuensial) — salinan di passthrough
 # memalsukan klaim/biaya yang dihitung seluruh daemon.
+# `--engine-worker`: mode internal anak (subproses per engine milik proses versi, CAP-7) —
+# dari passthrough ia akan menjalankan anak sebagai worker tanpa spec, bukan sebagai versi.
 # `--tier`: distempel skrip ini di tiap rekaman histori; anak tak mengenalnya, jadi salinan di
 # passthrough hanya bisa jadi salah ketik yang menyesatkan pembaca log.
 RESERVED_PASSTHROUGH = ("--versions", "-o", "--output", "--cleanup-orphans", "--progress-file",
                         "--job-id", "--stop-job", "--list-jobs", "--config", "--browsers",
                         "--engines", "--run-id", "--slot-cost", "--progress-append",
-                        "--sequential-browsers", "--tier")
+                        "--sequential-browsers", "--engine-worker", "--tier")
 # Panjang singkatan awalan MINIMUM per flag reserved (default 4, mis. `--co`). `--tier` baru
 # tertangkap mulai `--tie`: `--ti` adalah singkatan `--timeout` milik anak yang sah dan harus
 # tetap sampai ke anak.
@@ -623,6 +637,12 @@ VERSION_KEYS = ("run_id", "boot", "boot_id", "boot_phases", "boot_wall_clock", "
 CELL_KEYS = ("started_at", "finished_at", "scenario_set", "scenarios_run", "findings",
              "inconclusive", "authored_assertions", "bo_authed", "launch_error", "browser_notes",
              "console_errors", "screenshots", "phase_durations", "scenario_spans", "parallel_only")
+# State sel yang DISET anak (ps-e2e-run CHILD_SET_REASONS): `inconclusive` ber-reason ini
+# dipertahankan apa adanya, tanpa derive_state (seperti `not-run`). Hanya dua yang terakhir
+# membawa `errors` level-sel (sub-fase yang gagal).
+CHILD_SET_REASONS = ("crash", "parallel-unconfirmed", "sequential-reset")
+CELL_ERROR_REASONS = ("parallel-unconfirmed", "sequential-reset")
+UNCONFIRMED_REASON = "parallel-unconfirmed"  # rekaman terbaru begini -> admisi biaya 1 sekuensial
 STOPPED_CODES = (143, -15)  # anak yang di-reap dgn SIGTERM = dihentikan, tak pernah `crash`
 DOCKER_SKIP_REASON = "Docker tidak tersedia — Lapis 4 butuh flashlight; lewati, andalkan lapis lain."
 _CELL_TOKEN = re.compile(r"^([^:+,\s]+):([^:+,\s]+(?:\+[^:+,\s]+)*)$")
@@ -800,9 +820,12 @@ def child_shape_ok(payload, ver):
 def build_record(pl, ver, engine, *, vres, cell, reason, admitted, ctx, run_id=None,
                  state="inconclusive", errors=None, wait=None):
     """Satu rekaman histori (RECORD_KEYS persis). `reason` terisi = sel tanpa hasil anak
-    (`crash`/`browser-unavailable`/`no-slots` dgn `state` inconclusive, atau `not-run`);
-    sel anak ber-`state: not-run` (fail-fast antar-engine) dipertahankan apa adanya, tanpa
-    derive_state; selain itu state dihitung dgn derive_state.
+    (`crash`/`browser-unavailable`/`no-slots` dgn `state` inconclusive, atau `not-run`).
+    State yang DISET anak dipertahankan apa adanya, tanpa derive_state: `not-run` (fail-fast
+    antar-engine) dan `inconclusive` ber-reason CHILD_SET_REASONS (`crash` worker,
+    `parallel-unconfirmed`, `sequential-reset`); selain itu state dihitung dgn derive_state.
+    `errors` level-sel anak (hanya `parallel-unconfirmed`/`sequential-reset`) ditambahkan
+    SESUDAH `errors` level-versi — tak pernah menggantinya, tak pernah ke sel saudara.
 
     `run_id` = RUN_ID klaim versi yang diadmisi (semua rekamannya, crash termasuk); tanpa itu
     `ctx["run_id"]` (milik ps-run-layer: not-run/no-slots). `wait` = hasil `wait-slots`
@@ -826,10 +849,17 @@ def build_record(pl, ver, engine, *, vres, cell, reason, admitted, ctx, run_id=N
     rec.update(version=ver, browser=engine, session=ctx["session"],
                source_fingerprint=ctx["fingerprint"], job_id=ctx["job_id"],
                tier=ctx["tier"], keeper_boot=None)
+    child_set = cell is not None and (
+        cell.get("state") == "not-run"
+        or (cell.get("state") == "inconclusive" and cell.get("reason") in CHILD_SET_REASONS))
+    if child_set and cell.get("reason") in CELL_ERROR_REASONS \
+            and isinstance(cell.get("errors"), list):
+        base = rec["errors"] if isinstance(rec["errors"], list) else []
+        rec["errors"] = [*base, *cell["errors"]]
     if reason:
         rec.update(state=state, conclusive=False, reason=reason)
-    elif cell is not None and cell.get("state") == "not-run":
-        rec.update(state="not-run", conclusive=False, reason=cell.get("reason"))
+    elif child_set:
+        rec.update(state=cell["state"], conclusive=False, reason=cell.get("reason"))
     else:
         st = pl.derive_state(rec, engine)
         rec.update(state=st["state"], conclusive=st["conclusive"], reason=st["reason"])
@@ -939,7 +969,7 @@ def _e2e_input(args, extra, fl, log):
         raise InputError(str(e)) from None
     return {"cells": cells, "extra": extra, "shot_base": shot_base, "tags": tags,
             "fingerprint": fingerprint, "slots": slots, "startup_timeout": startup_timeout,
-            "tier": tier}
+            "tier": tier, "browsers": list(cfg["browsers"])}
 
 
 def _count_error_tail(err):
@@ -956,7 +986,8 @@ class _SlotRun:
     fase itu `--cleanup-orphans` jalan SEKALI, lalu loop: reap anak yang selesai (urutan
     selesai; satu batch urut rencana), lalu — selama belum ada pemicu fail-fast/exit 2/galat
     append — pegang `slots.lock`, baca klaim registry, hitung sekali, dan admisi kepala antrean
-    selama muat (klaim ditulis dulu, `END wait-slots ok`, lalu spawn). Jam `no-slots` satu
+    selama muat (klaim ditulis dulu, `END wait-slots ok`, lalu spawn; biaya n paralel bila n
+    slot bebas, else biaya 1 sekuensial — lihat `_admit_cost`). Jam `no-slots` satu
     akumulator sepanjang run: maju hanya saat ada versi menunggu dan tak ada anak sendiri yang
     jalan; habis -> tiap sel yang masih antre `no-slots`.
     """
@@ -976,13 +1007,14 @@ class _SlotRun:
         self.logs = {v: progress_file(args.reports_dir, args.module, "e2e", v)
                      for v in self.versions}
         self.tmp = tempfile.mkdtemp(prefix="psm-layer-")
-        self.cmds, self.outs = {}, {}
+        # argv dasar; `--slot-cost <biaya>` (+ `--sequential-browsers`) ditambahkan SAAT admisi.
+        self.base_cmds, self.cmds, self.outs = {}, {}, {}
         for ver, cmd, out in plan_children(script, args.module, self.versions, self.tmp, extra,
                                            progress=(args.reports_dir, "e2e"), job_id=job_id):
-            self.cmds[ver] = [*cmd, "--engines", ",".join(self.engines_of[ver]),
-                              "--run-id", self.claim_of[ver], "--slot-cost", "1",
-                              "--progress-append", "--sequential-browsers"]
+            self.base_cmds[ver] = [*cmd, "--engines", ",".join(self.engines_of[ver]),
+                                   "--run-id", self.claim_of[ver], "--progress-append"]
             self.outs[ver] = out
+        self.forced_seq = self._unconfirmed_versions(inp["browsers"])
         self.waits, self.wait_res = {}, {}
         self.queue = []
         self.running = {}            # future -> versi
@@ -998,6 +1030,48 @@ class _SlotRun:
         self.note = None             # detail ALIVE sebelum hitungan pertama
         self.tokens = []
         self.budget, self.accum, self.last_tick, self.last_pass = 0.0, False, None, None
+
+    def _unconfirmed_versions(self, cfg_browsers):
+        """Versi yang WAJIB diadmisi biaya 1 sekuensial: salah satu sel terkonfigurasinya
+        (browser terkonfigurasi x versi itu, bukan cuma engine yang diminta `--cells`) punya
+        rekaman TERBARU ber-reason `parallel-unconfirmed` (cell-contract.md > Parallel browsers
+        > Parallel-only failures). Dibaca SEKALI, sebelum admisi.
+
+        Histori tak terbaca, atau ber-ekor rusak (rekaman terbaru sel itu tak diketahui),
+        juga memaksa sekuensial — mode yang temuannya tak butuh konfirmasi, jadi tebakan yang
+        salah hanya memperlambat, tak pernah menyembunyikan temuan — dengan satu baris log."""
+        forced = set()
+        for ver in self.versions:
+            for b in cfg_browsers:
+                path = self.pl.history_path(self.args.reports_dir, self.module_name, ver, b)
+                try:
+                    records, tail = self.pl.read_history(path, ver, b)
+                except self.pl.PlanInputError as e:
+                    self.log(f"peringatan: {e} — versi {ver} diadmisi biaya 1 sekuensial")
+                    forced.add(ver)
+                    break
+                if tail:
+                    self.log(f"peringatan: histori {ver}:{b} berekor rusak ({path}) — rekaman "
+                             f"terbarunya tak diketahui; versi {ver} diadmisi biaya 1 sekuensial")
+                    forced.add(ver)
+                    break
+                if records and records[-1].get("reason") == UNCONFIRMED_REASON:
+                    self.log(f"versi {ver}: rekaman terbaru {ver}:{b} = {UNCONFIRMED_REASON} — "
+                             "diadmisi biaya 1 sekuensial (--sequential-browsers)")
+                    forced.add(ver)
+                    break
+        return forced
+
+    def _admit_cost(self, ver, free):
+        """(biaya, sekuensial?) untuk kepala antrean dgn `free` slot bebas; None = tak muat.
+        n engine: biaya n paralel bila n slot bebas (dan versi tak dipaksa sekuensial), else
+        biaya 1 — `--sequential-browsers` bila n > 1."""
+        n = len(self.engines_of[ver])
+        if n > 1 and ver not in self.forced_seq and free >= n:
+            return n, False
+        if free >= 1:
+            return 1, n > 1
+        return None
 
     # --- log & detail ------------------------------------------------------------------
     def _budget_now(self):
@@ -1227,12 +1301,23 @@ class _SlotRun:
                 val = self.fl.slot_cost_value(cost)
                 total += val or 1
                 tokens.append(f"claim:{job}/{run}={val or '?'}")
-            while self.queue and total + 1 <= self.slots:
-                ver = self.queue.pop(0)
-                self.own_claims[ver] = {"run": self.claim_of[ver], "cost": 1}
+            while self.queue:
+                ver = self.queue[0]
+                adm = self._admit_cost(ver, self.slots - total)
+                if adm is None:
+                    break
+                cost, seq = adm
+                self.queue.pop(0)
+                self.cmds[ver] = [*self.base_cmds[ver], "--slot-cost", str(cost),
+                                  *(["--sequential-browsers"] if seq else [])]
+                if seq and ver not in self.forced_seq:
+                    self.log(f"versi {ver}: {self.slots - total} slot bebas < "
+                             f"{len(self.engines_of[ver])} engine — diadmisi biaya 1, browser "
+                             "berurutan (--sequential-browsers)")
+                self.own_claims[ver] = {"run": self.claim_of[ver], "cost": cost}
                 self._write_claims()
-                total += 1
-                tokens.append(f"claim:{self.ctx['job_id']}/{self.claim_of[ver]}=1")
+                total += cost
+                tokens.append(f"claim:{self.ctx['job_id']}/{self.claim_of[ver]}={cost}")
                 self._close_wait(ver, "ok")
                 self.admitted[ver] = utc_now()
                 self.running[ex.submit(_spawn, self.cmds[ver])] = ver

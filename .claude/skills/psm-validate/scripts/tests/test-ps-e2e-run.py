@@ -12,6 +12,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -256,10 +257,13 @@ def _infra(fl_over=None, mod_over=None):
               "_bring_up_compose": _ph("bring-up", ({"ps_container": "x", "mode": "compose"}, None)),
               "wait_healthy": _ph("wait-healthy", (True, "healthy")),
               "_teardown": _ph("teardown", None), "_logs": lambda c: "LOG-TAIL",
-              "pull_image": _ph("pull", None)}
+              "pull_image": _ph("pull", None),
+              # CAP-7: exec snapshot/reset & health container (rutin reset bersama)
+              "_exec": _exec_stub(), "_health_status": lambda c: "healthy"}
     mod_new = {"install_module": _ph("install", ({"ok": True, "no_console": False}, None)),
                "wait_http": lambda *a, **k: (True, 200, True),
-               "drive_engine": _page_drive({})}
+               "drive_engine": _page_drive({}),
+               "run_parallel_workers": _emulated_workers()}
     fl_new.update(fl_over or {})
     mod_new.update(mod_over or {})
     saved_fl = {n: getattr(mod.fl, n) for n in fl_new}
@@ -311,6 +315,117 @@ def _utc_us(ts):
     return d if d.utcoffset() == timedelta(0) and re.search(r"\.\d{6}\+00:00$", ts) else None
 
 
+# ---------------------------------------------------------------------------
+# Seam CAP-7 (browser paralel): worker diemulasikan in-process, exec container di-stub
+# ---------------------------------------------------------------------------
+def _emulated_workers(crash=(), spawned=None):
+    """run_parallel_workers tiruan: tiap engine di-drive IN-PROCESS lewat mod.drive_engine (stub
+    _infra) dgn ScenarioSpans, hasilnya dibentuk seperti file hasil worker. `browser:<engine>`
+    dibuka di sini (meniru catat-ulang durasi worker). `crash` = engine tanpa hasil (rc 1)."""
+    def run(full_ver, engines, scenarios, ctx, *, ver_shot_dir=None, headed=False):
+        out = {}
+        for e in engines:
+            if spawned is not None:
+                spawned.append(e)
+            if e in crash:
+                out[e] = {"result": None, "rc": 1, "spawn_error": None}
+                continue
+            hook = mod.ScenarioSpans()
+            c = dict(ctx, scenario_hook=hook,
+                     screenshot_dir=str(Path(ver_shot_dir) / e) if ver_shot_dir else None)
+            started = mod.utc_now()
+            with mod.fl.phase(f"browser:{e}"):
+                eng = mod.drive_engine(e, scenarios, c, headed=headed)
+            out[e] = {"result": {"engine": e, "started_at": started, "finished_at": mod.utc_now(),
+                                 "result": eng, "scenario_spans": hook.spans, "timings": []},
+                      "rc": 0, "spawn_error": None}
+        return out
+    return run
+
+
+def _exec_stub(fail=(), calls=None):
+    """fl._exec tiruan utk skrip snapshot/reset: cetak sentinel skrip itu, kecuali sub-fase di
+    `fail` (rc 1). `fail` = set nama sub-fase, atau dict {sub-fase: panggilan ke-n yang gagal}."""
+    seen = {}
+
+    def f(session, env, inner, timeout):
+        m = re.search(r"echo (PSM_[A-Z_]+_OK)", inner)
+        sub = m.group(1)[4:-3].lower().replace("_", "-") if m else "?"
+        seen[sub] = seen.get(sub, 0) + 1
+        if calls is not None:
+            calls.append((sub, dict(env), inner))
+        bad = (sub in fail) if not isinstance(fail, dict) else fail.get(sub) == seen[sub]
+        if bad:
+            return subprocess.CompletedProcess(["sh"], 1, "", f"{sub} meledak\n")
+        return subprocess.CompletedProcess(["sh"], 0, f"{m.group(1) if m else ''}\n", "")
+    return f
+
+
+_FO_X = {"name": "x", "source": "x.json",
+         "steps": [{"action": "goto", "area": "fo", "path": "/x"},
+                   {"action": "expect_visible", "selector": "#x"},
+                   {"action": "expect_text", "text": "x-{browser}"}]}
+_BO_CFG = {"name": "cfg", "source": "cfg.json",
+           "steps": [{"action": "goto", "area": "bo", "path": "/cfg"},
+                     {"action": "expect_visible", "selector": "#cfg"}]}
+
+
+def _scripted_drive(script, calls=None):
+    """drive_engine tiruan berskrip per (engine, pass): pass = 'seq' bila ctx membawa
+    browser_token (pass konfirmasi), else 'first'. script[(engine, pass)] = {"bo": bool,
+    "fail": {(skenario, step)}, "launch": str}. Hasil per langkah meniru run_steps: langkah BO
+    selain goto/expect_no_fatal tak konklusif tanpa login. Hook skenario dipakai (span)."""
+    def drive(engine, scenarios, ctx, headed=False):
+        kind = "seq" if ctx.get("browser_token") else "first"
+        plan = script.get((engine, kind), {})
+        if calls is not None:
+            calls.append({"engine": engine, "kind": kind, "token": ctx.get("browser_token"),
+                          "sdir": ctx.get("screenshot_dir"),
+                          "text": mod.substitute("{browser}", dict(ctx, engine=engine))})
+        if plan.get("launch"):
+            return {"browser": engine, "scenarios": [], "launch_error": plan["launch"],
+                    "bo_authed": False}
+        authed = bool(plan.get("bo", True))
+        hook = ctx.get("scenario_hook")
+        out = []
+        for k, sc in enumerate(scenarios):
+            results, area = [], "fo"
+            with (hook(k, sc) if hook else contextlib.nullcontext()):
+                for idx, st in enumerate(sc["steps"]):
+                    a = st["action"]
+                    area = st.get("area", area) if a == "goto" else area
+                    concl = area != "bo" or authed or a in mod.SESSION_INDEPENDENT_ACTIONS
+                    # langkah BO ber-auth tanpa login = halaman login: gagal & tak konklusif
+                    okk = concl and (sc["name"], idx) not in plan.get("fail", set())
+                    results.append({"action": a, "ok": okk, "conclusive": concl,
+                                    "message": "m", "location": "l", "step": idx})
+            out.append({"name": sc["name"], "source": sc["source"], "results": results,
+                        "console_errors": [], "screenshots": [f"{engine}-{kind}-{sc['name']}.png"]})
+        return {"browser": engine, "scenarios": out, "launch_error": None, "bo_authed": authed}
+    return drive
+
+
+def _keys(items):
+    return {(i["scenario"], i["step"], i["action"]) for i in items or []}
+
+
+def _cap7(script, *, scen=None, fail=(), health="healthy", crash=(), seq=False, calls=None,
+          execs=None, shots=None):
+    """Satu versi 2 engine lewat run_one_version asli dgn seam CAP-7 di-stub. Return (res, err)."""
+    err = io.StringIO()
+    with _infra(fl_over={"_exec": _exec_stub(fail, execs), "_health_status": lambda c: health},
+                mod_over={"drive_engine": _scripted_drive(script, calls),
+                          "run_parallel_workers": _emulated_workers(crash)}), \
+            contextlib.redirect_stderr(err):
+        r = _rov(["chromium", "firefox"], scen or [mod.universal_smoke(), _FO_X, _BO_CFG],
+                 sequential_browsers=seq, screenshot_dir=shots)
+    return r, err.getvalue()
+
+
+def _phase_set(cell):
+    return set(cell.get("phase_durations") or {})
+
+
 def test_cells_and_timing():
     ok = True
     print("\n[bukti per sel + durasi fase]")
@@ -320,16 +435,17 @@ def test_cells_and_timing():
     fatal = "<html><body>Fatal error: boom</body></html>"
     pages = {"chromium": FakePage(raw_body=fatal, visible=False), "firefox": FakePage()}
 
-    # --- sukses: dua engine, temuan hanya di chromium ---
+    # --- sukses: dua engine (mode paralel lewat seam worker tiruan), temuan hanya di chromium:
+    #     chromium & firefox (men-drive skenario bertemuan) dapat rerun-seq; temuan terulang ---
     with _infra(mod_over={"drive_engine": _page_drive(pages)}):
         r = _rov(["chromium", "firefox"], [mod.universal_smoke(), authored],
                  scenario_notes=["cfg.json: catatan"])
     cells = r.get("cells", {})
     ok &= check("sukses: cells untuk tiap engine yang di-drive", list(cells) == ["chromium", "firefox"])
     ok &= check("field level-versi: run_id/boot_id = fl.RUN_ID, boot cold, image_tag = tag, "
-                "browser_mode sequential",
+                "browser_mode parallel (2 engine tanpa --sequential-browsers)",
                 r["run_id"] == mod.fl.RUN_ID and r["boot_id"] == mod.fl.RUN_ID and r["boot"] == "cold"
-                and r["image_tag"] == _TAG and r["tag"] == _TAG and r["browser_mode"] == "sequential")
+                and r["image_tag"] == _TAG and r["tag"] == _TAG and r["browser_mode"] == "parallel")
     ok &= check("field level-versi: boot_log null tanpa kegagalan boot, scenario_notes disalin ke versi, "
                 "errors/install ada",
                 r["boot_log"] is None and r["scenario_notes"] == ["cfg.json: catatan"]
@@ -337,8 +453,8 @@ def test_cells_and_timing():
     ch, ff = cells.get("chromium", {}), cells.get("firefox", {})
     ts = [_utc_us(c.get(k)) for c in (ch, ff) for k in ("started_at", "finished_at")]
     ok &= check("timestamp sel = UTC ISO-8601 bermikrodetik (+00:00)", all(ts))
-    ok &= check("timestamp sel = start/end engine-nya (chromium selesai sebelum firefox mulai)",
-                all(ts) and ts[0] <= ts[1] <= ts[2] <= ts[3])
+    ok &= check("timestamp sel = start/end engine-nya (start <= end tiap sel)",
+                all(ts) and ts[0] <= ts[1] and ts[2] <= ts[3])
     ok &= check("scenario_set full + scenarios_run = nama spec (smoke termasuk)",
                 all(c["scenario_set"] == "full" and c["scenarios_run"] == ["psm-universal-smoke", "cfg"]
                     for c in (ch, ff)))
@@ -354,17 +470,22 @@ def test_cells_and_timing():
                 r["findings"] == ch["findings"] + ff["findings"] and r["pass"] is False)
     ok &= check("authored_assertions per sel (1 expect_* authored konklusif tiap engine)",
                 ch["authored_assertions"] == 1 and ff["authored_assertions"] == 1)
-    ok &= check("bo_authed/launch_error/browser_notes per sel; hook tertunda null",
+    ok &= check("bo_authed/launch_error/browser_notes per sel; scenario_spans pass lockstep, "
+                "parallel_only [] (temuan terulang)",
                 ch["bo_authed"] is False and ch["launch_error"] is None and ch["browser_notes"] == []
-                and all(c["scenario_spans"] is None and c["parallel_only"] is None for c in (ch, ff)))
+                and all(set(c["scenario_spans"]) == {"psm-universal-smoke", "cfg"}
+                        and c["parallel_only"] == [] for c in (ch, ff)))
     ok &= check("console_errors int & screenshots list per sel",
                 isinstance(ch["console_errors"], int) and isinstance(ff["screenshots"], list))
-    ok &= check("partisi durasi: browser:<engine> hanya di phase_durations sel-nya",
-                set(ch["phase_durations"]) == {"browser:chromium"}
-                and set(ff["phase_durations"]) == {"browser:firefox"})
-    ok &= check("partisi durasi: boot_phases = fase container, tanpa browser:*",
+    ok &= check("partisi durasi: browser:<engine> + rerun-seq:<engine> hanya di phase_durations sel-nya",
+                set(ch["phase_durations"]) == {"browser:chromium", "rerun-seq:chromium"}
+                and set(ff["phase_durations"]) == {"browser:firefox", "rerun-seq:firefox"})
+    ok &= check("partisi durasi: boot_phases = fase container (snapshot + 2 reset), tanpa browser:*",
                 set(r["boot_phases"]) == {"bring-up", "wait-healthy", "install", "wait-http",
-                                          "warmup-bo", "teardown"}
+                                          "warmup-bo", "snapshot-db", "reset-db", "reset-files",
+                                          "reset-opcache", "wait-http#2", "warmup-bo#2",
+                                          "reset-db#2", "reset-files#2", "reset-opcache#2",
+                                          "wait-http#3", "warmup-bo#3", "teardown"}
                 and all(set(v) == {"seconds", "outcome"} for v in r["boot_phases"].values()))
     ok &= check("State per sel: chromium fail, firefox pass",
                 mod.cell_state(r, "chromium")["state"] == "fail"
@@ -610,11 +731,32 @@ def test_sequential_browsers():
     ok &= check("sekuensial: chromium pass -> firefox tetap di-drive (keduanya pass)",
                 seen == ["chromium", "firefox"]
                 and all(mod.cell_state(rp, e)["state"] == "pass" for e in ("chromium", "firefox")))
-    drive, seen = tracked({"chromium": FakePage(raw_body=fatal)})
-    with _infra(mod_over={"drive_engine": drive}):
+    # Tanpa flag (run langsung) = mode PARALEL: tak ada pass pertama in-process, worker tiap
+    # engine ditelurkan lewat seam; engine lain tetap jalan (tak ada fail-fast antar-engine).
+    inproc = []
+    base_drive = _page_drive({"chromium": FakePage(raw_body=fatal)})
+
+    def drive(engine, scenarios, ctx, headed=False):
+        inproc.append((engine, ctx.get("browser_token")))
+        return base_drive(engine, scenarios, ctx, headed)
+    spawned = []
+    emulated = _emulated_workers(spawned=spawned)
+
+    def workers(*a, **k):
+        saved_drive, mod.drive_engine = mod.drive_engine, base_drive  # "proses worker"
+        try:
+            return emulated(*a, **k)
+        finally:
+            mod.drive_engine = saved_drive
+    with _infra(mod_over={"drive_engine": drive, "run_parallel_workers": workers}):
         rd = _rov(["chromium", "firefox"])
-    ok &= check("tanpa --sequential-browsers (run langsung): engine lain tetap jalan",
-                seen == ["chromium", "firefox"] and "state" not in rd["cells"]["firefox"])
+    ok &= check("tanpa --sequential-browsers (run langsung): mode paralel — worker tiap engine "
+                "ditelurkan, tanpa drive pass pertama in-process, engine lain tetap jalan",
+                spawned == ["chromium", "firefox"] and rd["browser_mode"] == "parallel"
+                and not [e for e, tok in inproc if not tok]
+                and inproc == [("chromium", "chromium-seq"), ("firefox", "firefox-seq")]
+                and rd["cells"]["firefox"].get("state") != "not-run"
+                and mod.cell_state(rd, "chromium")["state"] == "fail")
 
     # main: fallback dicatat SEKALI di stderr bila > 1 engine; tidak bila 1 engine.
     def run_main(extra, engines):
@@ -653,8 +795,14 @@ def test_sequential_browsers():
     ok &= check("main --sequential-browsers (1 engine): tanpa catatan fallback",
                 rc == 0 and "mode browser sekuensial" not in err)
     rc, err, kw = run_main([], ["chromium", "firefox"])
-    ok &= check("main tanpa flag: sequential_browsers False, tanpa catatan",
-                kw.get("sequential_browsers") is False and "mode browser sekuensial" not in err)
+    ok &= check("main tanpa flag: sequential_browsers False, tanpa catatan, --slot-cost absen "
+                "-> 2 (engine paralel)",
+                kw.get("sequential_browsers") is False and "mode browser sekuensial" not in err
+                and kw.get("slot_cost") == 2)
+    rc, err, kw = run_main(["--sequential-browsers"], ["chromium", "firefox"])
+    ok &= check("catatan sekuensial tanpa 'admisi interim cost 1'", "interim" not in err)
+    rc, err, kw = run_main(["--slot-cost", "3"], ["chromium", "firefox"])
+    ok &= check("--slot-cost eksplisit dicap apa adanya", kw.get("slot_cost") == 3)
     return ok
 
 
@@ -738,13 +886,14 @@ def test_child_flags():
 
 
 def test_slot_labels():
-    """I/O 'Labels': boot ps-e2e-run --slot-cost 2 (compose / manual) = jumlah psm.slots 2;
-    tanpa --slot-cost = 1 / 1. Label dibaca dari teks compose ter-render & argv `docker run`."""
+    """I/O 'Labels' (CAP-3) + 'Direct run label' (CAP-7): boot ps-e2e-run --slot-cost 2 (compose /
+    manual) = jumlah psm.slots 2; tanpa --slot-cost: 2 engine terprobe (paralel) = 2, satu engine
+    = 1, --sequential-browsers = 1. Label dibaca dari teks compose ter-render & argv `docker run`."""
     ok = True
     print("\n[label psm.slots ps-e2e-run]")
     fl = mod.fl
 
-    def boot(orch, extra):
+    def boot(orch, extra, engines="chromium"):
         compose, runs = [], []
 
         def fake_run(cmd, **kw):
@@ -759,7 +908,7 @@ def test_slot_labels():
         with tempfile.TemporaryDirectory() as td:
             mdir = Path(td) / "m"
             mdir.mkdir()
-            argv = [str(MOD_PATH), str(mdir), "--versions", "9.1", "--engines", "chromium",
+            argv = [str(MOD_PATH), str(mdir), "--versions", "9.1", "--engines", engines,
                     "--orchestrator", orch, "-o", str(Path(td) / "o.json"), *extra]
             try:
                 mod.playwright_available = lambda: True
@@ -784,11 +933,682 @@ def test_slot_labels():
         booted = bool(compose) if orch == "compose" else any(
             r[-1].startswith(f"{fl.IMAGE}:") for r in runs)
         return rc, total, booted
-    for extra, want in ((["--slot-cost", "2"], 2), ([], 1)):
+    for extra, engines, want in ((["--slot-cost", "2"], "chromium", 2),
+                                 ([], "chromium", 1),
+                                 ([], "chromium,firefox", 2),
+                                 (["--sequential-browsers"], "chromium,firefox", 1)):
         for orch in ("compose", "manual"):
-            rc, total, booted = boot(orch, extra)
-            ok &= check(f"boot {orch} {' '.join(extra) or 'tanpa --slot-cost'}: psm.slots = {want}",
-                        rc == 0 and booted and total == want)
+            rc, total, booted = boot(orch, extra, engines)
+            ok &= check(f"boot {orch} {engines} {' '.join(extra) or 'tanpa --slot-cost'}: "
+                        f"psm.slots = {want}", rc == 0 and booted and total == want)
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# CAP-7: browser paralel — baris I/O anak (seam worker tiruan + exec container di-stub)
+# ---------------------------------------------------------------------------
+_X1 = ("x", 1, "expect_visible")
+_X2 = ("x", 2, "expect_text")
+_RESET_10 = {"reset-db", "reset-files", "reset-opcache", "wait-http#2", "warmup-bo#2",
+             "reset-db#2", "reset-files#2", "reset-opcache#2", "wait-http#3", "warmup-bo#3"}
+
+
+def _state(r, e):
+    return mod.cell_state(r, e)["state"]
+
+
+def _rc(r):
+    return mod.exit_code({"versions": {"9.1": r}})
+
+
+@contextlib.contextmanager
+def _progress_log():
+    """Log kemajuan sementara utk satu blok; _PROGRESS dipulihkan sesudahnya."""
+    saved = dict(mod.fl._PROGRESS)
+    with tempfile.TemporaryDirectory() as td:
+        log = Path(td) / "v.progress.log"
+        mod.fl.progress_init(str(log))
+        try:
+            yield log
+        finally:
+            mod.fl._PROGRESS.clear()
+            mod.fl._PROGRESS.update(saved)
+
+
+def test_cap7_parallel_rows():
+    ok = True
+    print("\n[CAP-7: mode paralel — konfirmasi sekuensial]")
+
+    # --- Parallel clean ---
+    execs = []
+    r, _ = _cap7({}, execs=execs)
+    ch, ff = r["cells"]["chromium"], r["cells"]["firefox"]
+    bp = r["boot_phases"]
+    ok &= check("Parallel clean: browser_mode parallel, snapshot-db, tanpa reset/rerun",
+                r["browser_mode"] == "parallel" and "snapshot-db" in bp
+                and not any(k.startswith("reset-") for k in bp)
+                and _phase_set(ch) == {"browser:chromium"} and _phase_set(ff) == {"browser:firefox"})
+    ok &= check("Parallel clean: kedua sel pass, parallel_only [], scenario_spans per skenario, exit 0",
+                _state(r, "chromium") == _state(r, "firefox") == "pass" and _rc(r) == 0
+                and ch["parallel_only"] == [] == ff["parallel_only"]
+                and set(ch["scenario_spans"]) == {"psm-universal-smoke", "x", "cfg"}
+                and r["pass"] is True and r["browsers"] == ["chromium", "firefox"])
+    snap = [x for x in execs if x[0] == "snapshot-db"]
+    script = snap[0][2] if snap else ""
+    ok &= check("snapshot-db: satu exec, env MOD_NAME, set -e + LC_ALL=C + DB_PRELUDE + dump "
+                "--databases ke /tmp + daftar docroot + sentinel",
+                len(snap) == 1 and snap[0][1] == {"MOD_NAME": "m"}
+                and script.startswith('set -e\n: "${MOD_NAME:?}"\nexport LC_ALL=C\n')
+                and mod._db_prelude().strip() in script
+                and "--single-transaction --routines --databases $DBN > /tmp/psm-e2e-snapshot.sql" in script
+                and "/tmp/psm-e2e-snapshot.files" in script and "<(" not in script
+                and script.rstrip().endswith("echo PSM_SNAPSHOT_DB_OK"))
+
+    # --- Parallel-only failure: F (chromium, x step 1) tak terulang; firefox ikut rerun (men-drive x) ---
+    calls = []
+    with tempfile.TemporaryDirectory() as td:
+        r, _ = _cap7({("chromium", "first"): {"fail": {("x", 1)}}}, calls=calls, shots=td)
+        shot_seq = (Path(td) / "9.1" / "chromium-seq").is_dir()
+    ch, ff = r["cells"]["chromium"], r["cells"]["firefox"]
+    ok &= check("Parallel-only failure: chromium pass, F di parallel_only, findings []",
+                _state(r, "chromium") == "pass" and ch["findings"] == []
+                and _keys(ch["parallel_only"]) == {_X1})
+    ok &= check("Parallel-only failure: firefox juga rerun-seq:firefox (men-drive x), pass",
+                "rerun-seq:firefox" in _phase_set(ff) and "rerun-seq:chromium" in _phase_set(ch)
+                and _state(r, "firefox") == "pass" and ff["parallel_only"] == [])
+    ok &= check("Parallel-only failure: boot_phases dapat dua reset (#2, #3), exit 0, pass versi",
+                _RESET_10 <= set(r["boot_phases"]) and _rc(r) == 0 and r["pass"] is True
+                and r["findings"] == [])
+    seqc = [c for c in calls if c["kind"] == "seq"]
+    ok &= check("pass konfirmasi: urut psm_e2e_browsers, {browser} = <engine>-seq, screenshot "
+                "<shots>/<ver>/<engine>-seq; pass pertama {browser} = engine",
+                [c["engine"] for c in seqc] == ["chromium", "firefox"]
+                and [c["text"] for c in seqc] == ["chromium-seq", "firefox-seq"]
+                and all(c["sdir"] and c["sdir"].endswith(f"9.1/{c['engine']}-seq") for c in seqc)
+                and shot_seq
+                and all(c["text"] == c["engine"] for c in calls if c["kind"] == "first"))
+    ok &= check("merge rerun: started_at & scenario_spans dari lockstep, screenshots/finished_at "
+                "dari rerun",
+                ch["screenshots"] == [f"chromium-seq-{n}.png" for n in ("psm-universal-smoke", "x", "cfg")]
+                and set(ch["scenario_spans"]) == {"psm-universal-smoke", "x", "cfg"}
+                and ch["started_at"] <= ch["finished_at"])
+
+    # --- Masked on other engine: firefox tanpa temuan, rerun-nya gagal G ---
+    r, _ = _cap7({("chromium", "first"): {"fail": {("x", 1)}},
+                  ("firefox", "seq"): {"fail": {("x", 2)}}})
+    ff = r["cells"]["firefox"]
+    ok &= check("Masked: firefox findings = {G}, fail, parallel_only []; exit 3",
+                _keys(ff["findings"]) == {_X2} and _state(r, "firefox") == "fail"
+                and ff["parallel_only"] == [] and _rc(r) == 3)
+
+    # --- Confirmed + new ---
+    r, _ = _cap7({("chromium", "first"): {"fail": {("x", 1)}},
+                  ("chromium", "seq"): {"fail": {("x", 1), ("x", 2)}}})
+    ch = r["cells"]["chromium"]
+    ok &= check("Confirmed + new: findings = {F, G} (milik rerun), fail, parallel_only []; exit 3",
+                _keys(ch["findings"]) == {_X1, _X2} and _state(r, "chromium") == "fail"
+                and ch["parallel_only"] == [] and _rc(r) == 3
+                and _keys(r["findings"]) == {_X1, _X2} and r["pass"] is False)
+
+    # --- Unconfirmable: reset-db gagal ---
+    r, err = _cap7({("chromium", "first"): {"fail": {("x", 1)}}}, fail={"reset-db"})
+    ch, ff = r["cells"]["chromium"], r["cells"]["firefox"]
+    entry = (ch.get("errors") or [""])[0]
+    ok &= check("Unconfirmable: chromium inconclusive parallel-unconfirmed, F di parallel_only, "
+                "findings [], sub-fase di errors sel",
+                mod.cell_state(r, "chromium") == {"state": "inconclusive", "conclusive": False,
+                                                  "reason": "parallel-unconfirmed"}
+                and ch["findings"] == [] and _keys(ch["parallel_only"]) == {_X1}
+                and entry.startswith("reset-db: ") and len(ch["errors"]) == 1)
+    ok &= check("Unconfirmable: END rerun-seq:chromium = reset-db-failed, reset-db gagal di boot_phases",
+                ch["phase_durations"]["rerun-seq:chromium"]["outcome"] == "reset-db-failed"
+                and r["boot_phases"]["reset-db"]["outcome"] == "gagal")
+    ok &= check("Unconfirmable: firefox (perlu pass) tak membuka fase, errors mengulang entri verbatim",
+                "rerun-seq:firefox" not in _phase_set(ff) and ff.get("errors") == [entry]
+                and ff["reason"] == "parallel-unconfirmed" and ff["parallel_only"] == []
+                and "reset-db#2" not in r["boot_phases"])
+    ok &= check("Unconfirmable: tak pernah ke errors level-versi; entri di stderr; exit 1; pass False",
+                r["errors"] == [] and err.count(entry) == 1 and _rc(r) == 1 and r["pass"] is False)
+    ok &= check("_new_cell tanpa kunci errors; sel yang dikonfirmasi pun tak punya errors",
+                "errors" not in mod._new_cell()
+                and "errors" not in _cap7({})[0]["cells"]["chromium"])
+
+    r, _ = _cap7({("chromium", "first"): {"fail": {("x", 1)}}}, health="unhealthy")
+    ch = r["cells"]["chromium"]
+    ok &= check("Unconfirmable (container tak healthy): errors ['health: unhealthy'], END "
+                "health-failed, tanpa reset-db",
+                ch.get("errors") == ["health: unhealthy"] and ch["reason"] == "parallel-unconfirmed"
+                and ch["phase_durations"]["rerun-seq:chromium"]["outcome"] == "health-failed"
+                and "reset-db" not in r["boot_phases"])
+
+    r, err = _cap7({("chromium", "first"): {"fail": {("x", 1)}}}, fail={"snapshot-db"})
+    ch, ff = r["cells"]["chromium"], r["cells"]["firefox"]
+    entry = (ch.get("errors") or [""])[0]
+    ok &= check("snapshot-db gagal (paralel): lockstep tetap jalan, tanpa rerun-seq, engine yg "
+                "butuh pass parallel-unconfirmed dgn entri snapshot-db, dicetak sekali",
+                entry.startswith("snapshot-db: ") and ff.get("errors") == [entry]
+                and not any(k.startswith("rerun-seq") for c in (ch, ff) for k in _phase_set(c))
+                and r["boot_phases"]["snapshot-db"]["outcome"] == "gagal"
+                and err.count(entry) == 1 and r["errors"] == [])
+    r, _ = _cap7({}, fail={"snapshot-db"})
+    ok &= check("snapshot-db gagal tanpa temuan: engine tanpa pass mempertahankan hasil paralel (pass)",
+                _state(r, "chromium") == _state(r, "firefox") == "pass" and _rc(r) == 0)
+
+    # --- BO-login fallback ---
+    with _progress_log() as log:
+        r, err = _cap7({("chromium", "first"): {"bo": True}, ("firefox", "first"): {"bo": False},
+                        ("firefox", "seq"): {"bo": True}})
+        lines = log.read_text(encoding="utf-8").splitlines()
+    ch, ff = r["cells"]["chromium"], r["cells"]["firefox"]
+    ok &= check("BO-login fallback: browser:firefox#2 sesudah reset, tanpa rerun-seq, chromium tanpa pass",
+                _phase_set(ff) == {"browser:firefox", "browser:firefox#2"}
+                and _phase_set(ch) == {"browser:chromium"} and "reset-db" in r["boot_phases"]
+                and "reset-db#2" not in r["boot_phases"])
+    ok &= check("BO-login fallback: pass kedua yang dihitung (bo_authed, inconclusive [] miliknya), "
+                "tanpa konfirmasi, browser_mode parallel, exit 0",
+                ff["bo_authed"] is True and ff["inconclusive"] == [] and ff["parallel_only"] == []
+                and _state(r, "firefox") == "pass" and r["browser_mode"] == "parallel" and _rc(r) == 0)
+    fb = [ln for ln in lines if " START browser:firefox " in ln and "fallback login BO" in ln]
+    ok &= check("BO-login fallback dicatat: stderr + detail START browser:firefox (bukan "
+                "browser_notes/errors)",
+                "fallback login BO" in err and len(fb) == 1 and ff["browser_notes"] == []
+                and r["errors"] == [])
+
+    # --- All BO logins fail, FO finding ---
+    r, _ = _cap7({("chromium", "first"): {"bo": False, "fail": {("x", 1)}},
+                  ("firefox", "first"): {"bo": False},
+                  ("chromium", "seq"): {"bo": False, "fail": {("x", 1)}},
+                  ("firefox", "seq"): {"bo": False}})
+    ch, ff = r["cells"]["chromium"], r["cells"]["firefox"]
+    ok &= check("Semua login BO gagal: tanpa browser:<e>#2, rerun-seq untuk keduanya",
+                _phase_set(ch) == {"browser:chromium", "rerun-seq:chromium"}
+                and _phase_set(ff) == {"browser:firefox", "rerun-seq:firefox"})
+    ok &= check("Semua login BO gagal: chromium findings {F} fail, langkah BO ber-auth tetap "
+                "inconclusive di kedua sel, exit 3",
+                _keys(ch["findings"]) == {_X1} and _state(r, "chromium") == "fail"
+                and all(("cfg", 1, "expect_visible") in _keys(c["inconclusive"]) for c in (ch, ff))
+                and _rc(r) == 3)
+
+    # --- Worker crash (seam) ---
+    r, _ = _cap7({}, crash={"firefox"})
+    ff = r["cells"]["firefox"]
+    ok &= check("Worker crash: firefox inconclusive crash (exit code di browser_notes), timestamp "
+                "null; chromium tak terganggu; exit 1",
+                mod.cell_state(r, "firefox") == {"state": "inconclusive", "conclusive": False,
+                                                 "reason": "crash"}
+                and any("exit code 1" in n for n in ff["browser_notes"])
+                and ff["started_at"] is None and ff["finished_at"] is None
+                and ff["parallel_only"] is None and _state(r, "chromium") == "pass"
+                and r["browsers"] == ["chromium"] and _rc(r) == 1)
+
+    # --- rerun yang gagal luncur: inconclusive launch-error, temuan paralel ke parallel_only ---
+    r, _ = _cap7({("chromium", "first"): {"fail": {("x", 1)}},
+                  ("chromium", "seq"): {"launch": "boom"}})
+    ch = r["cells"]["chromium"]
+    ok &= check("rerun gagal luncur: inconclusive launch-error, F di parallel_only, catatan launch",
+                mod.cell_state(r, "chromium")["reason"] == "launch-error"
+                and _keys(ch["parallel_only"]) == {_X1}
+                and any("gagal diluncurkan" in n for n in ch["browser_notes"])
+                and r["browsers"] == ["firefox"])
+    return ok
+
+
+def test_cap7_sequential_rows():
+    ok = True
+    print("\n[CAP-7: fallback sekuensial — snapshot & reset antar-engine]")
+    with _progress_log() as log:
+        calls = []
+        r, _ = _cap7({}, seq=True, calls=calls)
+        lines = log.read_text(encoding="utf-8").splitlines()
+    ch, ff = r["cells"]["chromium"], r["cells"]["firefox"]
+    bp = set(r["boot_phases"])
+    ok &= check("Sequential fallback: snapshot-db lalu reset sebelum firefox (wait-http#2, warmup-bo#2)",
+                {"snapshot-db", "reset-db", "reset-files", "reset-opcache", "wait-http#2",
+                 "warmup-bo#2"} <= bp and "reset-db#2" not in bp)
+    ok &= check("Sequential fallback: kedua sel di-drive, browser_mode sequential, span pass pertama, "
+                "parallel_only null, {browser} = engine, exit 0",
+                r["browser_mode"] == "sequential" and _rc(r) == 0
+                and _phase_set(ch) == {"browser:chromium"} and _phase_set(ff) == {"browser:firefox"}
+                and set(ff["scenario_spans"]) == {"psm-universal-smoke", "x", "cfg"}
+                and ch["parallel_only"] is None
+                and [c["text"] for c in calls] == ["chromium", "firefox"])
+    starts = [ln for ln in lines if " START browser:" in ln]
+    ok &= check("catatan mode sekuensial: hanya detail START browser: pertama",
+                len(starts) == 2 and "mode browser sekuensial" in starts[0]
+                and "mode browser sekuensial" not in starts[1])
+
+    r, _ = _cap7({("chromium", "first"): {"fail": {("x", 1)}}}, seq=True)
+    ok &= check("Sequential fail-fast: firefox not-run, tanpa fase reset, exit 3",
+                r["cells"]["firefox"].get("state") == "not-run"
+                and not any(k.startswith("reset-") for k in r["boot_phases"])
+                and "snapshot-db" in r["boot_phases"] and _rc(r) == 3)
+
+    calls = []
+    r, err = _cap7({}, seq=True, fail={"reset-db"}, calls=calls)
+    ch, ff = r["cells"]["chromium"], r["cells"]["firefox"]
+    ok &= check("Sequential reset fails: firefox inconclusive sequential-reset, sub-fase di errors-nya",
+                mod.cell_state(r, "firefox") == {"state": "inconclusive", "conclusive": False,
+                                                 "reason": "sequential-reset"}
+                and len(ff.get("errors") or []) == 1 and ff["errors"][0].startswith("reset-db: ")
+                and ff["started_at"] is None and [c["engine"] for c in calls] == ["chromium"])
+    ok &= check("Sequential reset fails: rekaman chromium bersih, errors level-versi [], exit 1",
+                "errors" not in ch and _state(r, "chromium") == "pass" and r["errors"] == []
+                and _rc(r) == 1 and ff["errors"][0] in err and r["browsers"] == ["chromium"])
+
+    calls = []
+    r, _ = _cap7({}, seq=True, fail={"snapshot-db"}, calls=calls)
+    ok &= check("Sequential snapshot gagal: SEMUA engine sequential-reset menyebut snapshot-db, "
+                "tak ada yang di-drive",
+                calls == [] and all(r["cells"][e].get("reason") == "sequential-reset"
+                                    and r["cells"][e]["errors"][0].startswith("snapshot-db: ")
+                                    for e in ("chromium", "firefox"))
+                and r["skipped_browser"] is True and _rc(r) == 1)
+
+    execs = []
+    _cap7({}, seq=True, execs=execs)
+    subs = [x[0] for x in execs]
+    ok &= check("rutin reset: urutan exec snapshot-db, reset-db, reset-files, reset-opcache",
+                subs == ["snapshot-db", "reset-db", "reset-files", "reset-opcache"])
+    return ok
+
+
+def test_cap7_shell():
+    """Skrip snapshot/reset: kepala set -e/MOD_NAME/LC_ALL, tanpa process substitution, sentinel
+    per sub-fase; sintaks lolos `sh -n`; reset-files diuji NYATA di docroot tiruan."""
+    ok = True
+    print("\n[CAP-7: skrip snapshot/reset]")
+    prelude = mod._db_prelude()
+    scripts = {"snapshot-db": mod.snapshot_db_sh(prelude), "reset-db": mod.reset_db_sh(prelude),
+               "reset-files": mod.RESET_FILES_SH, "reset-opcache": mod.RESET_OPCACHE_SH}
+    for name, sc in scripts.items():
+        sentinel = "PSM_" + name.upper().replace("-", "_") + "_OK"
+        syn = subprocess.run(["sh", "-n", "-c", sc], capture_output=True, text=True)
+        ok &= check(f"{name}: kepala kontrak, tanpa '<(', sentinel {sentinel}, sintaks sh sah",
+                    sc.startswith(mod._SH_HEAD) and "<(" not in sc
+                    and sc.rstrip().endswith(f"echo {sentinel}") and syn.returncode == 0)
+    rdb = scripts["reset-db"]
+    ok &= check("reset-db: dump harus ada, DROP DATABASE lalu muat dump tanpa argumen database",
+                "[ -s /tmp/psm-e2e-snapshot.sql ]" in rdb and "DROP DATABASE" in rdb
+                and rdb.index("DROP DATABASE") < rdb.index("< /tmp/psm-e2e-snapshot.sql"))
+    op = scripts["reset-opcache"]
+    ok &= check("reset-opcache: USR2 ke master php-fpm (PPid dari status), else apachectl graceful",
+                "kill -USR2" in op and "PPid:" in op and "apachectl -k graceful" in op
+                and '|| continue' in op)
+
+    with tempfile.TemporaryDirectory() as td:
+        root, src, tmp = Path(td) / "html", Path(td) / "src", Path(td) / "t"
+        for d in (root / "modules" / "m", root / "var" / "cache" / "prod", root / "img", src, tmp):
+            d.mkdir(parents=True)
+        (root / "index.php").write_text("x")
+        (root / "modules" / "m" / "old.php").write_text("lama")
+        (src / "m.php").write_text("segar")
+
+        def local(sc):
+            return (sc.replace(mod.PS_DOCROOT, str(root)).replace("/ps-module-src", str(src))
+                    .replace("/tmp/psm-e2e-", f"{tmp}/psm-e2e-"))
+        env = {"MOD_NAME": "m", "PATH": "/usr/bin:/bin"}
+        snap = mod._SH_HEAD + f"cd {root}\n" + local(mod._list_docroot_sh(mod.SNAPSHOT_FILES))
+        r1 = subprocess.run(["sh", "-c", snap], env=env, capture_output=True, text=True)
+        (root / "img" / "baru.jpg").write_text("baru")
+        (root / "baru-dir" / "sub").mkdir(parents=True)
+        (root / "var" / "cache" / "prod" / "c.php").write_text("c")
+        (root / "modules" / "m" / "data.json").write_text("{}")
+        r2 = subprocess.run(["sh", "-c", local(mod.RESET_FILES_SH)], env=env,
+                            capture_output=True, text=True)
+        ok &= check("reset-files nyata: file/folder baru sesudah snapshot dihapus, index tetap",
+                    r1.returncode == 0 and r2.returncode == 0 and "PSM_RESET_FILES_OK" in r2.stdout
+                    and not (root / "img" / "baru.jpg").exists()
+                    and not (root / "baru-dir").exists() and (root / "index.php").exists())
+        ok &= check("reset-files nyata: var/cache dikosongkan (foldernya tetap), module disalin "
+                    "segar dari sumber",
+                    (root / "var" / "cache").is_dir() and not any((root / "var" / "cache").iterdir())
+                    and sorted(p.name for p in (root / "modules" / "m").iterdir()) == ["m.php"])
+        r3 = subprocess.run(["sh", "-c", local(mod.RESET_FILES_SH)], env={"PATH": "/usr/bin:/bin"},
+                            capture_output=True, text=True)
+        ok &= check("tanpa MOD_NAME: skrip gagal sebelum menyentuh apa pun (: ${MOD_NAME:?})",
+                    r3.returncode != 0 and (root / "modules" / "m" / "m.php").exists())
+    return ok
+
+
+def test_cap7_lock_barrier():
+    """Helper kunci BO & barrier: flock NYATA dan file nyata lintas thread (tanpa fase/sink/log)."""
+    import threading
+    ok = True
+    print("\n[CAP-7: kunci BO lintas-engine + barrier lockstep]")
+    saved_poll = mod.LOCKSTEP_POLL
+    mod.LOCKSTEP_POLL = 0.05
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            lock, holders, step = Path(td) / "j-9.1.bo.lock", Path(td) / "h", Path(td) / "s"
+            holders.mkdir()
+            step.mkdir()
+            ex = mod.bo_lock_try(lock, True)
+            ok &= check("LOCK_EX dipegang: EX lain & SH lain gagal (non-blocking)",
+                        ex is not None and mod.bo_lock_try(lock, True) is None
+                        and mod.bo_lock_try(lock, False) is None)
+            got, polls = {}, []
+
+            def waiter():
+                t0 = time.monotonic()
+                fd = mod.bo_lock_wait(lock, False, poll_hook=lambda: polls.append(1))
+                got["dt"] = time.monotonic() - t0
+                got["fd"] = fd
+            th = threading.Thread(target=waiter)
+            th.start()
+            time.sleep(0.4)
+            ok &= check("bo_lock_wait menunggu selama EX dipegang (poll_hook terpanggil)",
+                        th.is_alive() and len(polls) >= 2)
+            os.close(ex)
+            th.join(5)
+            sh2 = mod.bo_lock_try(lock, False)
+            ok &= check("lepas EX (fd ditutup) -> penunggu SH dapat; SH lain bersamaan juga dapat; "
+                        "EX ditolak selama SH dipegang",
+                        "fd" in got and got["dt"] >= 0.35 and sh2 is not None
+                        and mod.bo_lock_try(lock, True) is None)
+            os.close(got["fd"])
+            os.close(sh2)
+            mod.holder_mark(holders, "firefox")
+            mod.holder_mark(holders, "chromium")
+            ok &= check("penanda pemegang: lock_holders urut nama; unmark best-effort (dua kali aman)",
+                        mod.lock_holders(holders) == ["chromium", "firefox"]
+                        and (mod.holder_unmark(holders, "firefox"), mod.holder_unmark(holders, "firefox"))
+                        and mod.lock_holders(holders) == ["chromium"]
+                        and mod.lock_holders(Path(td) / "tak-ada") == [])
+
+            engines = ["chromium", "firefox", "webkit"]
+            ok &= check("barrier_pending: engine lain tanpa <e>.<k> / <e>.done",
+                        mod.barrier_pending(step, engines, "chromium", 0) == ["firefox", "webkit"])
+            done = {}
+
+            def bwait():
+                mod.barrier_wait(step, engines, "chromium", 0,
+                                 poll_hook=lambda p: done.setdefault("seen", list(p)))
+                done["ok"] = True
+            th = threading.Thread(target=bwait)
+            th.start()
+            time.sleep(0.2)
+            mod.step_mark(step, "firefox", 0)
+            time.sleep(0.2)
+            alive_mid = th.is_alive()
+            mod.step_done(step, "webkit")  # worker yang keluar = semua step selesai
+            th.join(5)
+            ok &= check("barrier_wait: menunggu sampai tiap engine lain menandai step k; "
+                        "<engine>.done melepasnya",
+                        alive_mid and done.get("ok") and done.get("seen") == ["firefox", "webkit"]
+                        and mod.barrier_pending(step, engines, "chromium", 3) == ["firefox"])
+
+            hook = mod.LockstepHook("chromium", engines, str(lock), str(holders), str(step),
+                                    parent_pid=-1)
+            mod.holder_mark(holders, "chromium")
+            raised = False
+            try:
+                hook._check_parent()
+            except mod.ParentGone:
+                raised = True
+            ok &= check("LockstepHook: proses versi hilang (getppid beda) -> ParentGone, penanda "
+                        "pemegangnya dihapus", raised and "chromium" not in mod.lock_holders(holders))
+            p = mod.lockstep_paths("9.1", "j-e2e-1200-abcd")
+            ok &= check("lockstep_paths di LOCK_DIR: <job>-<ver>.bo.lock / .bo.holders / .step",
+                        p["lock"] == Path(mod.fl.LOCK_DIR) / "j-e2e-1200-abcd-9.1.bo.lock"
+                        and p["holders"].name == "j-e2e-1200-abcd-9.1.bo.holders"
+                        and p["step"].name == "j-e2e-1200-abcd-9.1.step")
+    finally:
+        mod.LOCKSTEP_POLL = saved_poll
+    return ok
+
+
+def test_cap7_worker_dispatch():
+    """`--engine-worker <spec.json>` didispatch ke worker_main SEBELUM run_main_with_progress."""
+    ok = True
+    print("\n[CAP-7: dispatch --engine-worker]")
+    seen = []
+    with mock.patch.object(mod, "worker_main", lambda p: seen.append(("worker", p)) or 7), \
+            mock.patch.object(mod.fl, "run_main_with_progress",
+                              lambda fn: seen.append(("main", fn)) or 0), \
+            contextlib.redirect_stderr(io.StringIO()):
+        rc_w = mod._entry(["ps-e2e-run.py", "--engine-worker", "/x/chromium.spec.json"])
+        rc_bad = mod._entry(["ps-e2e-run.py", "--engine-worker"])
+        rc_m = mod._entry(["ps-e2e-run.py", "/m", "--versions", "9.1"])
+    ok &= check("argv[1] --engine-worker -> worker_main(spec), tanpa run_main_with_progress (tanpa DONE)",
+                rc_w == 7 and seen[0] == ("worker", "/x/chromium.spec.json"))
+    ok &= check("--engine-worker tanpa path -> exit 2; argv lain -> run_main_with_progress(main)",
+                rc_bad == 2 and rc_m == 0 and seen[1:] == [("main", mod.main)])
+    src = MOD_PATH.read_text(encoding="utf-8")
+    ok &= check("__main__ lewat _entry; WORKER_CMD default = [python, skrip ini, --engine-worker]",
+                "sys.exit(_entry(sys.argv))" in src
+                and mod.WORKER_CMD == [sys.executable, str(MOD_PATH.resolve()), "--engine-worker"])
+    return ok
+
+
+def test_cap7_worker_main_inprocess():
+    """worker_main dalam proses: hasil atomik berkunci kontrak; JobStopped -> 143 tanpa hasil;
+    ParentGone -> 1 tanpa hasil."""
+    import signal as _sig
+    ok = True
+    print("\n[CAP-7: worker_main]")
+    fl = mod.fl
+    saved = (fl.RUN_ID, dict(fl._PROGRESS), mod.drive_engine, dict(fl._TIMING))
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            def spec(name, drive):
+                mod.drive_engine = drive
+                d = Path(td) / name
+                for sub in ("h", "s"):
+                    (d / sub).mkdir(parents=True)
+                sp = {"version": "9.1", "engine": "chromium", "engines": ["chromium"],
+                      "scenarios": [_FO_X], "ctx": {"fo": "f", "bo": "b", "mod": "m"},
+                      "job_id": None, "run_id": "0123456789ab", "parent_pid": os.getpid(),
+                      "progress_file": str(d / "p.log"), "slow_after": None,
+                      "lock": str(d / "l.lock"), "holders_dir": str(d / "h"),
+                      "step_dir": str(d / "s"), "screenshot_dir": None, "headed": False,
+                      "result": str(d / "r.json")}
+                (d / "spec.json").write_text(json.dumps(sp))
+                with contextlib.redirect_stderr(io.StringIO()):
+                    rc = mod.worker_main(str(d / "spec.json"))
+                _sig.signal(_sig.SIGTERM, _sig.SIG_DFL)
+                return rc, d
+            rc, d = spec("ok", _scripted_drive({}))
+            res = json.loads((d / "r.json").read_text()) if (d / "r.json").exists() else {}
+            log = (d / "p.log").read_text() if (d / "p.log").exists() else ""
+            ok &= check("worker_main: hasil {engine, started_at, finished_at, result, scenario_spans, "
+                        "timings}; timings memuat browser:<engine>; RUN_ID dari spec",
+                        rc == 0 and set(res) == {"engine", "started_at", "finished_at", "result",
+                                                 "scenario_spans", "timings"}
+                        and res["started_at"] <= res["finished_at"]
+                        and [t[0] for t in res["timings"]][-1] == "browser:chromium"
+                        and set(res["scenario_spans"]) == {"x"} and fl.RUN_ID == "0123456789ab"
+                        and (d / "s" / "chromium.0").exists())
+            ok &= check("worker_main: baris log ke log versi (progress_attach, tanpa truncate), "
+                        "tanpa DONE",
+                        " START browser:chromium " in log and " DONE" not in log
+                        and " v=9.1 " in log)
+            ok &= check("read_worker_result: hasil worker terbaca; engine lain / rusak -> None",
+                        mod.read_worker_result(d / "r.json", "chromium") is not None
+                        and mod.read_worker_result(d / "r.json", "firefox") is None
+                        and mod.read_worker_result(d / "spec.json", "chromium") is None
+                        and mod.read_worker_result(d / "tak-ada.json", "chromium") is None)
+
+            def stopped(*a, **k):
+                raise fl.JobStopped()
+            rc, d = spec("stop", stopped)
+            ok &= check("worker JobStopped -> exit 143 tanpa hasil", rc == 143 and not (d / "r.json").exists())
+
+            # SIGTERM nyata: yang pertama → JobStopped; yang kedua (reap proses versi) datang
+            # saat cleanup (browser.close di finally) dan harus DIABAIKAN, bukan memotongnya.
+            cleaned = []
+
+            def sigterm_twice(*a, **k):
+                try:
+                    os.kill(os.getpid(), _sig.SIGTERM)
+                    time.sleep(1)
+                finally:
+                    cleaned.append(_sig.getsignal(_sig.SIGTERM) == _sig.SIG_IGN)
+                    os.kill(os.getpid(), _sig.SIGTERM)
+                    cleaned.append(True)
+            prev = _sig.getsignal(_sig.SIGTERM)
+            try:
+                rc, d = spec("stop2", sigterm_twice)
+            finally:
+                _sig.signal(_sig.SIGTERM, prev)
+            ok &= check("worker: SIGTERM kedua saat cleanup diabaikan (cleanup tuntas, exit 143)",
+                        rc == 143 and cleaned == [True, True]
+                        and not (d / "r.json").exists())
+
+            def gone(engine, scenarios, ctx, headed=False):
+                raise mod.ParentGone()
+            rc, d = spec("gone", gone)
+            ok &= check("worker ParentGone -> exit 1 tanpa hasil", rc == 1 and not (d / "r.json").exists())
+    finally:
+        fl.RUN_ID = saved[0]
+        fl._PROGRESS.clear()
+        fl._PROGRESS.update(saved[1])
+        mod.drive_engine = saved[2]
+        fl._TIMING.clear()
+        fl._TIMING.update(saved[3])
+    return ok
+
+
+_WRAPPER = r'''
+import importlib.util, json, os, sys, time
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("ps_e2e_run", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.fl.JOB_REGISTRY = Path(os.environ["PSM_TEST_REGISTRY"])
+plan = json.loads(os.environ["PSM_TEST_PLAN"])
+
+
+def drive(engine, scenarios, ctx, headed=False):
+    hook = ctx["scenario_hook"]
+    out = []
+    for k, sc in enumerate(scenarios):
+        with hook(k, sc):
+            if plan.get("crash") == [engine, k]:
+                os._exit(1)
+            time.sleep(plan["sleep"][sc["name"]])
+        out.append({"name": sc["name"], "source": sc.get("source", "x"),
+                    "results": [{"action": "goto", "ok": True, "conclusive": True,
+                                 "message": "", "location": "", "step": 0}],
+                    "console_errors": [], "screenshots": [ctx.get("screenshot_dir")]})
+    return {"browser": engine, "scenarios": out, "launch_error": None, "bo_authed": True}
+
+
+mod.drive_engine = drive
+sys.exit(mod.worker_main(sys.argv[2]))
+'''
+REAL_RUN_PARALLEL_WORKERS = mod.run_parallel_workers
+
+
+def _spawn_run(td, plan, scenarios):
+    """Satu versi 2 engine lewat run_one_version + run_parallel_workers ASLI: worker = subproses
+    wrapper (WORKER_CMD) yang memanggil worker_main asli dgn drive_engine tiruan."""
+    fl = mod.fl
+    td = Path(td)
+    wrapper = td / "wrapper.py"
+    wrapper.write_text(_WRAPPER, encoding="utf-8")
+    workdirs = []
+    real_mkdtemp = tempfile.mkdtemp
+
+    def rec_mkdtemp(*a, **k):
+        p = real_mkdtemp(*a, **k)
+        workdirs.append(p)
+        return p
+    saved = (mod.WORKER_CMD, fl.LOCK_DIR, dict(fl._JOB), dict(fl._PROGRESS))
+    env = {"PSM_TEST_REGISTRY": str(td / "reg"), "PSM_TEST_PLAN": json.dumps(plan)}
+    log = td / "m-e2e-9.1.progress.log"
+    try:
+        mod.WORKER_CMD = [sys.executable, str(wrapper), str(MOD_PATH)]
+        fl.LOCK_DIR = td / "locks"
+        fl._JOB["id"] = "m-e2e-1200-abcd"
+        fl.progress_init(str(log))
+        t0 = time.monotonic()
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(mod.tempfile, "mkdtemp", rec_mkdtemp), \
+                _infra(mod_over={"run_parallel_workers": REAL_RUN_PARALLEL_WORKERS}), \
+                contextlib.redirect_stderr(io.StringIO()):
+            r = _rov(["chromium", "firefox"], scenarios, screenshot_dir=str(td / "shots"))
+        took = time.monotonic() - t0
+    finally:
+        mod.WORKER_CMD, fl.LOCK_DIR = saved[0], saved[1]
+        fl._JOB.clear()
+        fl._JOB.update(saved[2])
+        fl._PROGRESS.clear()
+        fl._PROGRESS.update(saved[3])
+    lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return r, lines, workdirs, took
+
+
+def _overlap(a, b):
+    return max(a[0], b[0]) < min(a[1], b[1])
+
+
+def test_cap7_worker_spawn():
+    """AC1 + lockstep nyata: worker = subproses sungguhan (wrapper WORKER_CMD → worker_main asli),
+    kunci flock & penanda step nyata. Skenario FO-only >= 5 x LOCKSTEP_POLL."""
+    ok = True
+    print("\n[CAP-7: worker subproses nyata — AC1, kunci, barrier, crash]")
+    fo1 = {"name": "fo1", "source": "fo1.json", "steps": [{"action": "goto", "area": "fo", "path": "/"}]}
+    fo2 = {"name": "fo2", "source": "fo2.json", "steps": [{"action": "goto", "area": "fo", "path": "/a"}]}
+    scen = [mod.universal_smoke(), fo1, fo2]
+    fo_sleep = 5 * mod.LOCKSTEP_POLL + 0.1
+    plan = {"sleep": {"psm-universal-smoke": 1.0, "fo1": fo_sleep, "fo2": fo_sleep}}
+    with tempfile.TemporaryDirectory() as td:
+        r, lines, workdirs, _ = _spawn_run(td, plan, scen)
+        ch, ff = r["cells"]["chromium"], r["cells"]["firefox"]
+        st = [_utc_us(c["started_at"]) for c in (ch, ff)]
+        fi = [_utc_us(c["finished_at"]) for c in (ch, ff)]
+        ok &= check("AC1: kedua sel parallel di bawah satu boot_id, worker-stamped, "
+                    "max(started_at) < min(finished_at)",
+                    r["browser_mode"] == "parallel" and r["boot_id"] == mod.fl.RUN_ID
+                    and all(st + fi) and max(st) < min(fi))
+        ok &= check("AC1: tanpa temuan, kedua sel pass, exit 0, tanpa pass sekuensial",
+                    _state(r, "chromium") == _state(r, "firefox") == "pass" and _rc(r) == 0
+                    and not any(k.startswith(("rerun-seq", "reset-")) for k in
+                                set(r["boot_phases"]) | _phase_set(ch) | _phase_set(ff)))
+        sp = {e: r["cells"][e]["scenario_spans"] for e in ("chromium", "firefox")}
+        ok &= check("span FO-only overlap lintas engine (LOCK_SH); span skenario BO tak pernah overlap",
+                    _overlap(sp["chromium"]["fo1"], sp["firefox"]["fo1"])
+                    and _overlap(sp["chromium"]["fo2"], sp["firefox"]["fo2"])
+                    and not _overlap(sp["chromium"]["psm-universal-smoke"],
+                                     sp["firefox"]["psm-universal-smoke"]))
+        names = ["psm-universal-smoke", "fo1", "fo2"]
+        ok &= check("lockstep: tiap span step k+1 mulai sesudah tiap span step k selesai",
+                    all(min(sp[e][names[k + 1]][0] for e in sp) >= max(sp[e][names[k]][1] for e in sp)
+                        for k in range(2)))
+        waits = _phase_set(ch) | _phase_set(ff)
+        ok &= check("fase lock-wait:<engine> & barrier-wait:<engine> worker dicatat ulang ke sel",
+                    any(k.startswith("lock-wait:") for k in waits)
+                    and any(k.startswith("barrier-wait:") for k in waits)
+                    and all(k.split(":", 1)[1].split("#")[0] == e
+                            for e, c in (("chromium", ch), ("firefox", ff)) for k in _phase_set(c)))
+        wl = [ln for ln in lines if f"pid={mod.fl.OWNER_PID} " not in ln]
+        ok &= check("baris worker ke log versi: job/run sama, fase bernama engine, tanpa DONE",
+                    any(" START browser:chromium " in ln for ln in wl)
+                    and any(" START browser:firefox " in ln for ln in wl)
+                    and any(" START lock-wait:" in ln for ln in wl)
+                    and any(" START barrier-wait:" in ln for ln in wl)
+                    and all("job=m-e2e-1200-abcd" in ln and f" run={mod.fl.RUN_ID} " in ln
+                            for ln in wl)
+                    and not any(" DONE" in ln for ln in lines))
+        shots = Path(td) / "shots" / "9.1"
+        ok &= check("screenshot worker di <shots>/<ver>/<engine> (ctx sendiri)",
+                    (shots / "chromium").is_dir() and (shots / "firefox").is_dir()
+                    and ch["screenshots"][0] == str(shots / "chromium"))
+        locks = Path(td) / "locks"
+        ok &= check("sesudah semua worker keluar: file kunci, folder pemegang & step, folder kerja dihapus",
+                    workdirs and not any(Path(w).exists() for w in workdirs)
+                    and not list(locks.glob("m-e2e-1200-abcd-9.1*")))
+
+    plan_crash = dict(plan, crash=["firefox", 1])
+    with tempfile.TemporaryDirectory() as td:
+        r, _, _, took = _spawn_run(td, plan_crash, scen)
+        ff = r["cells"]["firefox"]
+        ok &= check("Worker crash nyata: firefox exit 1 tanpa hasil -> crash, rc di browser_notes",
+                    mod.cell_state(r, "firefox")["reason"] == "crash"
+                    and any("exit code 1" in n for n in ff["browser_notes"]))
+        ok &= check("Worker crash nyata: chromium tak terganggu, barrier tak menggantung, exit 1",
+                    _state(r, "chromium") == "pass" and took < 30 and _rc(r) == 1
+                    and not list((Path(td) / "locks").glob("m-e2e-1200-abcd-9.1*")))
     return ok
 
 
@@ -1177,6 +1997,28 @@ def main():
     ok &= check("_bo_login retry: attempt-1 flaky (cold 1.7/8) -> attempt-2 sukses",
                 mod._bo_login(pg_flaky, lctx) is True and pg_flaky.clicks == 2)
 
+    # REGRESI live 8.1.6 + Firefox: login AJAX lalu redirect JS SESUDAH networkidle — URL baru
+    # berpindah saat ditunggu (wait_for_url). Tanpa tunggu itu attempt-1 negatif palsu.
+    class _JsRedirectLogin(FakePage):
+        def __init__(self):
+            super().__init__(loc_count=0)
+            self.clicks = 0
+
+        def click(self, sel):
+            super().click(sel)
+            self.clicks += 1
+
+        def wait_for_url(self, pred, timeout=None):
+            self.log.append(("wait_for_url", timeout))
+            self.url = DASH
+            if not pred(self.url):
+                raise RuntimeError("timeout")
+
+    pg_js = _JsRedirectLogin()
+    ok &= check("_bo_login: redirect JS sesudah networkidle (Firefox 8.1) ditunggu -> attempt-1 sukses",
+                mod._bo_login(pg_js, lctx) is True and pg_js.clicks == 1
+                and ("wait_for_url", mod.SETTLE_TIMEOUT_MS) in pg_js.log)
+
     # --- assemble_findings: konklusif gagal -> finding; tak konklusif -> inconclusive ---
     driven = [{"browser": "chromium", "scenarios": [
         {"name": "psm-universal-smoke", "source": "builtin", "results": [
@@ -1304,10 +2146,17 @@ def main():
 
     # --- REGRESI false-pass: drive loop me-rute launch-fail per-browser ke browser_notes,
     #     BUKAN errors; temuan konklusif dari engine yang jalan tetap ada (fix determinism-1) ---
-    saved = {n: getattr(mod, n, None) for n in ("drive_engine", "install_module", "wait_http")}
+    saved = {n: getattr(mod, n, None) for n in ("drive_engine", "install_module", "wait_http",
+                                                 "run_parallel_workers")}
     saved_fl = {n: getattr(mod.fl, n) for n in ("compose_available", "image_present",
-                "_bring_up_compose", "wait_healthy", "_teardown", "_logs")}
+                "_bring_up_compose", "wait_healthy", "_teardown", "_logs", "_exec",
+                "_health_status")}
     try:
+        # 2 engine tanpa --sequential-browsers = mode paralel (CAP-7): worker diemulasikan,
+        # exec snapshot/reset & health di-stub.
+        mod.run_parallel_workers = _emulated_workers()
+        mod.fl._exec = _exec_stub()
+        mod.fl._health_status = lambda c: "healthy"
         mod.fl.compose_available = lambda: True
         mod.fl.image_present = lambda ref: True
         mod.fl._bring_up_compose = lambda *a, **k: ({"ps_container": "x", "mode": "compose"}, None)
@@ -1584,6 +2433,13 @@ def main():
     ok &= test_sequential_browsers()
     ok &= test_child_flags()
     ok &= test_slot_labels()
+    ok &= test_cap7_parallel_rows()
+    ok &= test_cap7_sequential_rows()
+    ok &= test_cap7_shell()
+    ok &= test_cap7_lock_barrier()
+    ok &= test_cap7_worker_dispatch()
+    ok &= test_cap7_worker_main_inprocess()
+    ok &= test_cap7_worker_spawn()
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

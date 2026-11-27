@@ -1,0 +1,74 @@
+[
+  {
+    "location": "Design Notes > Confirmation passes (last sentence: \"the contract's 'no further rerun' = no further fallback pass\") vs cell-contract.md > Parallel browsers (CAP-7), bullet 3 (\"When every engine's login fails, or the second login fails too, BO steps stay inconclusive as today, with no further rerun\")",
+    "issue": "The spec reads a contract sentence differently from its literal text. The Approach declares the contract authoritative for every rule it names. The contract was edited for Budi's two other decisions (slot label, rerun of every engine that drove X), but this sentence still says 'no further rerun'. Read literally, it forbids the `rerun-seq` that the spec runs when every login failed and an engine has FO findings. No I/O row covers 'all logins fail + a finding', so no test pins down which reading wins.",
+    "implementation_impact": "An implementer who follows the authoritative contract skips confirmation in that case, so unconfirmed parallel FO findings block, which breaks the honesty law. One who follows the spec contradicts the contract text. Reviewers and tests can't tell which behaviour is correct.",
+    "suggestion": "Reword the contract sentence as was done for the other two decisions, e.g. 'no further BO-login fallback pass; an engine with findings still gets its rerun-seq'. Add an I/O row: both logins fail, chromium has FO finding F → `rerun-seq:chromium` runs, F counts only if it reproduces, BO steps stay inconclusive."
+  },
+  {
+    "location": "Design Notes > Logging (\"the sequential-mode notice and the BO-login fallback go to stderr and the progress log only\"); contract Slots \"logs the fallback\"",
+    "issue": "The progress-log format (ps-flashlight-run.py comment above PROGRESS_HEARTBEAT, run-phases.md token table) defines only the tokens START, ALIVE, SLOW, END and DONE, each tied to a phase or to process end. No token or helper writes a free-text notice. The spec doesn't say which token or phase carries these two notices, and the docs task doesn't add a new token to the run-phases.md table.",
+    "implementation_impact": "The implementer must invent a token (e.g. `NOTE`), misuse a phase (a zero-length START/END), or skip the progress-log write. An undocumented token breaks operators' and the orchestrator's reading of the log (`_log_has_done` parses column 6). A fake phase would also land in the TimingSink.",
+    "suggestion": "Name the mechanism explicitly, e.g. a new token `NOTE <phase-less detail>` written via `fl.progress('NOTE', '', text)`, and add it to the run-phases.md token table with 'informational, never stuck'. Or state that the BO-login fallback is visible only as the `browser:<engine>#2` START line and the sequential notice only as stderr."
+  },
+  {
+    "location": "Tasks > docs (SKILL.md Lapis 4 visual review: \"reads the `screenshots` of the newest line of `<reports>/<module>-e2e-<ver>-<browser>.jsonl`\"; run-phases.md \"Tinjauan visual\" same source)",
+    "issue": "The new instruction has the orchestrator open cell history files directly. That conflicts with two existing doc rules the spec leaves in place. SKILL.md line 28 says Lapis 4 history file names 'diturunkan skrip, tak diketik' (derived by the script, not typed). run-phases.md > Istilah E2E says 'Hasil run dibaca dari plan cakupan-run berikutnya, tak pernah dari histori' (results are read from the next plan, never from history). No script output exposes per-cell screenshot paths: the stdout line has only `appended`, and `--merge-only`'s report view is written only at wrap-up.",
+    "implementation_impact": "The docs writer has to either break the 'never type history names / never read history' rules or invent another source. Orchestrator models given both rules will behave inconsistently, either skipping the review or hand-typing paths.",
+    "suggestion": "Pick one sanctioned source and amend the conflicting sentences: e.g. add a per-cell `screenshots` map (or the screenshot subdir per appended cell) to ps-run-layer's output line, or explicitly carve out 'visual review only: read the newest history line (path from `ps-run-layer.py --help`)' in both SKILL.md and run-phases.md."
+  },
+  {
+    "location": "Design Notes > Snapshot and reset in shell (\"`wait-http` (no response fails the routine ...)\") vs Design Notes > Confirmation passes (\"After the first failed snapshot, health or reset sub-phase ...\"; \"Snapshot, health and reset failures never enter version-level `errors`\") and Always > Reset",
+    "issue": "The shared routine can fail at `wait-http` (no HTTP response after the reset). The consequence rules list only 'snapshot, health or reset' failures. It is unclear whether a `wait-http` failure counts as a reset sub-phase. Does it (a) give `parallel-unconfirmed` / `sequential-reset`, (b) stop all further resets, (c) stay out of version-level `errors` (on first boot the same failure goes into version `errors`), and (d) use what `errors` entry name (`wait-http: ...`)?",
+    "implementation_impact": "The implementer must guess. Putting it in version-level `errors` (as first boot does) would make every cell of the version inconclusive through derive_state, including already-confirmed ones. That is the opposite of 'never enter version-level errors'.",
+    "suggestion": "State that any routine failure (health, reset-db, reset-files, reset-opcache, wait-http with no response) is a routine failure with the same consequences, recorded as `<sub-phase>: <reason>` in cell `errors` only (e.g. `wait-http: no response`)."
+  },
+  {
+    "location": "Tasks > docs (run-phases.md: \"Istilah E2E gains `sequential-reset` and worker `crash` (meaning, infra cause, remediation ...)\"; \"`parallel-unconfirmed` → sequential next run\")",
+    "issue": "`parallel-unconfirmed` is an inconclusive reason, so it is an infra cause. The existing 'Sebab infra per versi V' flow makes the orchestrator ask Budi to fix the environment, or refuse, before the next run that includes V. Yet only `sequential-reset` and `crash` get a meaning/remediation entry. For `parallel-unconfirmed` the docs task says only that the next run is sequential, with no meaning, cause or remediation (e.g. 'just rerun: it is admitted at cost 1 with a reset between engines; check container health / progress log').",
+    "implementation_impact": "The orchestrator prompts Budi to 'fix the environment' with no guidance for this reason, or treats it like `no-slots`. The docs writer must invent the remediation text.",
+    "suggestion": "Add `parallel-unconfirmed` to the Istilah E2E list with the same three parts (meaning, infra cause, remediation: rerun; the next run is forced sequential; check snapshot/reset lines and container health in the progress log)."
+  },
+  {
+    "location": "Boundaries > Honesty law (\"a degraded rerun (launch error, failed BO login) keeps the state Design Notes > Confirmation merge gives it, never passing gate-grade\")",
+    "issue": "The merge rules don't guarantee the 'never passing gate-grade' claim for a rerun whose BO login fails. Steps like `goto`/`expect_no_fatal` are conclusive without login (SESSION_INDEPENDENT_ACTIONS; per-step rule in contract State). If a module's BO steps are only those, a rerun with `bo_authed` false has no inconclusive steps and no browser_notes, so the merged cell can be `pass` and passing gate-grade.",
+    "implementation_impact": "The implementer either leaves the claim false, so a test written from the Honesty-law sentence fails, or adds an unspecified rule to force it (e.g. a browser_note), which diverges from single-engine behaviour and from 'identical findings'.",
+    "suggestion": "Weaken the sentence to 'never passing gate-grade unless every step it left unauthenticated is session-independent, exactly as a single-engine run', or state the extra rule explicitly if Budi wants it."
+  },
+  {
+    "location": "Design Notes > Worker interface (\"Parseable = a JSON object with those keys ... whatever the exit code\" vs \"a worker that exits 143 or by a signal while the version process was not stopped is a `crash`\")",
+    "issue": "The two rules overlap. Take a worker that wrote a valid result and then exited 143 or by signal (e.g. stop_job's direct SIGTERM racing the version process's own, or a stray signal during interpreter exit) while the version process was not stopped. The first rule uses its result; the second makes it a crash.",
+    "implementation_impact": "The implementer must pick a precedence. Tests for 'parseable whatever the exit code' and 'exit 143 → crash' can't both pass for that input.",
+    "suggestion": "State the precedence, e.g. 'a parseable result wins whatever the exit code; the 143/signal → crash rule applies only when no parseable result exists'."
+  },
+  {
+    "location": "Design Notes > Worker interface (\"`fl.progress_attach(path, version)` (no truncate; never `progress_init`)\"; spec.json carries `slow_after`)",
+    "issue": "The new helper's signature has no `slow_after`, yet spec.json passes `slow_after` to the worker. The only setter of `_PROGRESS['slow_after']` is `progress_init`, which the worker must not call. `progress_init(path, slow_after, truncate=False)` already does a non-truncating attach, so the reason for a separate helper is unclear.",
+    "implementation_impact": "The implementer must guess whether `progress_attach` takes `slow_after`, whether the worker pokes `fl._PROGRESS` directly, or whether `slow_after` is ignored. If ignored, the worker's phases use the default threshold even when the operator passed `--slow-after`.",
+    "suggestion": "Define `progress_attach(path, version, slow_after=None)`, or say that workers call `progress_init(path, slow_after, truncate=False)` plus `progress_version(version)`, and drop the 'never progress_init' wording."
+  },
+  {
+    "location": "Design Notes > Worker interface (result `timings: [[name, seconds, outcome], ...]` \"in record order and unsuffixed\"); Tasks > ps-flashlight-run.py",
+    "issue": "`TimingSink` stores only suffixed keys in two dicts (`boot_phases`, `phase_durations`). It keeps no ordered list of unsuffixed events, and the spec doesn't say the worker activates a sink (`timing_activate`). The ps-flashlight-run task lists only `CELL_PHASE_PREFIXES` routing and `progress_attach`, so the capability the result file needs is missing.",
+    "implementation_impact": "The implementer must add an event log to TimingSink or reconstruct order and unsuffixed names from dict keys (fragile). Without a named API, the unit test for 're-recorded in order so suffixes continue' has no defined seam.",
+    "suggestion": "Add to the ps-flashlight-run task: 'TimingSink keeps `events` = [(name, seconds, outcome)] in record order; the worker activates a sink and writes `sink.events` as `timings`'."
+  },
+  {
+    "location": "Boundaries > Always bullet 2 (lockstep barrier) / contract Lockstep",
+    "issue": "The spec doesn't say whether a worker waits at the barrier after its last step, or exits right after writing the last marker. It also doesn't say whether `finished_at` (stamped 'at the end of its `browser:<engine>` phase') includes that final wait.",
+    "implementation_impact": "This changes whether a trailing `barrier-wait:<engine>` appears in `phase_durations`, what `finished_at` and `wall_clock` mean, and what the unit tests assert about barrier entries and worker timings.",
+    "suggestion": "State it, e.g. 'no barrier after the last step: the worker writes its last marker and leaves its browser phase'."
+  },
+  {
+    "location": "Design Notes > Confirmation merge (\"`parallel_only` = `[]` on every driven cell of a parallel-mode version unless filled above, else `null`\") vs Confirmation passes (\"A `crash` or `launch_error` engine ... its partial spans do not count as driven\")",
+    "issue": "'Driven' is used in two senses. ps-plan-layers `_driven` treats a `launch_error` worker as driven, since it recorded `browser:<engine>`. The confirmation rules say a launch_error engine's spans don't count as driven. It is unclear whether a launch_error cell in parallel mode gets `parallel_only: []` or `null`.",
+    "implementation_impact": "This is a guess about a record field that tests and the aggregate's `e2e_cells` expose.",
+    "suggestion": "Say explicitly: `[]` for every cell whose worker left a parseable result (launch_error included), `null` for crash, not-run and probe-dropped cells."
+  },
+  {
+    "location": "Acceptance Criteria 2 / Tasks > live test (\"(b) and (c) ... fail, naming the counted slots, when admission fell back to sequential\"); Verification (\"exit 0 and no SKIPPED line\")",
+    "issue": "The host's Docker daemon is shared: other sessions' and orphan containers count toward `psm.slots`. Live (b) and (c) therefore fail whenever fewer than 2 slots per version are free at admission, which is not a code defect. The done criterion 'passes on every default target version' depends on external daemon load and isn't reproducible.",
+    "implementation_impact": "Whoever implements this can't reliably show AC 2 is met. A red run doesn't separate a CAP-7 bug from a busy daemon, and the fixed rule 'fail, not skip' leaves no clean way to rerun.",
+    "suggestion": "Either check free slots up front (`daemon_slot_usage`) and print `SKIPPED: <n> slots free, need 2` (and let Verification accept that), or state that AC 2 is judged only on an otherwise idle daemon and the test prints the counted containers before starting."
+  }
+]

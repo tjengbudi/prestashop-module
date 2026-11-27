@@ -1,0 +1,141 @@
+{
+ "run_id": "20261127-163748",
+ "round": 5,
+ "complete": true,
+ "lenses": {
+  "adversarial": {
+   "reported": 5,
+   "valid": true,
+   "count": 5
+  },
+  "edge-case": {
+   "reported": 4,
+   "valid": true,
+   "count": 4
+  },
+  "implementer": {
+   "reported": 5,
+   "valid": true,
+   "count": 5
+  }
+ },
+ "invalid": [],
+ "missing": [],
+ "unexpected": [],
+ "findings": [
+  {
+   "id": "adversarial-1",
+   "lens": "adversarial",
+   "location": "Design Notes > Worker interface ('the version process SIGTERMs and reaps its workers in a finally before teardown') vs 'On its own SIGTERM ... waits at most 10 s ... SIGKILLs the rest'",
+   "issue": "Only the stop path has a bound: wait at most 10 s, then SIGKILL. The generic `finally` reap has none. It runs on any other exit while workers are alive, for example an exception while spawning the second worker, merging a result or re-recording timings, a KeyboardInterrupt in a direct run, or a `getppid` race. That reap is a plain SIGTERM-and-wait. A worker that got `JobStopped` 'ignores further SIGTERM', so if its Playwright teardown hangs, nothing ever kills it.",
+   "implementation_impact": "An implementer can write `p.terminate(); p.wait()` in the `finally`. The version process then blocks forever before `_teardown`: the PS container and its `psm.slots` label stay up, ps-run-layer waits on the child with no timeout, and the job hangs until someone runs `--stop-job`. A second implementer may reuse the 10 s bound instead, so the two exit paths behave differently and no test pins either one.",
+   "suggestion": "Define one reap helper for every exit path: SIGTERM the workers still alive, wait at most 10 s in total, SIGKILL the rest, then wait for them. Both the stop path and the generic `finally` call it. Add a unit test in which a stub worker ignores SIGTERM and the version process still reaches teardown in about 10 s."
+  },
+  {
+   "id": "adversarial-2",
+   "lens": "adversarial",
+   "location": "Design Notes > Snapshot and reset in shell ('failure = timeout, exception, non-zero exit or missing sentinel') / Confirmation passes ('sets that phase's END outcome to `<sub-phase>-failed`')",
+   "issue": "The spec gives the END outcome only for the enclosing `rerun-seq:<engine>` phase. It never says what a failing sub-phase records for itself in `boot_phases` (`snapshot-db`, `reset-db`, `reset-files`, `reset-opcache`, or `wait-http#n` with no response). `fl.phase.__exit__` records `ok` unless `ph.status` is set or an exception escapes the `with` block. A non-zero `_exec` exit, a missing sentinel, or a `TimeoutExpired` caught inside the block therefore records `{outcome: 'ok'}`. In parallel mode, when the snapshot fails and no engine needs a pass, that outcome is the only trace of the failure in the record.",
+   "implementation_impact": "`boot_phases` can claim `snapshot-db: ok` or `reset-db: ok` for a step that failed, and the progress log shows `END reset-db ok` right before a `parallel-unconfirmed` verdict. Tests for the Unconfirmable and Sequential reset fails rows cannot pin the value, so implementers will pick different strings (`ok`, `failed`, `error(...)`, `timeout`).",
+   "suggestion": "State that each failing sub-phase sets its own END outcome: `timeout` on TimeoutExpired, otherwise a fixed `failed` (or `<reason>`), and for `wait-http` `no-response`. Add these outcomes to the Unconfirmable, Sequential reset fails and snapshot-failure unit assertions on `boot_phases`."
+  },
+  {
+   "id": "adversarial-3",
+   "lens": "adversarial",
+   "location": "Design Notes > Phases ('`{browser}` = `<engine>-seq` comes from a separate `ctx['browser_token']` ... Sequential passes also set `ctx['screenshot_dir']` ...; the sequential fallback keeps today's `<shots>/<ver>`') and Tasks > docs (quickstart: '`{browser}` = `<engine>-seq` in sequential passes')",
+   "issue": "The spec says which passes use the `<engine>-seq` screenshot dir, but not which passes set `browser_token`. The sequential fallback is contrasted only on the screenshot dir. Its later engines run after the same shared reset routine as a confirmation pass, so 'post-reset pass → `-seq` token' is a plausible reading. The quickstart line 'in sequential passes' will be read by module authors who know `--sequential-browsers` as covering that mode too.",
+   "implementation_impact": "One implementer sets `browser_token` on every in-process pass that follows a reset, including the sequential fallback's later engines; another sets it only on `rerun-seq` and BO-login fallback passes. Specs that build data names from `{browser}` then produce different data and expected text depending on the slot-admission mode, which affects the Identical findings comparison, and the docs promise a behaviour the code may not have.",
+   "suggestion": "Add one sentence: `browser_token` is set only for `rerun-seq` and BO-login fallback passes; the lockstep worker pass, single-engine runs and every engine of the sequential fallback expand `{browser}` to the bare engine name. In the quickstart, write 'in the confirmation passes after a parallel run (`rerun-seq`, BO-login fallback)' instead of 'in sequential passes'."
+  },
+  {
+   "id": "adversarial-4",
+   "lens": "adversarial",
+   "location": "Design Notes > Worker interface ('Workers check `os.getppid()` in the lock and barrier polls and exit when the parent is gone') and the spec.json schema",
+   "issue": "spec.json carries no parent PID, so the spec gives nothing to compare `os.getppid()` against. The obvious shortcut, `getppid() == 1`, is wrong whenever a child subreaper exists, for example a systemd user manager, a process supervisor, or tini/dumb-init in a dev container. An orphan is then reparented to the subreaper's PID, not 1. The spec also doesn't say whether a worker that detects parent death writes a result, or with what exit code it exits.",
+   "implementation_impact": "With the `== 1` check, an orphaned worker whose version process was SIGKILLed never notices. It polls `lock-wait` or `barrier-wait` forever, since neither has a timeout, and keeps a live Playwright browser and a holder marker. That is exactly the leak this check exists to prevent.",
+   "suggestion": "Add `parent_pid` to spec.json, written by the version process as `os.getpid()`. A worker treats `os.getppid() != parent_pid` as parent gone, removes its holder marker best-effort, writes no result and exits with a fixed code (e.g. 1). Add a unit test that kills the version-process stub and checks that the worker exits within a few `LOCKSTEP_POLL`s."
+  },
+  {
+   "id": "adversarial-5",
+   "lens": "adversarial",
+   "location": "Tasks & Acceptance > tests ('lock and barrier with real `flock`/files across threads') vs Design Notes > Worker interface (worker calls `fl.progress_attach`, `job_register`, `timing_activate`)",
+   "issue": "The worker's lock-wait and barrier-wait phases go through process-global state: `fl.phase` records into `_TIMING['sink']`, a single global that `timing_activate()` replaces, and it also uses `_PROGRESS` and `_JOB`. `job_register` installs a SIGTERM handler, which raises ValueError outside the main thread and is swallowed. Two simulated workers running as threads in one process therefore share one timing sink, so the second `timing_activate()` discards the first thread's sink. The spec doesn't say what the threaded test exercises: the worker entry point, or lower-level lock and barrier helpers that take explicit paths and a sink.",
+   "implementation_impact": "A test that runs the worker main in two threads gets mixed or lost `lock-wait:<engine>` and `barrier-wait:<engine>` timings and a shared progress version. It becomes flaky, or the implementer bends the production code to fit the test, for example per-thread sinks that the real process path never uses. The spec's phase-timing claims (suffixes per engine, `TimingSink.events` order) are then not covered by any deterministic test.",
+   "suggestion": "Name the seam. Lock acquire/release and barrier wait become helpers such as `_scenario_lock(lock_path, holders_dir, engine, exclusive, parent_pid)` and `_barrier(step_dir, engine, engines, k, parent_pid)`, with no global sink or progress dependence, plus a thin wrapper that opens the `fl.phase`. Only these helpers run across threads. Phase recording and `timings` re-recording are covered by the single real stub-worker subprocess test."
+  },
+  {
+   "id": "edge-case-1",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap7-parallel-browsers.md:94 (Design Notes > Snapshot and reset in shell: listing snippet, reset-files)",
+   "issue": "The snapshot/reset scripts use $MOD_NAME (find prune, rm -rf modules/$MOD_NAME, cp -r ... modules/$MOD_NAME), but the spec never says the fl._exec calls pass MOD_NAME in env. The spec says only one fl._exec with timeout --timeout. Install passes {\"MOD_NAME\": mod_name}, but Layer 5's DB_PRELUDE helper (_sh) passes {}.",
+   "implementation_impact": "If MOD_NAME is empty, reset-files runs rm -rf modules/ and then cp -r /ps-module-src modules/, which wipes every module. The rerun then reports false failures that count as confirmed blocking findings (fail, exit 3). The snapshot listing also covers all of modules/.",
+   "suggestion": "State that every snapshot/reset fl._exec gets env {\"MOD_NAME\": mod_name}, and that each script starts with : \"${MOD_NAME:?}\" so an empty name fails that sub-phase (its <sub-phase>: reason entry) before any rm runs; add a unit test asserting the env passed to the stubbed _exec."
+  },
+  {
+   "id": "edge-case-2",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap7-parallel-browsers.md:91 (Design Notes > Confirmation merge: version-level legacy fields rebuilt from the final cells)",
+   "issue": "Legacy pass = no findings and no parallel-unconfirmed cell. This holds even when browsers is empty: every worker crashed, the sequential fallback's snapshot failed (all cells sequential-reset), or the boot or install failed with version-level errors (no cell driven). Today these paths leave pass false (the res default, with an early return). skipped_browser covers only the all-launch_error case.",
+   "implementation_impact": "A version that tested nothing reports pass: true with browsers: [] and skipped_browser: false. Any consumer of the legacy fields (direct-run JSON, _AND_KEYS merge) then reads it as passing.",
+   "suggestion": "Define pass = bool(browsers) and no version-level errors and no findings and no parallel-unconfirmed cell. Say whether the rebuild also runs on early-return paths (boot/install/wait-http errors) or those keep pass false. Add an I/O row: all workers crash -> pass false, browsers []."
+  },
+  {
+   "id": "edge-case-3",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap7-parallel-browsers.md:29,94 (shared reset routine: wait-http and warmup-bo after reset; health check)",
+   "issue": "The spec bounds snapshot-db, reset-db, reset-files and reset-opcache by --timeout. It gives no timeout and no target for the reset routine's wait-http and warmup-bo: the first boot uses --startup-timeout with the FO / and BO AdminLogin URLs. It also never says how long the one-shot health check may wait on a slow docker inspect.",
+   "implementation_impact": "Implementers may pick --timeout (600 s), --startup-timeout (180 s) or a new value. A slow post-reset shop then passes or fails the routine (parallel-unconfirmed vs confirmed) depending on that choice, and unit tests cannot pin the behavior.",
+   "suggestion": "State: post-reset wait-http and warmup-bo call the same helpers as first boot with --startup-timeout and the same FO/BO URLs; the health check is one _health_status call with its existing docker timeout."
+  },
+  {
+   "id": "edge-case-4",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap7-parallel-browsers.md:77 (tests/live/test-cap7-live.py: PSM_LIVE_VERSIONS may narrow the versions)",
+   "issue": "No handling is given for a PSM_LIVE_VERSIONS value that is empty or whitespace, names a version outside the default target versions, or names one whose default-tag image is missing locally.",
+   "implementation_impact": "The suite can silently test nothing and exit 0 with no SKIPPED line, or crash with a traceback. The Verification step (exit 0, no SKIPPED) can then pass without any version exercised.",
+   "suggestion": "Specify: parse as a comma list, trim, drop empties; an unknown version, or an empty result after filtering, is a test failure (exit 1) naming the value; a listed version whose image is missing gives one SKIPPED: <reason> line like the other missing images."
+  },
+  {
+   "id": "implementer-1",
+   "lens": "implementer",
+   "location": "Design Notes > Confirmation merge (last sentences: legacy fields rebuilt from the final cells; `pass` = no findings and no `parallel-unconfirmed` cell; `skipped_browser` = every engine's cell has `launch_error`)",
+   "issue": "If you apply the formula as written, a version where no engine was tested still reports `pass: true`. Three cases hit this: (a) every worker crashes or cannot be spawned; (b) the sequential-fallback snapshot fails, so every cell is `sequential-reset`; (c) every engine has a `launch_error`. In each case `browsers` is [] and findings are empty, so `pass` = true. In (a) and (b), `skipped_browser` is also false, because crash and sequential-reset cells have `launch_error` null. Today's code is different: `_run_one_version_inner` returns `pass: false` and `skipped_browser: true` when `res[\"browsers\"]` is empty. So this is also a regression for case (c). The bullet also does not say whether the rebuild covers the sequential-fallback and single-engine modes. It sits in the parallel-mode merge note, yet sequential-reset cells only exist in the sequential fallback. Today's code there gives `pass: true` when chromium passes and firefox is sequential-reset, and leaves no legacy note.",
+   "implementation_impact": "The implementer either follows the formula and ships a direct-run output that says pass for an untested version, against the honesty law. Or they keep today's early return and contradict the spec. They also have to guess whether the rebuild runs in every mode. The direct-run exit code stays correct (1), but `versions[ver].pass` and top-level `pass` become wrong. These are the fields the quickstart TDD loop shows to the operator.",
+   "suggestion": "Define the rule for all modes: `pass` = at least one engine in `browsers` AND no findings AND no `parallel-unconfirmed`, `sequential-reset` or `crash` cell. Keep `skipped_browser` = true when `browsers` is empty (today's semantics), or state the new meaning explicitly. Add a unit check for case (a) and for the snapshot-failure case of the sequential fallback."
+  },
+  {
+   "id": "implementer-2",
+   "lens": "implementer",
+   "location": "Design Notes > Snapshot and reset in shell (failure = timeout, exception, non-zero exit or missing sentinel) and Phases/Confirmation passes (END outcome specified only for `rerun-seq:<engine>`); Tasks > docs (run-phases.md remediation reads the `snapshot-db`/`reset-*`/`rerun-seq:` END lines)",
+   "issue": "The spec does not give the END outcome, or the `boot_phases` outcome, of a `snapshot-db`, `reset-db`, `reset-files` or `reset-opcache` phase that fails without raising. A non-zero exit or a missing `PSM_*_OK` sentinel comes back as a normal `CompletedProcess`. `fl.phase.__exit__` then writes `END ok` and records outcome `ok` unless the code sets `ph.status`, and the spec never asks for that. The same gap applies to the reset routine's `wait-http` when there is no response. Today's first-boot `wait-http` also ends `ok` whether or not it got a response. Only the wrapping `rerun-seq:<engine>` gets `<sub-phase>-failed`. The BO-login fallback and the sequential fallback have no wrapping phase at all.",
+   "implementation_impact": "Operators are told to diagnose `parallel-unconfirmed` and `sequential-reset` from these END lines. Those lines could read `ok` while the cell says the same sub-phase failed. The same holds for the timing report built from `boot_phases`. Each implementer picks a token (e.g. `failed`, `error(...)`, `<sub-phase>-failed`), and tests on the 'Unconfirmable' and 'Sequential reset fails' rows cannot assert one.",
+   "suggestion": "State that every failing sub-phase sets its own `ph.status` to a fixed token, e.g. `failed` (keep `timeout` for timeouts), so its END line and `boot_phases[<name>].outcome` show the failure. The reset routine's `wait-http` should do the same when there is no response. Add this to the I/O rows 'Unconfirmable' and 'Sequential reset fails'."
+  },
+  {
+   "id": "implementer-3",
+   "lens": "implementer",
+   "location": "Design Notes > Confirmation passes ('After the first failure of the snapshot or of any reset-routine sub-phase … that engine and every later engine needing a pass get `parallel-unconfirmed` … inside `rerun-seq:<engine>`, sets that phase's END outcome … a later engine skipped for it opens no phase'); I/O matrix",
+   "issue": "The text is written for a failure that happens inside an engine's pass, and leaves the parallel-mode snapshot failure undefined. That failure happens before any worker runs. (1) It does not say outright that the lockstep pass still runs after `snapshot-db` fails. Slots says the sequential fallback then drives no engine at all, so the opposite reading is plausible. (2) Once workers finish, it is unclear whether the first engine needing a pass is 'that engine'. If it is, does it open `rerun-seq:<engine>` with END `snapshot-db-failed`? Or is it 'skipped' and opens no phase? That decides whether its `phase_durations` holds a `rerun-seq:` entry. (3) It is unclear when the `errors` entry is printed to stderr: at snapshot time, when the first engine needs a pass, or not at all when no engine needs one. No I/O row covers a parallel-mode snapshot failure.",
+   "implementation_impact": "Two reasonable implementations give different `phase_durations`, progress-log lines and stderr for the same run, and 'test every I/O row' never checks either. An implementer who reads Slots by analogy might stop the parallel version after a snapshot failure and lose evidence for engines that needed no confirmation.",
+   "suggestion": "Add one sentence and one I/O row. Example: 'In parallel mode a `snapshot-db` failure does not stop the lockstep pass; its `errors` entry is printed once at snapshot time; no engine opens `rerun-seq:`; every engine needing a pass gets `parallel-unconfirmed` with `snapshot-db: <reason>` in cell `errors`; engines needing none keep their parallel result.'"
+  },
+  {
+   "id": "implementer-4",
+   "lens": "implementer",
+   "location": "Acceptance Criteria 1 (unit: 'the real stub-worker spawn test … max(started_at) < min(finished_at) (worker-stamped)'); Tasks > tests ('the worker spawn path once with a real stub worker subprocess'; 'workers spawned through the seam')",
+   "issue": "A subprocess does not inherit the test's monkeypatches, so the spec has to say how a 'real stub worker' gets a stubbed drive. It names no mechanism (env var, injectable command list, stub-module path) and no seam. If the stub is a separate script launched through a command seam, the real `--engine-worker` code is never run as a subprocess. That code covers argv dispatch before `run_main_with_progress`, `progress_attach`, `job_register`, the `started_at`/`finished_at` stamping inside `browser:<engine>`, and the atomic result write. AC1's 'worker-stamped' overlap would then prove a property of the stub. If the stub is the real worker with an injected drive, the spec does not say how the injection reaches the child process.",
+   "implementation_impact": "The implementer invents a test-only injection path in production code, or tests a stand-in script. Either way the AC1 unit leg can pass while the real worker never stamps, writes its result, or registers correctly. Those defects would surface only in the live suite.",
+   "suggestion": "Name the seam and the injection. For example: `WORKER_CMD` (list prefix, default `[sys.executable, __file__]`), plus a worker-only env var such as `PSM_E2E_WORKER_STUB=<path to a module exposing drive_engine>`, which the `--engine-worker` path loads in place of Playwright. State that AC1's unit leg runs the real `ps-e2e-run.py --engine-worker` with that stub, so stamping, result writing and registration are exercised."
+  },
+  {
+   "id": "implementer-5",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Runner (forced cost 1 for `parallel-unconfirmed` history); Design Notes > Logging (the `--sequential-browsers` stderr text drops 'admisi interim cost 1')",
+   "issue": "A version can now run sequentially for two reasons: free slots were short, or its history holds `parallel-unconfirmed`. Neither ps-run-layer nor the child is told to record which one. The child sees only `--sequential-browsers`. Its notice no longer says why, and the CAP-3 wording that told it apart from slot shortage is dropped. The spec does not ask ps-run-layer to log the forced admission in its stderr or in the version's progress log.",
+   "implementation_impact": "An operator sees a version drive its browsers one after another while slots were free, with nothing in stderr or the progress log to explain it. Live tests (b) and (c) must fail 'naming the counted slots' when admission fell back. When the cause is history, the slot count is the wrong explanation, and the test cannot tell the two causes apart.",
+   "suggestion": "Have ps-run-layer log the admission decision per version: cost, mode and reason (`slots` or `parallel-unconfirmed history: <ver>:<browser>`). Write it to stderr and as the detail of the `END wait-slots` line, and let the live test report that reason."
+  }
+ ],
+ "duplicates_removed": [],
+ "clusters": []
+}

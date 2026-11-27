@@ -332,6 +332,15 @@ def progress_version(full_ver):
     _PROGRESS["version"] = full_ver or "-"
 
 
+def progress_attach(path, version, slow_after=None):
+    """Sambung ke log kemajuan yang SUDAH dibuka proses lain (worker engine ps-e2e-run, CAP-7):
+    set path, versi, dan ambang SLOW — TANPA mengosongkan file. Bukan progress_init: hanya
+    proses versi yang membuka (dan menutup dgn DONE) log-nya. None = nonaktif."""
+    _PROGRESS["path"] = Path(path) if path else None
+    _PROGRESS["version"] = version or "-"
+    _PROGRESS["slow_after"] = slow_after
+
+
 def progress_line(version, token, phase_name="", detail=""):
     """Satu baris log kemajuan (tanpa newline) — format kontrak di komentar di atas."""
     parts = [datetime.now().isoformat(timespec="seconds"), f"job={_JOB['id'] or '-'}",
@@ -444,7 +453,11 @@ class wait_phase:
 # Fase `browser:<engine>` masuk ke phase_durations engine itu, selainnya ke boot_phases;
 # fase yang berulang dalam satu sink diberi akhiran `#2`, `#3`, ... (mis. `pull#2` utk
 # image DB, `bring-up#2` sesudah retry port).
+# CELL_PHASE_PREFIX tetap `browser:` saja: ps-plan-layers `_driven` membacanya — hanya
+# `browser:<engine>` yang menandai sel ter-drive. CELL_PHASE_PREFIXES = semua fase milik SEL
+# (cell-contract.md > Phase timings, CAP-7): ikut ke phase_durations[<engine>], bukan boot_phases.
 CELL_PHASE_PREFIX = "browser:"
+CELL_PHASE_PREFIXES = (CELL_PHASE_PREFIX, "lock-wait:", "barrier-wait:", "rerun-seq:")
 _TIMING = {"sink": None}
 _TIMING_LOCK = threading.Lock()
 
@@ -453,12 +466,17 @@ class TimingSink:
     """Penampung durasi fase satu boot: `boot_phases` + `phase_durations[<engine>]`.
 
     Tiap entri = {"seconds": float (monotonic, 3 desimal), "outcome": status END}.
-    Fase yang tak terjadi tak pernah muncul (bukan 0).
+    Fase yang tak terjadi tak pernah muncul (bukan 0). Fase berawalan CELL_PHASE_PREFIXES
+    (`browser:`, `lock-wait:`, `barrier-wait:`, `rerun-seq:`) masuk ke phase_durations engine
+    yang namanya mengikuti awalan itu. `events` = [(nama, detik, outcome)] TANPA akhiran, urut
+    catat — worker engine (ps-e2e-run CAP-7) mengirimnya ke proses versi, yang mencatat ulang
+    ke sink-nya sendiri sehingga akhiran #n berlanjut di sana.
     """
 
     def __init__(self):
         self.boot_phases = {}
         self.phase_durations = {}
+        self.events = []
         self._counts = {}
 
     def record(self, name, seconds, outcome):
@@ -466,9 +484,12 @@ class TimingSink:
             n = self._counts.get(name, 0) + 1
             self._counts[name] = n
             key = name if n == 1 else f"{name}#{n}"
-            entry = {"seconds": round(float(seconds), 3), "outcome": outcome}
-            if name.startswith(CELL_PHASE_PREFIX):
-                engine = name[len(CELL_PHASE_PREFIX):]
+            secs = round(float(seconds), 3)
+            entry = {"seconds": secs, "outcome": outcome}
+            self.events.append((name, secs, outcome))
+            prefix = next((p for p in CELL_PHASE_PREFIXES if name.startswith(p)), None)
+            if prefix is not None:
+                engine = name[len(prefix):]
                 self.phase_durations.setdefault(engine, {})[key] = entry
             else:
                 self.boot_phases[key] = entry

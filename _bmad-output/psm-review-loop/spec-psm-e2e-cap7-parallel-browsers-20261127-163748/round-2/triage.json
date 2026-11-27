@@ -1,0 +1,43 @@
+{
+ "round": 2,
+ "critical_high": 30,
+ "fixed": 30,
+ "escalated": 0,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [],
+ "medium_low": [
+  {
+   "location": "Tasks > live test (c)",
+   "issue": "adversarial-5: no live check that FO-only spans of the two engines overlap (concurrency proven only by stubs); adding one expands the contract's live tests"
+  },
+  {
+   "location": "Tasks > live tests / Design Notes > Snapshot and reset",
+   "issue": "adversarial-6: no live check that the reset actually restores DB and docroot (sentinel row/file); test addition beyond contract"
+  },
+  {
+   "location": "Design Notes > Confirmation passes",
+   "issue": "adversarial-7: parallel crash/launch-error gets no sequential retry and does not force cost-1 admission next run; needs a contract change"
+  },
+  {
+   "location": "Design Notes > Confirmation merge",
+   "issue": "adversarial-8: inconclusive union keeps parallel-only inconclusive steps the rerun evaluated conclusively; contract says rerun's are added (contract change)"
+  },
+  {
+   "location": "Design Notes > Snapshot and reset (reset-files fresh module copy)",
+   "issue": "adversarial-9: files a module writes into its own dir at install are lost by the fresh copy, risking false rerun failures; contract rule, change would be Ask First"
+  },
+  {
+   "location": "Design Notes > Phases / SKILL.md Pantau run Docker",
+   "issue": "adversarial-11 + implementer-16 (SLOW part): rerun-seq and lockstep browser:<engine> (including waits) can emit SLOW after 180 s; consider a phase threshold or doc note"
+  },
+  {
+   "location": "Always > Reset (sequential fallback)",
+   "issue": "adversarial-13: reset before a later engine even when the earlier engine drove nothing (launch error); optimization beyond contract"
+  },
+  {
+   "location": "Design Notes > sequential passes",
+   "issue": "edge-case-8: unexpected exception outside drive_engine's catches (sync_playwright start, merge) is not confined per engine; same risk as today's sequential loop"
+  }
+ ]
+}

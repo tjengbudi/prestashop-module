@@ -1,0 +1,7 @@
+{"round": 4, "critical_high": 13, "fixed": 13, "escalated": 0, "dropped": 0, "code_defects": 0,
+ "questions_for_budi": [],
+ "medium_low": [
+  {"location": "Design Notes > Confirmation merge (BO-login fallback)", "issue": "A discarded first-pass finding not reproduced by the fallback pass is dropped (contract: only the fallback pass counts) while still forcing sibling reruns; spec is explicit, a trace in parallel_only would be a contract change."},
+  {"location": "ps-run-layer _on_reaped keep on crash", "issue": "Child-set worker crash cells (reason crash) also trigger keeping the tmp dir with the 'DIPERTAHANKAN untuk diagnosis' message; harmless, could be narrowed to ps-run-layer-written crash records."},
+  {"location": "Boundaries > Never (frozen): 'reset routine is written so CAP-5 can reuse it'", "issue": "Untestable guidance; naming a CAP-5 seam (snapshot paths, copy_module, tail flags) would expand scope into CAP-5."}
+ ]}

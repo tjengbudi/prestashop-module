@@ -1,0 +1,94 @@
+{
+ "round": 1,
+ "critical_high": 28,
+ "fixed": 26,
+ "escalated": 2,
+ "dropped": 1,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261127-163748.r1-q1",
+   "finding": "Run langsung ps-e2e-run.py dua engine kini paralel, tapi --slot-cost default 1 (kontrak: '1 bila absen'). Cap slot sedaemon (SPEC: termasuk browser CAP-7) jadi kurang hitung.",
+   "options": [
+    "Run paralel tanpa --slot-cost mencap n (ubah kontrak + uji Labels)",
+    "Tetap 1, catat sebagai pengecualian di docs",
+    "Run langsung tanpa --slot-cost tetap berurutan"
+   ],
+   "recommended": "Run paralel tanpa --slot-cost mencap n (ubah kontrak + uji Labels)",
+   "oscillation": false
+  },
+  {
+   "id": "20261127-163748.r1-q2",
+   "finding": "Dalam satu step lockstep, engine kedua menjalankan skenario BO yang sama sesudah engine pertama mengubah state toko. Kegagalan yang hanya muncul di state segar bisa tertutup di engine kedua dan tak pernah di-rerun, jadi temuan tak dijamin identik dengan satu run dingin per engine.",
+   "options": [
+    "Terima, catat sebagai risiko sisa (data unik {browser})",
+    "Ubah kontrak: bila satu engine punya temuan di skenario X, semua engine di-rerun",
+    "Tambah fixture live yang hanya gagal di state segar"
+   ],
+   "recommended": "Ubah kontrak: bila satu engine punya temuan di skenario X, semua engine di-rerun",
+   "oscillation": false
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "Acceptance Criteria 1",
+   "issue": "no criterion that parallel mode saves time; failure-path cost (reset + rerun) not recorded (adversarial-12)"
+  },
+  {
+   "location": "Always > Runner (parallel-unconfirmed forcing)",
+   "issue": "forcing lapses once a not-run/sequential-reset record becomes newest; could alternate parallel/sequential (adversarial-14; contract rule)"
+  },
+  {
+   "location": "Design Notes > Confirmation merge",
+   "issue": "a later engine's wall_clock includes waiting for earlier engines' passes (adversarial-17)"
+  },
+  {
+   "location": "Always > lock (_bo_login outside lock)",
+   "issue": "engine B's login can overlap A's BO scenario; live test (a) does not cover it (adversarial-18)"
+  },
+  {
+   "location": "Design Notes > Confirmation passes (health)",
+   "issue": "one-shot _health_status: a transient 'unknown' makes the cell parallel-unconfirmed (edge-case-16)"
+  },
+  {
+   "location": "Design Notes > reset-files",
+   "issue": "docroot files deleted during a pass are not restored; only 'modified' is documented (edge-case-18)"
+  },
+  {
+   "location": "Design Notes > scenario_spans",
+   "issue": "spans keyed by scenario name; duplicate names overwrite (edge-case-21, implementer-28)"
+  },
+  {
+   "location": "Always > lock/barrier",
+   "issue": "OSError creating lock file/step dir and stale lock files after SIGKILL unspecified (edge-case-25)"
+  },
+  {
+   "location": "Always > Child (workers)",
+   "issue": "no wall-clock bound on a hung worker (edge-case-26; scope)"
+  },
+  {
+   "location": "Always > Runner (history read)",
+   "issue": "unreadable/corrupt history at admission and n == 1 forced admission unspecified (edge-case-27, implementer-22)"
+  },
+  {
+   "location": "Always > lock/barrier",
+   "issue": "poll interval constant not named (implementer-7)"
+  },
+  {
+   "location": "Tasks > unit tests",
+   "issue": "no named seam (e.g. WORKER_CMD) for the stub worker subprocess (implementer-16)"
+  },
+  {
+   "location": "Tasks > live test",
+   "issue": "harness details: (a) boot path, PEP723 deps, session/tier/config/reports dir for (b), scope of the mismatch retry (implementer-17)"
+  },
+  {
+   "location": "Always > Reset",
+   "issue": "not stated that reset passes keep boot: cold and the same boot_id (implementer-21)"
+  },
+  {
+   "location": "Always > Child (screenshots)",
+   "issue": "screenshot dir for single-engine/sequential-fallback modes and discarded first-pass images unspecified (implementer-26)"
+  }
+ ]
+}

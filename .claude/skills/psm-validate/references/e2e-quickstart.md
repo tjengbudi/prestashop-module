@@ -69,6 +69,9 @@ cat > <module>/tests/e2e/configure.json <<'JSON'
 JSON
 
 # (b) drive → RED: assertion gagal → temuan → versi FAIL
+#     Dua engine di run langsung = mode paralel (satu worker per engine dalam satu boot,
+#     temuan dikonfirmasi ulang sekuensial) dan memakan 2 slot sedaemon (label psm.slots=2);
+#     --sequential-browsers = berurutan, 1 slot.
 uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium,firefox \
   --allow-image-pull -o e2e.json
 
@@ -110,7 +113,8 @@ Satu file = satu skenario `{ "name", "steps":[...] }`. Aksi yang didukung:
 | `screenshot` | — | ambil screenshot manual (butuh `--screenshot-dir`) |
 
 Placeholder yang disubstitusi di `path`/`url`/`text`/`value`: `{mod}` `{fo}` `{bo}` `{browser}`
-(`{browser}` = nama engine aktif — pakai untuk nama data unik per-browser).
+(`{browser}` = nama engine aktif — pakai untuk nama data unik per-browser; hanya di pass
+konfirmasi sesudah run paralel — `rerun-seq` dan fallback login BO — nilainya `<engine>-seq`).
 
 **Yang dihitung sebagai cakupan uji perilaku: aksi `expect_*` saja.** `goto`/`click`/`fill`/
 `screenshot` menggerakkan browser tapi tak menyatakan benar/salah — `click` cuma membuktikan
@@ -150,7 +154,9 @@ Assertion lolos ≠ tampilan benar ≠ tak ada error di browser. Tiga alat, semu
 uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium \
   --screenshot-dir ./e2e-shots -o e2e.json
 #   -> ./e2e-shots/run-<YYYYMMDD-HHMMSS>/9.1/chromium-<scenario>-*.png ; path juga di JSON
-#      (per-versi "screenshots"; top-level "screenshot_dir" = folder run ini). Subfolder
+#      (per-versi "screenshots"; top-level "screenshot_dir" = folder run ini). Mode paralel
+#      (>= 2 engine) per engine: …/9.1/<engine>/<engine>-<scenario>-*.png, pass konfirmasi di
+#      …/9.1/<engine>-seq/ ("screenshots" sel = milik pass yang dihitung). Subfolder
 #      per-run: nama file deterministik, jadi tanpa pemisahan ini PNG run lama menumpuk di
 #      folder yang sama & bisa terbaca sebagai bukti run sekarang.
 
@@ -204,9 +210,13 @@ agregat (SKILL.md > Lapis 4). Aturan menulisnya (berlaku untuk kedua file):
 - **Login BO flaky di cold-container 1.7.8/8.1.** POST+redirect kadang tak selesai saat
   container dingin — skrip sudah warm-up BO sebelum men-drive dan me-retry login sekali;
   bila tetap gagal, langkah BO jatuh ke inconclusive (jujur) → ulangi run, container hangat stabil.
-- **DB bersama antar-browser.** Browser-browser berbagi satu container/DB per versi →
-  skenario yang membuat data menghasilkan duplikat saat browser kedua jalan. Beri nama
-  data ber-placeholder `{browser}` supaya unik per-engine, atau assertion yang toleran duplikat.
+- **DB bersama antar-browser.** Browser-browser berbagi satu container/DB per versi. Mode
+  paralel maju lockstep per skenario (step k+1 baru mulai setelah semua engine selesai step k)
+  dan pass konfirmasi/fallback sekuensial mulai dari reset ke snapshot, jadi perubahan satu
+  skenario tak bocor ke step sebelumnya engine lain — tapi **di dalam satu step** engine-engine
+  menjalankan skenario yang sama atas DB yang sama (skenario FO-only bahkan serentak), jadi
+  skenario yang membuat data tetap bisa menghasilkan duplikat. Beri nama data ber-placeholder
+  `{browser}` supaya unik per-engine, atau assertion yang toleran duplikat.
 - **Jangan percaya `overall pass` saja.** Cek: (1) `scenario_sources` memuat semua skenario
   yang diharapkan — tanpa spec authored, `e2e_smoke_only` true & `ready` jatuh (hanya terbukti
   "shop tak rusak"); (2) `scenario_notes` kosong (isi = spec dilewati: aksi tak dikenal/JSON

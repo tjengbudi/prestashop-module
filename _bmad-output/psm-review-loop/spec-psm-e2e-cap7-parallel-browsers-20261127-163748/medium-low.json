@@ -1,0 +1,192 @@
+[
+ {
+  "round": 1,
+  "location": "Acceptance Criteria 1",
+  "issue": "no criterion that parallel mode saves time; failure-path cost (reset + rerun) not recorded (adversarial-12)"
+ },
+ {
+  "round": 1,
+  "location": "Always > Runner (parallel-unconfirmed forcing)",
+  "issue": "forcing lapses once a not-run/sequential-reset record becomes newest; could alternate parallel/sequential (adversarial-14; contract rule)"
+ },
+ {
+  "round": 1,
+  "location": "Design Notes > Confirmation merge",
+  "issue": "a later engine's wall_clock includes waiting for earlier engines' passes (adversarial-17)"
+ },
+ {
+  "round": 1,
+  "location": "Always > lock (_bo_login outside lock)",
+  "issue": "engine B's login can overlap A's BO scenario; live test (a) does not cover it (adversarial-18)"
+ },
+ {
+  "round": 1,
+  "location": "Design Notes > Confirmation passes (health)",
+  "issue": "one-shot _health_status: a transient 'unknown' makes the cell parallel-unconfirmed (edge-case-16)"
+ },
+ {
+  "round": 1,
+  "location": "Design Notes > reset-files",
+  "issue": "docroot files deleted during a pass are not restored; only 'modified' is documented (edge-case-18)"
+ },
+ {
+  "round": 1,
+  "location": "Design Notes > scenario_spans",
+  "issue": "spans keyed by scenario name; duplicate names overwrite (edge-case-21, implementer-28)"
+ },
+ {
+  "round": 1,
+  "location": "Always > lock/barrier",
+  "issue": "OSError creating lock file/step dir and stale lock files after SIGKILL unspecified (edge-case-25)"
+ },
+ {
+  "round": 1,
+  "location": "Always > Child (workers)",
+  "issue": "no wall-clock bound on a hung worker (edge-case-26; scope)"
+ },
+ {
+  "round": 1,
+  "location": "Always > Runner (history read)",
+  "issue": "unreadable/corrupt history at admission and n == 1 forced admission unspecified (edge-case-27, implementer-22)"
+ },
+ {
+  "round": 1,
+  "location": "Always > lock/barrier",
+  "issue": "poll interval constant not named (implementer-7)"
+ },
+ {
+  "round": 1,
+  "location": "Tasks > unit tests",
+  "issue": "no named seam (e.g. WORKER_CMD) for the stub worker subprocess (implementer-16)"
+ },
+ {
+  "round": 1,
+  "location": "Tasks > live test",
+  "issue": "harness details: (a) boot path, PEP723 deps, session/tier/config/reports dir for (b), scope of the mismatch retry (implementer-17)"
+ },
+ {
+  "round": 1,
+  "location": "Always > Reset",
+  "issue": "not stated that reset passes keep boot: cold and the same boot_id (implementer-21)"
+ },
+ {
+  "round": 1,
+  "location": "Always > Child (screenshots)",
+  "issue": "screenshot dir for single-engine/sequential-fallback modes and discarded first-pass images unspecified (implementer-26)"
+ },
+ {
+  "round": 2,
+  "location": "Tasks > live test (c)",
+  "issue": "adversarial-5: no live check that FO-only spans of the two engines overlap (concurrency proven only by stubs); adding one expands the contract's live tests"
+ },
+ {
+  "round": 2,
+  "location": "Tasks > live tests / Design Notes > Snapshot and reset",
+  "issue": "adversarial-6: no live check that the reset actually restores DB and docroot (sentinel row/file); test addition beyond contract"
+ },
+ {
+  "round": 2,
+  "location": "Design Notes > Confirmation passes",
+  "issue": "adversarial-7: parallel crash/launch-error gets no sequential retry and does not force cost-1 admission next run; needs a contract change"
+ },
+ {
+  "round": 2,
+  "location": "Design Notes > Confirmation merge",
+  "issue": "adversarial-8: inconclusive union keeps parallel-only inconclusive steps the rerun evaluated conclusively; contract says rerun's are added (contract change)"
+ },
+ {
+  "round": 2,
+  "location": "Design Notes > Snapshot and reset (reset-files fresh module copy)",
+  "issue": "adversarial-9: files a module writes into its own dir at install are lost by the fresh copy, risking false rerun failures; contract rule, change would be Ask First"
+ },
+ {
+  "round": 2,
+  "location": "Design Notes > Phases / SKILL.md Pantau run Docker",
+  "issue": "adversarial-11 + implementer-16 (SLOW part): rerun-seq and lockstep browser:<engine> (including waits) can emit SLOW after 180 s; consider a phase threshold or doc note"
+ },
+ {
+  "round": 2,
+  "location": "Always > Reset (sequential fallback)",
+  "issue": "adversarial-13: reset before a later engine even when the earlier engine drove nothing (launch error); optimization beyond contract"
+ },
+ {
+  "round": 2,
+  "location": "Design Notes > sequential passes",
+  "issue": "edge-case-8: unexpected exception outside drive_engine's catches (sync_playwright start, merge) is not confined per engine; same risk as today's sequential loop"
+ },
+ {
+  "round": 3,
+  "location": "Always > Child bullet 2 / contract Cross-engine lock",
+  "issue": "goto BO lewat `url` tanpa area 'bo' diklasifikasi FO (LOCK_SH); celah tingkat kontrak, perlakuan sama dengan hari ini (login & konklusivitas juga per area)"
+ },
+ {
+  "round": 3,
+  "location": "Code Map > _drive_page/drive_engine",
+  "issue": "seam mode per pass (worker/first pass/sequential) tak dinamai, mis. hook=None; perilaku tiap pass sudah ditetapkan"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Confirmation merge (BO-login fallback)",
+  "issue": "fallback pass yang gagal luncur membuang temuan pass pertama tanpa parallel_only; sel tetap inconclusive, tak lolos diam-diam"
+ },
+ {
+  "round": 3,
+  "location": "Always > Child (psm.slots)",
+  "issue": "--slot-cost < n eksplisit di run langsung paralel; kontrak: dicap apa adanya"
+ },
+ {
+  "round": 3,
+  "location": "Always > Child / Confirmation passes (urutan)",
+  "issue": "sumber urutan psm_e2e_browsers di run langsung tanpa config; ps-run-layer sudah mengirim --engines urut config"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Snapshot and reset (reset-opcache)",
+  "issue": "USR2 reload asinkron; wait-http bisa kena jendela reload (spekulatif)"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Snapshot and reset (find)",
+  "issue": "file lenyap saat find di bawah set -e bisa menggagalkan snapshot/reset; kecil kemungkinannya saat tak ada browser jalan"
+ },
+ {
+  "round": 3,
+  "location": "Always > lockstep barrier / Worker interface",
+  "issue": "gagal tulis step marker atau <engine>.done (disk penuh) bisa menggantung barrier"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > Worker interface (Parseable)",
+  "issue": "tipe result/scenario_spans/timings tak divalidasi; hasil cacat dari bug worker bisa meng-crash versi"
+ },
+ {
+  "round": 3,
+  "location": "Acceptance Criteria 2 / live test",
+  "issue": "live (b)/(c) bergantung beban daemon bersama; tak reproducible saat slot sibuk"
+ },
+ {
+  "round": 4,
+  "location": "Design Notes > Confirmation merge (BO-login fallback)",
+  "issue": "A discarded first-pass finding not reproduced by the fallback pass is dropped (contract: only the fallback pass counts) while still forcing sibling reruns; spec is explicit, a trace in parallel_only would be a contract change."
+ },
+ {
+  "round": 4,
+  "location": "ps-run-layer _on_reaped keep on crash",
+  "issue": "Child-set worker crash cells (reason crash) also trigger keeping the tmp dir with the 'DIPERTAHANKAN untuk diagnosis' message; harmless, could be narrowed to ps-run-layer-written crash records."
+ },
+ {
+  "round": 4,
+  "location": "Boundaries > Never (frozen): 'reset routine is written so CAP-5 can reuse it'",
+  "issue": "Untestable guidance; naming a CAP-5 seam (snapshot paths, copy_module, tail flags) would expand scope into CAP-5."
+ },
+ {
+  "round": 5,
+  "location": "Tasks > tests/live/test-cap7-live.py (PSM_LIVE_VERSIONS)",
+  "issue": "Parsing of an empty, unknown or image-missing PSM_LIVE_VERSIONS value is unspecified; Verification requires it unset, so acceptance is unaffected (edge-case-4)."
+ },
+ {
+  "round": 5,
+  "location": "Boundaries > Always > Runner / Design Notes > Logging",
+  "issue": "ps-run-layer does not log why a version was admitted sequential (slots vs parallel-unconfirmed history); observability enhancement, live (b) already uses a fresh reports dir (implementer-5)."
+ }
+]

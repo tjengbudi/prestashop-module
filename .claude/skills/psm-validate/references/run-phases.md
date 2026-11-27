@@ -43,12 +43,14 @@ File dikosongkan tiap run baru.
 | --- | --- | --- |
 | `START` / `END` | fase mulai / selesai (`ok`, `timeout`, `gagal`, …) | lanjut memantau |
 | `ALIVE` | fase masih jalan (denyut tiap 15 dtk, `durasi/batas`) | normal |
-| `SLOW` | fase melewati ambang (180 dtk; `pull` 900 dtk; `--slow-after`) — tak pernah untuk `wait-slots` | **diduga macet** — laporkan |
+| `SLOW` | fase melewati ambang (180 dtk; `pull` 900 dtk; `--slow-after`) — tak pernah untuk `wait-slots`, `lock-wait:<engine>`, `barrier-wait:<engine>` | **diduga macet** — laporkan |
 | `DONE` | proses selesai: `rc=<kode>`, `rc=crash`, `rc=stopped`, `rc=not-run <reason>` (sel versi itu tak satu pun dimulai — fail-fast), `rc=no-slots` (cap slot penuh sampai batas) | baca file lapis / output run |
 
 Fase: `wait-slots` (Lapis 4, lihat di bawah), `pull`, `bring-up`, `wait-healthy`, `install+phpstan`
-(Lapis 2), `install`, `wait-http`, `warmup-bo`, `browser:<engine>` (Lapis 4), `snapshot-db`,
-`scenario` (Lapis 5), `teardown`.
+(Lapis 2), `install`, `wait-http`, `warmup-bo`, `browser:<engine>` (Lapis 4), `snapshot-db`
+(Lapis 5; Lapis 4 bila versi men-drive > 1 browser), `scenario` (Lapis 5), `teardown`; Lapis 4
+dua browser juga `lock-wait:<engine>`, `barrier-wait:<engine>`, `rerun-seq:<engine>`,
+`reset-db`, `reset-files`, `reset-opcache` (di bawah).
 
 **`wait-slots`** (Lapis 4, ditulis `ps-run-layer.py`): dibuka di log tiap versi yang diantre
 begitu run mulai (log dikosongkan dulu), berakhir saat versi itu diadmisi (`END wait-slots ok`,
@@ -59,12 +61,30 @@ lalu anak menulis fasenya sendiri ke log yang sama), atau `no-slots`/`cancelled`
 running` / `first count pending`. Tak pernah `SLOW`: lamanya = lamanya fase yang ditunggu,
 yang punya batasnya sendiri. Versi yang di-fail-fast: log = satu baris `DONE rc=not-run …`.
 
+**Browser paralel** (Lapis 4, versi diadmisi biaya n — Slot sedaemon di bawah): sesudah
+`warmup-bo` proses versi mengambil `snapshot-db`, lalu tiap engine di-drive worker sendiri yang
+menulis ke log versi yang sama — baris worker ber-`pid` lain (job & run sama), nama fasenya
+menyebut engine (`browser:<engine>`, `lock-wait:<engine>`, `barrier-wait:<engine>`), dan worker
+tak pernah menulis `DONE` (hanya proses versi). `lock-wait:<engine>` = menunggu kunci BO
+(`ALIVE` menyebut engine pemegangnya), `barrier-wait:<engine>` = menunggu engine lain
+menyelesaikan step lockstep (`ALIVE` menyebut yang belum); keduanya tanpa batas waktu sendiri
+dan tak pernah `SLOW`. Sesudah semua worker selesai, pass konfirmasi sekuensial per engine:
+`rerun-seq:<engine>` (membungkus health, reset, dan drive; END `<sub-fase>-failed` bila reset
+gagal) atau, bila login BO engine itu saja yang gagal, `browser:<engine>` kedua (detail START
+menyebut fallback login BO); keduanya diawali reset `reset-db`, `reset-files`, `reset-opcache`,
+lalu `wait-http`, `warmup-bo` lagi. Di rekaman, fase berulang berakhiran `#2`, `#3`
+(`browser:<engine>#2`, `wait-http#2`). Biaya 1 (`--sequential-browsers`): engine berurutan dalam
+proses, `snapshot-db` lalu reset yang sama sebelum tiap engine berikutnya, tanpa
+`lock-wait`/`barrier-wait`/`rerun-seq`.
+
 **Ritme:** jalankan di latar (mis. Claude Code: Bash `run_in_background`, lalu baca ekor log
 tiap 30–60 dtk), dan beri Budi satu baris per cek — versi, fase, durasi. Harness tanpa
 eksekusi latar: Lapis 2/5 satu versi per panggilan (`--versions V --jobs 1`) supaya tiap panggilan
 pendek, dan baca log-nya di antara panggilan; Lapis 4 tetap persis `e2e_cells_arg` plan.
 
-**Diduga macet** bila (a) baris terakhir `SLOW`, atau (b) mtime log tak berubah ±3 menit dan
+**Diduga macet** bila (a) baris terakhir `SLOW` — kecuali `SLOW browser:<engine>` worker
+paralel selagi `lock-wait:<engine>`/`barrier-wait:<engine>` engine itu masih ber-`ALIVE`
+(fase luarnya ikut menghitung waktu tunggu; yang menunggu = engine lain, lihat fasenya), atau (b) mtime log tak berubah ±3 menit dan
 belum ada `DONE` — artinya proses menggantung di luar fase berlog atau sudah mati. Laporkan
 ke Budi: job, versi, fase, durasi. Tawarkan pilihan: tunggu sampai batas waktu fasenya (skrip
 lalu degrade jujur sendiri), atau hentikan job itu (`--stop-job`, di bawah). **Jangan
@@ -133,9 +153,10 @@ host ini — yatim milik host lain tetap terhitung sampai dibersihkan dari host 
   itu punya kegagalan tercatat.
 - **Run E2E = persis plan.** Jalankan tepat `--cells <e2e_cells_arg> --tier <e2e_tier>` dari plan
   cakupan-run terbaru (`e2e_cells_arg` null → tanpa run); jangan pernah memilih sel atau tier
-  dengan judgment. Interim sampai CAP-4/5/7: tiap run dingin dan skenario penuh, satu boot per
-  versi, browser berurutan sesuai admisi slot — `e2e_warm` dan `e2e_scenarios: failed-only`
-  diabaikan. Akibatnya pass dingin penuh di loop perbaikan sudah membersihkan sel gagal:
+  dengan judgment. Interim sampai CAP-4/5: tiap run dingin dan skenario penuh, satu boot per
+  versi — browser paralel bila versi diadmisi biaya n, berurutan dengan reset ke snapshot di
+  antara engine bila biaya 1 (Slot sedaemon, di bawah) — `e2e_warm` dan `e2e_scenarios:
+  failed-only` diabaikan. Akibatnya pass dingin penuh di loop perbaikan sudah membersihkan sel gagal:
   `cold-version` terlewati dan browser lain versinya dibuktikan ulang di tier 1 — diurut ulang,
   tak pernah dibuang.
 - **V bersih** = `per_version[V].clean` dari plan loop V, kecuali (state sesi-mu): (a) **tanpa
@@ -151,7 +172,8 @@ host ini — yatim milik host lain tetap terhitung sampai dibersihkan dari host 
   `psm_e2e_enabled` false atau `--require` tanpa `e2e`; stop konvergensi (Fase 1); aturan exit dan
   sebab infra di bawah. Loop tuan rumah berhenti menunggu `gate`/`done`; Fase 2 tetap menjalankan
   lapis lainnya.
-- **Hasil run** dibaca dari plan cakupan-run berikutnya, **tak pernah** dari histori. Per exit
+- **Hasil run** dibaca dari plan cakupan-run berikutnya, **tak pernah** dari histori (satu
+  pengecualian: Tinjauan visual, di bawah, membaca `screenshots` baris terbarunya). Per exit
   `ps-run-layer.py --layer e2e`:
   - 0, 1 atau 3 dengan baris output → baca lewat plan berikutnya (juga anak yang dihentikan:
     selnya tak mendapat rekaman dan mempertahankan rekaman lamanya);
@@ -187,17 +209,38 @@ host ini — yatim milik host lain tetap terhitung sampai dibersihkan dari host 
   selesai/dihentikan atas izin Budi, yatim dibersihkan) atau menunggu, atau — bila `errors`
   berkata `docker count failed` — memperbaiki Docker; **tak pernah** dengan install
   (`--allow-image-pull`, `playwright install`).
+- **`parallel-unconfirmed`**, **`sequential-reset`**, **`crash`** worker (rekaman `inconclusive`;
+  plan: `inconclusive`): alasan infra (Sebab infra per versi, di atas), tak pernah lulus.
+  `parallel-unconfirmed` = run browser paralel punya temuan yang wajib dikonfirmasi sekuensial,
+  tapi `snapshot-db`, health container, atau reset (`reset-db`/`reset-files`/`reset-opcache`/
+  `wait-http`) gagal: `findings` kosong, temuan paralelnya di `parallel_only`, sub-fase gagal di
+  `errors` sel. `sequential-reset` = di fallback sekuensial (biaya 1) snapshot, health, atau
+  reset sebelum engine berikutnya gagal: engine yang belum jalan tak di-drive, sub-fase di
+  `errors` selnya. `crash` worker = worker engine mode paralel keluar tanpa hasil terbaca (exit
+  code di `browser_notes`); engine lain tak terdampak. Diperbaiki dengan run ulang (sesudah
+  `parallel-unconfirmed` run berikutnya versi itu otomatis diadmisi biaya 1 sekuensial), setelah
+  memeriksa kesehatan container (RAM/daemon; `health: <status>` di `errors`), stderr anak, dan
+  baris `END` `snapshot-db`/`reset-*`/`rerun-seq:<engine>` di log kemajuan; **tak pernah**
+  dengan install.
 - **Slot sedaemon**: N = `psm_e2e_slots` dari `<cfg>` (`--slots` hanya override manual; jangan
   diberikan). Terpakai = jumlah label `psm.slots` semua container E2E yang jalan di daemon (run
   dan sesi lain, juga `ps-e2e-run.py` langsung — yang ikut terhitung tapi melewati admisi) +
   klaim run lain yang container-nya belum jalan, dibandingkan dengan N **run ini**:
   `psm_e2e_slots` yang sama di semua sesi = satu langit-langit bersama. Klaim dari folder temp
   lain baru terlihat begitu container-nya jalan. Container Lapis 2/5 tak dihitung (mereka tetap
-  `--jobs`).
+  `--jobs`). Biaya: versi yang men-drive n browser diadmisi biaya n (browser paralel dalam satu
+  boot) bila n slot bebas, else biaya 1 dengan `--sequential-browsers` (berurutan, reset di
+  antara engine); `ps-e2e-run.py` langsung berlabel n bila paralel, else 1. Versi yang salah
+  satu sel terkonfigurasinya punya rekaman terbaru `parallel-unconfirmed` (juga histori tak
+  terbaca atau berekor rusak) selalu biaya 1 sekuensial, berapa pun slot bebas.
 - **Tinjauan visual** (interaktif saja): hanya run dingin
   skenario penuh — interim itu semua run, termasuk `focus`. Tiap run interaktif ber-`--
-  --screenshot-dir <psm_reports_dir>/e2e-shots`; tinjau `<run dir berstempel>/<ver>/` (baris
-  stderr `screenshots:`) untuk versi di `appended` yang selnya di-drive (`pass`/`fail`). Cacat
+  --screenshot-dir <psm_reports_dir>/e2e-shots`; untuk tiap sel di `appended` yang di-drive
+  (`pass`/`fail`), tinjau file di `screenshots` baris **terbaru** histori selnya
+  `<psm_reports_dir>/<module>-e2e-<ver>-<browser>.jsonl` (pola path dari `ps-run-layer.py
+  --help`) — satu-satunya baca histori yang sah. Run dir berstempel ada di baris stderr
+  `screenshots:`; di bawahnya `<ver>/`, mode paralel `<ver>/<engine>/` atau, sesudah pass
+  konfirmasi, `<ver>/<engine>-seq/`. Cacat
   yang kamu yakini memblok → read-merge ke `<psm_reports_dir>/<module>-visual-pending.json`
   (bentuk `findings` seperti file adversarial; tiap entri bertanda `session` `<t>` dan
   `source_fingerprint` baris output run-nya). Tak pernah mengubah state sel atau memicu
