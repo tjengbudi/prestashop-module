@@ -1,0 +1,62 @@
+[
+  {
+    "location": "Design Notes > Docs > Interim rules Budi kept (last sentence: 'Any other ps-run-layer exit (1 — e.g. one child stopped ... — 130, or a traceback), with or without an output line')",
+    "issue": "Exit 1 with an output line is the normal outcome of `ps-run-layer.py --layer e2e`, not an abnormal one. Contract Runner says the run exits 1 whenever any appended record is inconclusive, `not-run` or `no-slots`, and the code returns 1 for any non-pass state (ps-run-layer.py ~L1386). This catch-all puts every ordinary infra result (no-slots, crash, browser-unavailable, install failure) into 'interactive: ask to rerun or end; headless: return blocked, no wrap-up'. That contradicts the infra-cause carry rule two sentences earlier, which assumes such runs are re-planned. It also contradicts contract Headless, where an unclean step is `status: complete` and the wrap-up always runs, and `blocked` is only for 'cannot assess at all'.",
+    "implementation_impact": "An implementer writing the docs literally would make headless callers (psm-develop/cross-version/scaffold/optimize) return `blocked` with no aggregate after any no-slots or crash run. The headless `versions`/`not_run_cells`/`e2e_tier_reached` return would be lost exactly when it matters. Interactive runs would add a spurious rerun/end prompt on top of the infra prompt.",
+    "suggestion": "Classify by output line, not by exit code alone. Exits 0, 1 and 3 that print the output line are normal: re-plan and apply the infra-cause and headless step-clean rules. Treat as abnormal only a run with no output line and exit other than 2 or 143 (a traceback, or exit 1 with no line), plus exit 130. Note that a stopped child (exit 1 with a line) is covered by the normal path, because its cells keep their earlier records and the next plan re-derives them."
+  },
+  {
+    "location": "Design Notes > Plan, first bullet (`--browsers` argparse default None 'so an explicit chromium,firefox beats apply_config_file')",
+    "issue": "The spec fixes the default-equals-explicit trap for `--browsers` but leaves the same trap in `--versions`. Its argparse default is the literal '1.7.8,8.1,9.1' (ps-plan-layers.py L774), and apply_config_file overwrites any value equal to the parser default (ps-flashlight-run.py `getattr(args, dest) != parser.get_default(dest)`). So with a config targeting e.g. 1.7.6,1.7.8,8.1,9.1, an explicit `--versions 1.7.8,8.1,9.1` is silently widened to all four. CAP-1 makes the plan's run-scope filter decide `e2e_next_cells`, which are run exactly, so this pre-existing quirk now directly boots versions outside the operator's scope.",
+    "implementation_impact": "The scope menu's choice is not honoured for one specific selection. The orchestrator runs `e2e_cells_arg` containing out-of-scope cells, and the `blocked-by-scope` I/O rows cannot be reproduced when the scope happens to equal the script default.",
+    "suggestion": "Give `--versions` the same treatment: argparse default None, then `--config`, then the script default. Add a test where config has 4 versions and an explicit `--versions 1.7.8,8.1,9.1` keeps the 3-version scope in `e2e_next_cells`."
+  },
+  {
+    "location": "Design Notes > Plan, `clean` bullet ('fails validate_layer_shape (static ...; flashlight with none) or is a scenario payload whose `versions` is not an object = exit 2')",
+    "issue": "The scenario guard only checks that `versions` is an object. ps-aggregate's `scenario_layer` then calls `.get` on `versions[V]`, on each `scenarios[]` item and on each `steps[]` item without type checks. A truncated or foreign per-version scenario file with `versions[V]` as a list or string, or a non-object scenario or step, raises AttributeError. The aggregate itself applies no shape gate to scenario payloads, so nothing upstream catches it either.",
+    "implementation_impact": "Under the stated rule, a malformed Layer 5 per-version file makes the plan crash with a traceback (exit 1) instead of the promised exit 2 naming the file. Every later plan call keeps crashing until the file is removed by hand.",
+    "suggestion": "Run scenario payloads through `validate_layer_shape(payload, ())` as well, which catches non-object `versions[V]`. Also require `versions[V].scenarios`, when present, to be a list of objects whose `steps`, when present, are lists of objects; anything else = exit 2 naming the file. Add one test per shape."
+  },
+  {
+    "location": "Design Notes > Canary ('Value trimmed; absent, null or empty = ...; otherwise it must split at exactly one `:`')",
+    "issue": "The normalizer only covers string values. The resolver passes YAML values through unchanged (resolve-psm-config.py copies `psm_section.get(key)` as is), so `psm_e2e_canary` can arrive as an int, list, dict or bool, e.g. from a YAML typo. 'Trimmed' is undefined for those. `_config_items` shows the codebase's convention: a non-string or non-list is an explicit input error.",
+    "implementation_impact": "A literal implementation calls `.strip()` on a non-string and crashes with exit 1 in plan, runner and aggregate. A defensive one might `str()` it into something that accidentally validates. Either way the three readers can diverge.",
+    "suggestion": "State that a present, non-null, non-string canary is exit 2 naming the key. Cover it in the canary normalizer tests (int and list cases)."
+  },
+  {
+    "location": "Design Notes > Canary ('exit 2 naming the key, whatever psm_e2e_enabled') together with Boundaries > Always ('validated by plan, aggregate and ps-run-layer')",
+    "issue": "The contract only says a canary outside the configured cells is an input error. The spec widens this so a bad canary fails the plan and the aggregate even when E2E is disabled. Contract Configured cells keeps 'gating without E2E ... through `ps-aggregate.py --require` without `e2e`'. With this rule, a project that set `psm_e2e_enabled: false` and has a stale canary (e.g. after dropping a target version) cannot run Phase 1 plan calls or the aggregate at all. Headless callers get `blocked` for a key that has no effect on the run.",
+    "implementation_impact": "Layers 1, 2 and 5 validation becomes impossible because of an unused E2E key. The fix (edit the canary) is not discoverable from a non-E2E workflow. The spec gives no test for this interaction.",
+    "suggestion": "Either keep the rule and state the consequence explicitly in the README config table and headless.md, with a test pinning it, or validate the canary only when it is used: plan E2E fields, a non-merge-only e2e run, and an aggregate whose `--require` includes `e2e`. Treat the second option as Ask First, since it narrows when the contract's error fires."
+  },
+  {
+    "location": "Design Notes > Runner ('`--tier` ... joins RESERVED_PASSTHROUGH')",
+    "issue": "`reserved_in_passthrough` also matches prefix abbreviations of 4 or more characters against every reserved flag. Adding `--tier` makes the passthrough abbreviation `--ti`, which the children's argparse resolves to `--timeout` (ps-e2e-run.py, ps-flashlight-run.py, ps-scenario-run.py), get rejected as the reserved flag `--tier`. The rejection applies to Layers 2 and 5 too, not just e2e. The contract's RESERVED_PASSTHROUGH list does not include `--tier`, so this is a spec-added behaviour with an untested side effect.",
+    "implementation_impact": "Low, but a previously valid passthrough `-- --ti 900` now exits 2 with a misleading 'reserved flag --tier' message.",
+    "suggestion": "Either accept it and add a test documenting that `--ti` is now rejected, or reject `--tier` in passthrough with an exact-match check rather than through the abbreviation loop. Because no child accepts `--tier`, an exact match is enough to stop it reaching a child."
+  },
+  {
+    "location": "Boundaries > Always (Runner: '--tier ... stamped on every record') / Tasks > tests",
+    "issue": "Records come from several code paths in ps-run-layer: child-result merge, `crash`, `browser-unavailable`, `not-run` (fail-fast and input-error), `no-slots`, and the per-version not-run truncation. The test list only says 'existing e2e runs gain --tier'. No test asserts that `tier` is the given integer on each record kind, or that it is a JSON integer rather than the string argparse yields.",
+    "implementation_impact": "Stamping `tier` in `build_record` for the child path only, or passing the argparse string, would go undetected. The contract field `tier` would be null or '0' on exactly the records (not-run, no-slots) that tier-reached reporting and later CAP slices read.",
+    "suggestion": "Add a test that drives one run producing a child result, a `crash`, a `no-slots` and a fail-fast `not-run`. Assert `rec['tier'] == 1` with `type(rec['tier']) is int` on all of them, and repeat with `--tier 0`."
+  },
+  {
+    "location": "Design Notes > Plan ('for failed-only the plan only tests the focus cell's failed set ... for emptiness')",
+    "issue": "The failed set is the union of `findings[].scenario` and `inconclusive[].scenario`. The spec does not say how to treat entries whose `scenario` is absent, null or not a string, e.g. install, boot or smoke-level findings, or older records. Counted naively, a set like `{None}` is non-empty, so the plan emits `e2e_scenarios: failed-only` for a cell with no rerunnable scenario name.",
+    "implementation_impact": "The plan output is wrong today (orchestrator ignores it in the interim) and becomes a real wrong run once CAP-4 lands. The CAP-4 runner would resolve an empty or invalid name list and fall back to full while the plan claims failed-only. Plan and runner then disagree about the same set.",
+    "suggestion": "Define the failed set as non-empty string names only, and say the runner's CAP-4 resolution must use the same helper. Add a test where a fail record's only finding has no `scenario` and expect `e2e_scenarios: full`."
+  },
+  {
+    "location": "Design Notes > Docs > Headless (config copy resets the canary when 'well-formed ... and, normalized as Design Notes > Canary, outside the caller's set')",
+    "issue": "'Well-formed' is purely syntactic: one colon, two non-empty parts. So any garbage with one colon, such as `abc:xyz`, `9.1:safari` or `9.1:chromium ` with a typo'd version, counts as well-formed. It is then 'outside the caller's set' and silently reset to the default with only an assumption logged. The same value is a hard exit 2 in interactive runs. The split is arbitrary: `9.1chromium` (no colon) is kept and returns `blocked`, while `9.1:safari` is quietly replaced.",
+    "implementation_impact": "Headless and interactive diverge on the same config. A typo'd canary in a shared config is masked in every headless call and surfaces only interactively.",
+    "suggestion": "Reset only when the value is a valid canary for the full resolved config: version a configured string, browser a supported engine inside `psm_e2e_browsers`, and that cell outside the caller's set. Keep everything else so the plan's exit 2 returns `blocked`. Add a headless.md example for each branch."
+  },
+  {
+    "location": "Design Notes > Aggregate (`reached`) with Design Notes > Docs > Headless ('not reached: stopped at <step>')",
+    "issue": "A headless call can reach `blocked-not-gradeable` with no run at all, e.g. a smoke-only module whose cells were all proven in an earlier session. In that case every version has cells lacking passing evidence (the not-gradeable ones) and no record of this session. Each version then gets `reached: false` and reason `not reached: stopped at blocked-not-gradeable`, which wrongly tells the psm-develop/optimize callers the version was never exercised. The actual reason is that its cells are not gradeable. The callers' docs treat `not reached` as 'unproven, not comparable', so psm-optimize's Verifikasi would report the version as not comparable instead of showing its smoke results.",
+    "implementation_impact": "The rule is a misleading caller-facing verdict that the docs task will spread to four SKILL.md files. Fixing it later means changing the headless return contract the callers rely on.",
+    "suggestion": "This follows the contract's Aggregate wording, so do not change it unilaterally. Record it in deferred-work, or raise it as Ask First, with the proposal that a cell that is not-gradeable on a fresh record counts as reached for `reached`. If it is kept, add an I/O row pinning the current behaviour so it is a known outcome rather than a surprise."
+  }
+]

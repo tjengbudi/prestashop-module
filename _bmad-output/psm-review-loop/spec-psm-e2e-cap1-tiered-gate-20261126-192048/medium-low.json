@@ -1,0 +1,272 @@
+[
+ {
+  "round": 1,
+  "location": "Runner > stopped (adversarial-3, edge-case-3)",
+  "issue": "Engine yang sudah selesai pada anak yang di-SIGTERM ikut jadi `stopped`; konsisten dgn kontrak (anak 143 tak menulis hasil), hanya belum dicatat sebagai kerugian."
+ },
+ {
+  "round": 1,
+  "location": "I/O matrix (adversarial-5)",
+  "issue": "Baris tambahan untuk `reached`, `clean`, SIGTERM satu anak, scenario-notes not-gradeable, canary buruk di aggregate, `--browsers \"\"`."
+ },
+ {
+  "round": 1,
+  "location": "I/O 'Hosted in 8.1' (adversarial-6, implementer-12)",
+  "issue": "Baris ini sama dengan tes kontrak; usulan kontras `--versions 8.1` → `blocked-by-scope` sebagai penguat."
+ },
+ {
+  "round": 1,
+  "location": "Code Map (adversarial-15)",
+  "issue": "Companion interim, bahaya dua instans modul ps-plan-layers, signature fungsi derivasi."
+ },
+ {
+  "round": 1,
+  "location": "Runner > stop (edge-case-4)",
+  "issue": "Sel antre saat stop: kini tertulis tanpa rekaman (sudah jelas dari 'admitted')."
+ },
+ {
+  "round": 1,
+  "location": "Plan > --versions (edge-case-10)",
+  "issue": "--versions di luar versi terkonfigurasi pada plan."
+ },
+ {
+  "round": 1,
+  "location": "Docs > hosting version (edge-case-11)",
+  "issue": "'First in-scope version' — urutan numerik tersirat dari kontrak."
+ },
+ {
+  "round": 1,
+  "location": "Aggregate > reached (edge-case-13, implementer-22)",
+  "issue": "Rekaman not-run/no-slots/stopped dihitung reached sesuai kontrak literal; konfirmasi + tes opsional."
+ },
+ {
+  "round": 1,
+  "location": "Aggregate > reached (edge-case-14)",
+  "issue": "Loop E2E berakhir sebelum run apa pun → semua versi reached false; teks alasan."
+ },
+ {
+  "round": 1,
+  "location": "Headless config copy (edge-case-15)",
+  "issue": "Canary malformed di headless (berujung exit 2 plan)."
+ },
+ {
+  "round": 1,
+  "location": "Plan > focus cell (edge-case-16)",
+  "issue": "Tie-break lintas run dengan started_at identik / job_id null."
+ },
+ {
+  "round": 1,
+  "location": "Visual review (implementer-17)",
+  "issue": "Run focus cold full pasca-gagal di interim — aturan 'hanya cold full' sudah mencakupnya."
+ },
+ {
+  "round": 1,
+  "location": "Design Notes > e2e_blocked_causes (implementer-18)",
+  "issue": "`{}` di luar blocked-* sebagai tafsir yang dipilih spec; bisa dicatat eksplisit."
+ },
+ {
+  "round": 1,
+  "location": "Plan > e2e_scenarios (implementer-19)",
+  "issue": "Plan hanya menghitung kekosongan failed set (CAP-4) tanpa seleksi skenario."
+ },
+ {
+  "round": 1,
+  "location": "Code Map > plan_e2e_cells (implementer-20)",
+  "issue": "Bentuk API stabil plan_e2e_cells vs fungsi baru yang mengembalikan rekaman."
+ },
+ {
+  "round": 2,
+  "location": "Verification > docs (adversarial-6, implementer-11)",
+  "issue": "Tak ada cek mekanis/checklist bahwa contoh perintah `--layer e2e` di docs memuat `--tier`, aturan interim yang dibawa benar-benar mendarat, dan butir CAP-4/5/7 tetap absen."
+ },
+ {
+  "round": 2,
+  "location": "Docs > On Activation scope (adversarial-7)",
+  "issue": "Menu cakupan bisa memperingatkan bila cakupan menyingkirkan focus cell (E2E lalu blocked-by-scope); perilaku sesuai kontrak, peringatan = perluasan."
+ },
+ {
+  "round": 2,
+  "location": "Boundaries > Canary (adversarial-8, edge-case-3)",
+  "issue": "Plan/aggregate menolak canary buruk di semua mode, termasuk E2E nonaktif; sesuai kontrak, usulan pesan galat yang menyebut key dan validasi di On Activation."
+ },
+ {
+  "round": 2,
+  "location": "AC 2 (adversarial-11)",
+  "issue": "Prasyarat 'tanpa histori' tersirat; bisa dinyatakan eksplisit plus perbandingan rerun_matrix dengan/tanpa scope."
+ },
+ {
+  "round": 2,
+  "location": "Docs > headless child exit 2 / exit 143 (edge-case-8)",
+  "issue": "Hasil headless (complete) dapat diturunkan dari kontrak Headless; bisa dinyatakan eksplisit."
+ },
+ {
+  "round": 2,
+  "location": "Docs > headless blocked (edge-case-9)",
+  "issue": "Kembalian blocked untuk exit 2 pra-spawn tanpa wrap-up sudah aturan headless.md kini; bisa dinyatakan eksplisit."
+ },
+ {
+  "round": 2,
+  "location": "I/O Promote order (implementer-9)",
+  "issue": "Kasus kedua bisa menambah asersi diverge (`e2e_warm` false, `full`); baris Diverge sudah menutup aturannya."
+ },
+ {
+  "round": 2,
+  "location": "Runner > RESERVED_PASSTHROUGH (implementer-12)",
+  "issue": "`--tier` setelah `--` sampai ke anak (exit 2 anak); hardening opsional di luar daftar kontrak."
+ },
+ {
+  "round": 2,
+  "location": "Docs > aggregate --session (implementer-13)",
+  "issue": "Hanya headless yang wajib meneruskan `--session`; wrap-up interaktif boleh dinyatakan eksplisit."
+ },
+ {
+  "round": 3,
+  "location": "Boundaries > Docs (4th interim rule)",
+  "issue": "adversarial-2: infra cause read from next plan's rerun reason is masked as stale-source when the source changed during/after the run; fix needs reading histories (against carried interim rule) or a new plan field"
+ },
+ {
+  "round": 3,
+  "location": "Boundaries > Docs (4th interim rule)",
+  "issue": "edge-case-3: rerun reason inconclusive also covers incomplete-record (runner defect), which would trigger an environment prompt; same as interim"
+ },
+ {
+  "round": 3,
+  "location": "Boundaries > Runner (stop path)",
+  "issue": "adversarial-7: executor atexit still joins worker threads and finally removes run.tmp while children may write; existing behaviour, 'before any join' now pins record timing"
+ },
+ {
+  "round": 3,
+  "location": "Boundaries > Runner (stop path)",
+  "issue": "edge-case-6: Ctrl-C/internal crash of ps-run-layer leaves admitted cells without records (existing behaviour; giving them records expands scope)"
+ },
+ {
+  "round": 3,
+  "location": "Boundaries > Runner (deferral)",
+  "issue": "edge-case-9: deferred stop while blocked on LOCK_EX is unbounded vs JOB_STOP_GRACE SIGKILL; lock is held only for one write"
+ },
+ {
+  "round": 3,
+  "location": "Boundaries > Docs (hosting loop) / contract step 5",
+  "issue": "implementer-9: scoped cold-version could repeat forever once CAP-4/5 land; unreachable in CAP-1 (always cold full), contract-level follow-up"
+ },
+ {
+  "round": 3,
+  "location": "Tasks > tests",
+  "issue": "implementer-12: add contract test cold full pass then cold full fail on one fingerprint derives focus (not done) and ready false"
+ },
+ {
+  "round": 3,
+  "location": "Never (bankwire timing report)",
+  "issue": "implementer-14: name the owning slice and the 'before' baseline commit for the SPEC success-signal report (scope/planning)"
+ },
+ {
+  "round": 3,
+  "location": "Design Notes > clean",
+  "issue": "implementer-8 (rest): scenario payload nested shape (versions[V] object, scenarios list of objects) not gated, can crash scenario_layer; ps-aggregate has the same exposure"
+ },
+ {
+  "round": 4,
+  "location": "Never (stopped deferred) x Docs interim rules (adversarial-3)",
+  "issue": "single child SIGTERM'd while ps-run-layer survives leaves no record and exit 1; interactive rerun is acceptable, consequence of the decided stopped deferral"
+ },
+ {
+  "round": 4,
+  "location": "Acceptance Criteria #1 (adversarial-4)",
+  "issue": "invariant could also assert exact next cells per step and done/e2e_cells_arg null; test-strength expansion"
+ },
+ {
+  "round": 4,
+  "location": "I/O matrix / Tasks > tests (adversarial-6, implementer-9)",
+  "issue": "no rows for canary-version loop-back (cold-version straight to gate), non-default canary, or default canary without chromium"
+ },
+ {
+  "round": 4,
+  "location": "Verification > Manual (adversarial-9)",
+  "issue": "also check no --merge-only command carries --tier/--cells/--session/--versions"
+ },
+ {
+  "round": 4,
+  "location": "Design Notes > Docs interim rules (edge-case-3)",
+  "issue": "ps-run-layer crash (exit 1, traceback, no output line) or Ctrl-C 130 has no stated handling"
+ },
+ {
+  "round": 4,
+  "location": "I/O Clean module row (implementer-5)",
+  "issue": "aggregate ready-true fixture (default --require with passing Layer 1/2/5 vs --require e2e) not pinned after slimming"
+ },
+ {
+  "round": 4,
+  "location": "Design Notes > Docs orchestration (implementer-10)",
+  "issue": "session-start plan call for hosting version and hosting-loop-first ordering not spelled out (implied by contract and the run-scope --per-version rule)"
+ },
+ {
+  "round": 5,
+  "location": "Design Notes > Canary (whatever psm_e2e_enabled)",
+  "issue": "Canary rusak memblokir plan/aggregate walau E2E nonaktif; aturan ini keputusan ronde 2, konsekuensinya bisa didokumentasikan di README/headless.md"
+ },
+ {
+  "round": 5,
+  "location": "Design Notes > Runner (RESERVED_PASSTHROUGH)",
+  "issue": "--tier di daftar reserved membuat singkatan passthrough --ti (dulu --timeout) ditolak; bisa pakai exact match atau test"
+ },
+ {
+  "round": 5,
+  "location": "Tasks > tests (--tier stamp)",
+  "issue": "Tak ada test yang memastikan tier integer di tiap jenis rekaman (child, crash, no-slots, not-run)"
+ },
+ {
+  "round": 5,
+  "location": "Design Notes > Plan (failed-only)",
+  "issue": "Failed set dengan scenario null/non-string tak didefinisikan; relevan saat CAP-4"
+ },
+ {
+  "round": 5,
+  "location": "Design Notes > Docs > Headless (canary reset)",
+  "issue": "Nilai well-formed tapi sampah (9.1:safari) direset diam-diam di headless; mengikuti kata kontrak Headless"
+ },
+ {
+  "round": 5,
+  "location": "Design Notes > Aggregate (reached) x blocked-not-gradeable",
+  "issue": "Versi not-gradeable tanpa rekaman sesi dilaporkan 'not reached'; mengikuti kontrak, kandidat deferred-work"
+ },
+ {
+  "round": 5,
+  "location": "Design Notes > Plan (not-gradeable vs corrupt tail)",
+  "issue": "Sel corrupt-tail dengan pass smoke-only terakhir terhitung not-gradeable menurut kontrak harfiah, sehingga tail tak pernah diperbaiki; perubahan kontrak"
+ },
+ {
+  "round": 5,
+  "location": "Design Notes > Docs (infra cause)",
+  "issue": "Kapan penyebab infra yang dibawa dihapus tidak dinyatakan eksplisit ('first later run' menyiratkan sekali prompt)"
+ },
+ {
+  "round": 5,
+  "location": "Code Map / AC 1 (pure derivation)",
+  "issue": "Nama dan input fungsi derivasi murni tak disebut"
+ },
+ {
+  "round": 5,
+  "location": "AC 1 (crash records)",
+  "issue": "Kalimat menyebut crash 'cold-full' lalu boot/scenario_set null; klausa akhir sudah menjelaskan"
+ },
+ {
+  "round": 5,
+  "location": "Boundaries > Never (stopped records)",
+  "issue": "'readers already skip them' tidak akurat: reader adalah kode baru CAP-1 dan aggregate reached menghitung stopped; juga entri deferred-work"
+ },
+ {
+  "round": 5,
+  "location": "Boundaries > Never (bankwire timing report)",
+  "issue": "Laporan timing wajib SPEC tak punya entri deferred-work dan commit baseline 'before'"
+ },
+ {
+  "round": 5,
+  "location": "Tasks > tests",
+  "issue": "Tak ada test presedensi --browsers eksplisit vs config, dan tabel bentuk canary"
+ },
+ {
+  "round": 5,
+  "location": "Design Notes > Docs > Headless (canary reset)",
+  "issue": "Normalisasi reset canary dikerjakan model tangan; bisa diberi mode skrip"
+ }
+]

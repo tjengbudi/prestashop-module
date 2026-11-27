@@ -48,3 +48,19 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-psm-e2e-cap3-failfast-slots.md`
   summary: When ps-run-layer itself raises while children run, `shutdown(wait=False)` leaves the children running unsupervised and the temp dir holding their `-o` outputs is removed.
   evidence: Code review 2026-11-26 (Edge Case Hunter); same pattern as the pre-CAP-3 runner (run_children + rmtree in finally), not introduced by this change.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-psm-e2e-cap1-tiered-gate.md`
+  summary: Produce `stopped` records in ps-run-layer (cell-contract.md > Evidence record > Storage) for admitted cells of a SIGTERM'd child and of children in flight when the run is stopped.
+  evidence: Deferred from CAP-1 on Budi's request (2026-11-27) while slimming the spec; review rounds showed it needs its own SIGTERM handler with critical sections (reap vs stop races). Readers (plan blocked-infra, aggregate reached) already handle `stopped` records; until then a stopped job's cells keep their earlier records, never a pass.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-psm-e2e-cap1-tiered-gate.md`
+  summary: Produce the SPEC success-signal bankwire timing report (before/after tiered gate), with commit `c460e10` as the "before" baseline.
+  evidence: CAP-1 keeps the timing report out of scope (Never list); review-loop round 5 noted it had no deferred-work entry or baseline.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-psm-e2e-cap1-tiered-gate.md`
+  summary: Decide in cell-contract.md whether a corrupt-tail cell whose last record is a smoke-only pass should stay `not-gradeable` (literal contract) or be rerun so the tail gets repaired.
+  evidence: Review-loop round 5 found the literal not-gradeable rule leaves such a tail unrepaired forever; changing it is a contract rule change (Ask First), so CAP-1 keeps the literal reading.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-psm-e2e-cap1-tiered-gate.md`
+  summary: Pin one meaning of "newest record" in the plan predicates (append order vs `started_at`) and test histories where the two disagree.
+  evidence: CAP-1 step-04 review — `_focus_cell` picks each cell's failing record by append order (`_newest`, inherited from CAP-2/6) but ranks cells by `started_at`; with daemon-wide slots (CAP-3) concurrent jobs for one cell can append out of `started_at` order, so the focus cell could point at an older run.

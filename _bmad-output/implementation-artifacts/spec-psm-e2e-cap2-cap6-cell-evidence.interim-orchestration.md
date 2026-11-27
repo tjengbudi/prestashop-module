@@ -1,5 +1,7 @@
 # Interim orchestration (until CAP-1)
 
+> **Superseded by CAP-1** (`spec-psm-e2e-cap1-tiered-gate.md`): the orchestration now lives in the psm-validate docs (`SKILL.md`, `references/run-phases.md`, `references/headless.md`), driven by the plan's tier fields. Kept for history only; do not follow it.
+
 Companion of `spec-psm-e2e-cap2-cap6-cell-evidence.md`, approved and frozen with it. It holds the orchestrator flow (SKILL.md, `references/run-phases.md`, `references/headless.md`, `references/adversarial-lens.md`, `references/e2e-quickstart.md`) that the docs task writes for this slice. Every rule here is interim: CAP-1 replaces this file as a whole. Amended by `spec-psm-e2e-cap3-failfast-slots.md` (CAP-3) until CAP-1: Fase 2 step 3 (no `--jobs`), Run outcomes and Infra retry (`not-run`, `no-slots`).
 
 ## Session and config

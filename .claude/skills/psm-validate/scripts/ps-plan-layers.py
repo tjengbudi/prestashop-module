@@ -21,10 +21,25 @@ gate-grade / Plan). Himpunan sel wajib = psm_target_versions x psm_e2e_browsers 
 --config (bukan --versions). Fungsi bukti E2E di modul ini (source_fingerprint, history_path,
 read_history, append_record, derive_state, record_state, is_fresh, is_gate_grade,
 is_passing_gate_grade, has_passing_evidence, is_failing, is_not_gradeable, cell_reason,
-plan_e2e_cells) dipakai ulang ps-run-layer & ps-aggregate — nama & bentuknya stabil.
+plan_e2e_cells, derive_e2e_step) dipakai ulang ps-run-layer & ps-aggregate — nama & bentuknya
+stabil.
+
+Tier E2E (CAP-1, cell-contract.md > Plan; tier-matrix.md): skrip ini PEMILIK urutan tier.
+`derive_e2e_step` (murni, tanpa I/O) menurunkan langkah dari histori sel, yang pertama cocok
+menang: `done`, `blocked-not-gradeable`, `blocked-infra`, `gate` (tier 1), `cold-version`,
+`cold-canary`, `focus` (tier 0); lalu filter cakupan run `--versions` x `--browsers` (keduanya
+cakupan saja; absen -> --config, else default skrip) — langkah ber-tier yang tersaring kosong
+jadi `blocked-by-scope`. Kedua mode memancarkan `e2e_step`, `e2e_tier`, `e2e_focus_cell`,
+`e2e_focus_recorded_failure`, `e2e_next_cells`, `e2e_required_cells`, `e2e_cells_arg` (nilai
+`ps-run-layer.py --cells`), `e2e_blocked_causes`, `e2e_scenarios`, `e2e_warm` dan
+`phase1_reuse`; mode `--per-version` juga `per_version[V].phase1_reuse`/`clean` (Lapis 1/2/5
+V dinilai lewat fungsi lapis ps-aggregate, dimuat malas). Orkestrator menjalankan PERSIS
+`e2e_cells_arg` dgn `--tier <e2e_tier>`, tak pernah memilih tier dgn judgment. Canary
+`psm_e2e_canary` dinormalisasi `fl.normalize_canary` (salah bentuk = exit 2).
 
 Sesi: `--new-session` mencetak token acak [a-z0-9]{16} (flag lain apa pun = exit 2);
-selain itu `--session <token>` wajib (absen/salah bentuk = exit 2), belum dipakai slice ini.
+selain itu `--session <token>` wajib (absen/salah bentuk = exit 2); dipakai langkah
+`blocked-infra` dan `e2e_warm` (record sesi ini).
 
 Kenapa skrip, bukan prompt: menghitung mtime rekursif, menstat empat file, dan
 membandingkan himpunan versi tiap run adalah kerja mekanis yang mahal diulang dan
@@ -41,7 +56,7 @@ import re
 import secrets
 import stat
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 LAYERS = ("static", "flashlight", "adversarial", "e2e", "scenario")
@@ -433,10 +448,21 @@ def has_passing_evidence(records, corrupt_tail, fingerprint, image_tag):
     return g is not None and is_passing_gate_grade(g, fingerprint, image_tag)
 
 
+def newest_cold_full(records):
+    """Record cold, full-scenario, conclusive (efektif) TERBARU — segar atau basi — atau None."""
+    return _newest(records, lambda x: x.get("boot") == "cold" and x.get("scenario_set") == "full"
+                   and record_state(x)["conclusive"])
+
+
 def is_failing(records):
     """Plan > Derivation `failing`: record cold, full, conclusive TERBARU (segar atau basi) = fail."""
-    r = _newest(records, lambda x: x.get("boot") == "cold" and x.get("scenario_set") == "full"
-                and record_state(x)["conclusive"])
+    r = newest_cold_full(records)
+    return r is not None and record_state(r)["state"] == "fail"
+
+
+def has_recorded_failure(records):
+    """Plan `recorded failure`: record conclusive TERBARU (boot, set skenario, kesegaran apa pun) = fail."""
+    r = _newest(records, lambda x: record_state(x)["conclusive"])
     return r is not None and record_state(r)["state"] == "fail"
 
 
@@ -496,13 +522,34 @@ def cell_reason(records, corrupt_tail, fingerprint, image_tag, current_notes):
     return "browser-notes"
 
 
+def cell_key(ver, browser):
+    """Nama sel `"<ver>:<browser>"` — bentuk yang dipakai e2e_* plan & psm_e2e_canary."""
+    return f"{ver}:{browser}"
+
+
+def split_cell(cell):
+    """`"<ver>:<browser>"` -> (ver, browser)."""
+    ver, _, browser = cell.partition(":")
+    return ver, browser
+
+
+def read_e2e_histories(reports_dir, module_name, versions, browsers):
+    """Baca histori tiap sel terkonfigurasi -> {"<ver>:<browser>": (records, corrupt_tail)}.
+
+    Urutan kunci = versi (urut numerik) lalu psm_e2e_browsers. Error baca -> PlanInputError.
+    """
+    return {cell_key(v, b): read_history(history_path(reports_dir, module_name, v, b), v, b)
+            for v in versions for b in browsers}
+
+
 def plan_e2e_cells(reports_dir, module_name, versions, browsers, fingerprint, tag_map,
-                   current_notes):
+                   current_notes, histories=None):
     """Vonis tiap sel terkonfigurasi -> {ver: {browser: {reuse, reason, path}}}.
 
     `versions` (urut numerik) x `browsers` (urut psm_e2e_browsers) = himpunan TERKONFIGURASI,
-    bukan --versions. `path` = histori sel; `reason` null saat reuse. Error baca histori ->
-    PlanInputError (exit 2).
+    bukan --versions. `path` = histori sel; `reason` null saat reuse. `histories` (hasil
+    read_e2e_histories) opsional supaya histori tak dibaca dua kali; absen -> dibaca di sini.
+    Error baca histori -> PlanInputError (exit 2).
     """
     out = {}
     for ver in versions:
@@ -510,11 +557,253 @@ def plan_e2e_cells(reports_dir, module_name, versions, browsers, fingerprint, ta
         row = {}
         for browser in browsers:
             path = history_path(reports_dir, module_name, ver, browser)
-            records, corrupt_tail = read_history(path, ver, browser)
+            if histories is not None and cell_key(ver, browser) in histories:
+                records, corrupt_tail = _history_entry(histories[cell_key(ver, browser)])
+            else:
+                records, corrupt_tail = read_history(path, ver, browser)
             reason = cell_reason(records, corrupt_tail, fingerprint, tag, current_notes)
             row[browser] = {"reuse": reason is None, "reason": reason, "path": str(path)}
         out[ver] = row
     return out
+
+
+# --- Tier E2E (cell-contract.md > Plan; tier-matrix.md > Loop-back) -------------------
+# Langkah tier diturunkan MURNI dari histori sel (derive_e2e_step, tanpa I/O): urutan tier
+# milik skrip ini, bukan judgment orkestrator — ia menjalankan PERSIS e2e_cells_arg dengan
+# --tier <e2e_tier>.
+E2E_STEP_TIER = {"focus": 0, "cold-version": 0, "cold-canary": 0, "gate": 1}
+E2E_BLOCKED_STEPS = ("blocked-not-gradeable", "blocked-infra")
+WARM_BLOCK_REASONS = ("warm-reset", "keeper-start")
+_UTC_MIN = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _history_entry(value):
+    """Nilai `histories[sel]` -> (records, corrupt_tail).
+
+    Diterima: list record (ekor tak rusak), tuple/list `(records, corrupt_tail)` hasil
+    read_history, atau None (tanpa record).
+    """
+    if value is None:
+        return [], False
+    if (isinstance(value, (tuple, list)) and len(value) == 2 and isinstance(value[1], bool)
+            and isinstance(value[0], list)):
+        return list(value[0]), value[1]
+    recs = list(value)
+    if not all(isinstance(r, dict) for r in recs):
+        raise ValueError("histories[sel] harus list record (dict) atau (records, corrupt_tail)")
+    return recs, False
+
+
+def infra_cause(rec):
+    """Sebab infra satu record (Plan langkah 3), apa pun boot/set skenarionya, atau None.
+
+    `inconclusive` (efektif, termasuk incomplete-record) -> reason-nya; `pass` dgn
+    `inconclusive` tak kosong -> `inconclusive-steps`; `pass` lain dgn `browser_notes` tak
+    kosong -> `browser-notes`; selain itu (fail, pass bersih, not-run) None — memutus pasangan.
+    """
+    st = record_state(rec)
+    if st["state"] == "inconclusive":
+        return st["reason"] or "inconclusive"
+    if st["state"] == "pass":
+        if rec.get("inconclusive"):
+            return "inconclusive-steps"
+        if rec.get("browser_notes"):
+            return "browser-notes"
+    return None
+
+
+def infra_blocked_cause(records, fingerprint, image_tag, session):
+    """Plan langkah 3 untuk satu sel: sebab infra record terbaru bila DUA record terbaru —
+    tanpa menghitung record ber-reason `stopped` (stop operator: dilewati, tak dihitung dan tak
+    memutus) — sama-sama ber-`--session` sekarang, segar (fingerprint sama) dan ber-sebab infra
+    (sebab sama atau beda). Selain itu None."""
+    recent = [r for r in records if r.get("reason") != "stopped"][-2:]
+    if len(recent) < 2:
+        return None
+    if any(r.get("session") != session or not is_fresh(r, fingerprint, image_tag)
+           for r in recent):
+        return None
+    causes = [infra_cause(r) for r in recent]
+    if any(c is None for c in causes):
+        return None
+    return causes[-1]
+
+
+def _is_warm_or_partial(rec):
+    return rec.get("boot") == "warm" or rec.get("scenario_set") == "partial"
+
+
+def diverges(records, fingerprint):
+    """Focus cell DIVERGE (bacaan Budi, ronde 1): ada `fail` cold full atas fingerprint sekarang
+    yang LEBIH BARU di histori sel daripada `pass` warm/partial atas fingerprint itu
+    (`source_fingerprint` saja, tag tak dinilai) — residu/urutan yang disembunyikan reset warm
+    atau subset."""
+    soft_pass = False
+    for r in records:
+        if fingerprint is None or r.get("source_fingerprint") != fingerprint:
+            continue
+        st = record_state(r)["state"]
+        if st == "pass" and _is_warm_or_partial(r):
+            soft_pass = True
+        elif (soft_pass and st == "fail" and r.get("boot") == "cold"
+              and r.get("scenario_set") == "full"):
+            return True
+    return False
+
+
+def failed_set(rec):
+    """Failed set record (Failed-only rerun): union `findings[].scenario` & `inconclusive[].scenario`.
+
+    Plan hanya menguji kekosongannya: cuma nilai `scenario` string tak kosong yang dihitung
+    (null / non-string diabaikan). Return set nama.
+    """
+    out = set()
+    for key in ("findings", "inconclusive"):
+        items = rec.get(key)
+        if not isinstance(items, list):
+            continue
+        for it in items:
+            name = it.get("scenario") if isinstance(it, dict) else None
+            if isinstance(name, str) and name:
+                out.add(name)
+    return out
+
+
+def _focus_cell(cells, hist, canary):
+    """Focus cell: di antara sel failing, yang record failing-nya milik run TERBARU (run =
+    record ber-`job_id` sama; `job_id` null = run sendiri; run terbaru memegang record failing
+    ber-`started_at` tertinggi — seri lintas run diputus seperti di dalam run). Seri di dalam
+    run: urutan versi numerik (tertua dulu) lalu psm_e2e_browsers = urutan `cells`. Tanpa sel
+    failing -> canary."""
+    failing = []
+    for c in cells:
+        r = newest_cold_full(hist[c][0])
+        if r is not None and record_state(r)["state"] == "fail":
+            failing.append((c, r))
+    if not failing:
+        return canary
+    best = None
+    for c, r in failing:  # `>` ketat: seri jatuh ke sel pertama dalam urutan `cells`
+        t = parse_utc(r.get("started_at")) or _UTC_MIN
+        if best is None or t > best[2]:
+            best = (c, r, t)
+    run = best[1].get("job_id")
+    if run is None:
+        return best[0]
+    return next(c for c, r in failing if r.get("job_id") == run)
+
+
+def e2e_cells_arg(cells):
+    """`e2e_next_cells` dikelompokkan per versi sbg nilai `ps-run-layer.py --cells`:
+    `<ver>:<browser>[+<browser>],...` (versi berurutan seperti di daftar, browser dlm urutan
+    daftar). Daftar kosong -> None."""
+    if not cells:
+        return None
+    groups = {}
+    for c in cells:
+        ver, browser = split_cell(c)
+        groups.setdefault(ver, []).append(browser)
+    return ",".join(f"{ver}:{'+'.join(bs)}" for ver, bs in groups.items())
+
+
+def derive_e2e_step(histories, cells, canary, scope_versions, scope_browsers, fingerprint,
+                    tag_map, session, *, current_notes=None):
+    """Turunkan langkah tier E2E dari histori sel — MURNI (tanpa I/O). Return semua field tier.
+
+    `histories` = {"<ver>:<browser>": records | (records, corrupt_tail)} yang sudah dibaca;
+    `cells` = sel terkonfigurasi `"<ver>:<browser>"` urut versi numerik lalu psm_e2e_browsers;
+    `canary` = hasil fl.normalize_canary; `scope_versions`/`scope_browsers` = cakupan run
+    (--versions/--browsers); `tag_map` = fl.parse_tag_map; `session` = token --session;
+    `current_notes` = e2e_scenario_notes sekarang (pembanding not-gradeable).
+
+    Langkah, yang pertama cocok menang (cell-contract.md > Plan): 1 `done`, 2
+    `blocked-not-gradeable`, 3 `blocked-infra`, 4 `gate`, 5 `cold-version`, 6 `cold-canary`,
+    7 `focus`. Di langkah 4–7 sel not-gradeable dihitung punya bukti lulus. Lalu filter cakupan
+    run: `e2e_next_cells` hanya sel di dalam scope_versions x scope_browsers; bila langkah
+    ber-tier tersaring kosong -> `blocked-by-scope` (tier langkah yang diblok).
+
+    Return {e2e_step, e2e_tier, e2e_focus_cell, e2e_focus_recorded_failure, e2e_next_cells,
+    e2e_required_cells, e2e_cells_arg, e2e_blocked_causes, e2e_scenarios, e2e_warm}.
+    """
+    cells = list(cells)
+    if canary not in cells:  # API murni dipakai ulang: galat input, bukan KeyError
+        raise ValueError(f"canary {canary!r} bukan sel terkonfigurasi ({', '.join(cells)})")
+    notes = list(current_notes or [])
+    hist = {c: _history_entry(histories.get(c)) for c in cells}
+    tags = {c: fl.resolve_tag(tag_map, split_cell(c)[0]) for c in cells}
+    passing, ok47, failing = {}, {}, {}
+    not_gradeable = {}
+    for c in cells:
+        recs, tail = hist[c]
+        passing[c] = has_passing_evidence(recs, tail, fingerprint, tags[c])
+        # Bacaan harfiah kontrak (Plan > not-gradeable menilai record gate-grade terbaru saja,
+        # tanpa pengecualian ekor rusak): sel corrupt-tail yang pass terakhirnya smoke-only tetap
+        # not-gradeable. Menambal ekornya = ubah aturan kontrak -> deferred-work (CAP-1 review r5).
+        not_gradeable[c] = (not passing[c]
+                            and is_not_gradeable(recs, fingerprint, tags[c], notes))
+        ok47[c] = passing[c] or not_gradeable[c]
+        failing[c] = is_failing(recs)
+    focus = _focus_cell(cells, hist, canary)
+
+    def newest_fresh_conclusive(c):
+        return _newest(hist[c][0], lambda r: is_fresh(r, fingerprint, tags[c])
+                       and record_state(r)["conclusive"])
+
+    def is_pass(rec):
+        return rec is not None and record_state(rec)["state"] == "pass"
+
+    causes = {}
+    if all(passing.values()):
+        step, required = "done", []
+    elif all(ok47.values()):
+        step = "blocked-not-gradeable"
+        causes = {c: "not-gradeable" for c in cells if not_gradeable[c]}
+        required = list(causes)
+    else:
+        infra = {}
+        for c in cells:
+            cause = infra_blocked_cause(hist[c][0], fingerprint, tags[c], session)
+            if cause is not None:
+                infra[c] = cause
+        if infra:
+            step, causes, required = "blocked-infra", infra, list(infra)
+        elif ok47[canary] and not any(failing.values()):
+            step, required = "gate", [c for c in cells if not ok47[c]]
+        elif focus != canary and is_pass(newest_fresh_conclusive(focus)):
+            fver = split_cell(focus)[0]
+            step, required = "cold-version", [c for c in cells if split_cell(c)[0] == fver]
+        elif (not any(failing[c] for c in cells if c != canary) and not ok47[canary]
+              and (is_pass(newest_fresh_conclusive(canary))
+                   or (newest_fresh_conclusive(canary) is None
+                       and is_pass(newest_cold_full(hist[canary][0]))))):
+            step, required = "cold-canary", [canary]
+        else:
+            step, required = "focus", [focus]
+
+    focus_recs = hist[focus][0]
+    recorded = has_recorded_failure(focus_recs)
+    warm, scenarios = False, "full"
+    if step == "focus" and recorded and not diverges(focus_recs, fingerprint):
+        warm = not any(r.get("session") == session and r.get("reason") in WARM_BLOCK_REASONS
+                       for r in focus_recs)
+        latest_full = _newest(focus_recs, lambda r: r.get("scenario_set") == "full")
+        if latest_full is not None and failed_set(latest_full):
+            scenarios = "failed-only"
+
+    tier = E2E_STEP_TIER.get(step)
+    next_cells = []
+    if tier is not None:
+        sv, sb = set(scope_versions), set(scope_browsers)
+        next_cells = [c for c in required if split_cell(c)[0] in sv and split_cell(c)[1] in sb]
+        if not next_cells:
+            # Cakupan run menyingkirkan semua sel langkah ini: tak ada yang jalan, tier tetap
+            # tier langkah yang diblok, field fix-loop kembali ke cold full.
+            step, causes = "blocked-by-scope", {c: "out-of-scope" for c in required}
+            warm, scenarios = False, "full"
+    return {"e2e_step": step, "e2e_tier": tier, "e2e_focus_cell": focus,
+            "e2e_focus_recorded_failure": recorded, "e2e_next_cells": next_cells,
+            "e2e_required_cells": required, "e2e_cells_arg": e2e_cells_arg(next_cells),
+            "e2e_blocked_causes": causes, "e2e_scenarios": scenarios, "e2e_warm": warm}
 
 
 def layer_versions(payload):
@@ -725,6 +1014,89 @@ def per_version_rollup(per_version, e2e_cells):
             "rerun_matrix": matrix}
 
 
+# --- Fase 1: phase1_reuse & clean (cell-contract.md > Plan > Phase 1) ---------------
+# Lapis yang TAK menggerbang Fase 1: e2e (diurus tier) dan adversarial (Fase 2).
+PHASE1_FREE_LAYERS = ("e2e", "adversarial")
+# Lapis per-versi yang dinilai `clean` + kunci temuan yang diwajibkan gerbang bentuknya
+# (sama dgn gerbang ps-aggregate main: static membaca id/severity/message langsung).
+CLEAN_LAYERS = (("static", ("id", "severity", "message")), ("flashlight", ()), ("scenario", ()))
+_AGG = {"mod": None}
+
+
+def phase1_reuse_of(rerun):
+    """True bila tak ada lapis selain e2e/adversarial di daftar `rerun`."""
+    return all(layer in PHASE1_FREE_LAYERS for layer in rerun)
+
+
+def _aggregate():
+    """ps-aggregate dimuat MALAS (ia memuat modul ini saat impor; ia membawa instans
+    ps_plan_layers-nya sendiri). Dipakai hanya untuk fungsi lapis + validate_layer_shape."""
+    if _AGG["mod"] is None:
+        _AGG["mod"] = load_sibling(Path(__file__).resolve().parent / "ps-aggregate.py",
+                                   "ps_aggregate")
+    return _AGG["mod"]
+
+
+def _list_of_objects(val):
+    return isinstance(val, list) and all(isinstance(x, dict) for x in val)
+
+
+def _scenario_shape_notes(payload, ver):
+    """Gerbang bentuk tambahan payload skenario: `versions[ver].scenarios` dan `steps` tiap
+    skenario, bila ada, harus list objek (scenario_layer membacanya dgn .get)."""
+    versions = payload.get("versions")
+    if not isinstance(versions, dict):  # validate_layer_shape sudah menandainya; jangan crash
+        return []
+    entry = versions.get(ver)
+    if not isinstance(entry, dict) or "scenarios" not in entry:
+        return []
+    scen = entry["scenarios"]
+    if not _list_of_objects(scen):
+        return [f"versions['{ver}'].scenarios harus list objek"]
+    return [f"versions['{ver}'].scenarios[{i}].steps harus list objek"
+            for i, sc in enumerate(scen) if "steps" in sc and not _list_of_objects(sc["steps"])]
+
+
+def version_clean(reports_dir, module_name, ver):
+    """`per_version[V].clean` untuk V yang phase1_reuse-nya true: tak satu pun file per-versi
+    Lapis 1, 2, 5 V memuat temuan pemblokir (severity `error`) menurut fungsi lapis
+    ps-aggregate; lapis inconclusive tanpa temuan seperti itu = bersih.
+
+    File yang tak termuat, gagal validate_layer_shape, atau payload skenario yang
+    `versions[V].scenarios`/`steps`-nya bukan list objek -> PlanInputError (exit 2) yang
+    menyebut path-nya. Ketiga file selalu dimuat & divalidasi.
+    """
+    agg = _aggregate()
+    layer_fn = {"static": agg.static_layer, "flashlight": agg.flashlight_layer,
+                "scenario": agg.scenario_layer}
+    blocking = False
+    for layer, keys in CLEAN_LAYERS:
+        path = per_version_path(reports_dir, module_name, layer, ver)
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+            raise PlanInputError(f"file lapis tak termuat: {path} ({e})") from None
+        if not isinstance(payload, dict):
+            raise PlanInputError(f"file lapis bukan objek JSON: {path}")
+        shape = agg.validate_layer_shape(payload, keys)
+        if layer == "scenario":
+            shape += _scenario_shape_notes(payload, ver)
+        if shape:
+            raise PlanInputError(f"file lapis tak lolos gerbang bentuk: {path} ({'; '.join(shape)})")
+        try:
+            res = layer_fn[layer](payload, ver)
+        except (AttributeError, TypeError, KeyError, ValueError, IndexError) as e:
+            # Bentuk bersarang yang lolos gerbang tapi tetap tak terbaca. Sebut tipe galatnya:
+            # bila file-nya tampak sah, ini bisa bug fungsi lapis, bukan file rusak.
+            raise PlanInputError(f"file lapis tak terbaca fungsi lapis: {path} "
+                                 f"({type(e).__name__}: {e}; bila file tampak sah, "
+                                 f"kemungkinan bug skrip)") from None
+        if any(isinstance(f, dict) and f.get("severity") == agg.ERROR
+               for f in res.get("findings") or []):
+            blocking = True
+    return not blocking
+
+
 def _e2e_scenario_notes(module_dir):
     """Catatan spec authored yang DILEWATI (JSON rusak / tanpa expect_*) — milik ps-e2e-run.
 
@@ -771,10 +1143,18 @@ def main(argv=None):
                                       "--new-session; absen/salah bentuk = exit 2)")
     ap.add_argument("--reports-dir", default=DEFAULT_REPORTS_DIR,
                     help=f"Folder laporan (psm_reports_dir; default kanonik: {DEFAULT_REPORTS_DIR})")
-    ap.add_argument("--versions", default="1.7.8,8.1,9.1",
+    # default None (bukan literal): nilai eksplisit yang kebetulan sama dgn default skrip tetap
+    # cakupan run & menang atas --config (apply_config_file mengisi hanya dest yang = default).
+    ap.add_argument("--versions", default=None,
                     help="Versi yang dinilai/dijalankan (cakupan run), dipisah koma — tiap entri "
-                         "harus string versi terkonfigurasi (psm_target_versions). Sel E2E wajib "
-                         "tetap SEMUA sel terkonfigurasi, berapa pun --versions.")
+                         "harus string versi terkonfigurasi (psm_target_versions). Absen -> "
+                         f"psm_target_versions dari --config, else {fl.DEFAULT_TARGET_VERSIONS}. "
+                         "Sel E2E wajib tetap SEMUA sel terkonfigurasi, berapa pun --versions.")
+    ap.add_argument("--browsers", default=None,
+                    help="Browser cakupan run E2E (dinormalisasi seperti psm_e2e_browsers), "
+                         "dipisah koma. Absen -> psm_e2e_browsers dari --config, else "
+                         f"{fl.DEFAULT_E2E_BROWSERS}. Kosong / di luar browser terkonfigurasi = "
+                         "exit 2. Hanya menyaring e2e_next_cells, tak pernah menyusutkan sel wajib.")
     ap.add_argument("--config", help="JSON hasil resolve-psm-config.py — setelan keluarga (tag map, image DB, ps-domain, orchestrator, timeout, versi, browser) diisi dari sini untuk argumen yang tak diberikan eksplisit. Flag eksplisit selalu menang. Himpunan sel E2E wajib (psm_target_versions x psm_e2e_browsers) dibaca LANGSUNG dari sini (default skrip bila absen).")
     ap.add_argument("--rules", default=str(ss.DEFAULT_RULES),
                     help="Path ps-rules.json yang akan dipakai Lapis 1 (default: assets/ps-rules.json)")
@@ -834,6 +1214,8 @@ def main(argv=None):
     if not module_dir.is_dir():
         print(f"error: bukan folder: {module_dir}", file=sys.stderr)
         return 2
+    if args.versions is None:
+        args.versions = fl.DEFAULT_TARGET_VERSIONS
     requested = _parse_scope_versions(args.versions)
     if not requested:
         print("error: tak ada versi target — pra-pass atas nol versi memakai-ulang file lapis "
@@ -852,6 +1234,24 @@ def main(argv=None):
     if outside:
         print(f"error: --versions {', '.join(outside)} bukan versi terkonfigurasi — tiap entri "
               f"harus PERSIS salah satu dari: {', '.join(cfg_versions)}", file=sys.stderr)
+        return 2
+    # Canary dinilai di SETIAP panggilan plan (apa pun psm_e2e_enabled): satu normalizer.
+    try:
+        canary = fl.configured_canary(args.config, cfg_versions, cfg_browsers)
+    except fl.CellConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    # --browsers: cakupan run saja, dinormalisasi seperti psm_e2e_browsers.
+    try:
+        scope_browsers = fl.normalize_engines(
+            fl.DEFAULT_E2E_BROWSERS if args.browsers is None else args.browsers, key="--browsers")
+    except fl.CellConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    off = [b for b in scope_browsers if b not in cfg_browsers]
+    if off:
+        print(f"error: --browsers {', '.join(off)} bukan browser terkonfigurasi — tiap entri "
+              f"harus salah satu dari: {', '.join(cfg_browsers)}", file=sys.stderr)
         return 2
 
     try:
@@ -879,19 +1279,36 @@ def main(argv=None):
     # `not-gradeable`/`scenario-notes` sel E2E.
     notes = _e2e_scenario_notes(module_dir)
     try:
+        histories = read_e2e_histories(args.reports_dir, module_dir.name, cfg_versions,
+                                       cfg_browsers)
         e2e_cells = plan_e2e_cells(args.reports_dir, module_dir.name, cfg_versions, cfg_browsers,
-                                   fingerprint, tag_map, notes)
+                                   fingerprint, tag_map, notes, histories=histories)
     except PlanInputError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+    # Tier E2E: diturunkan murni dari histori yang sama (cakupan run = requested x scope_browsers).
+    tier = derive_e2e_step(histories, list(histories), canary, requested, scope_browsers,
+                           fingerprint, tag_map, args.session, current_notes=notes)
 
     if args.per_version:
         pv = plan_per_version(args.reports_dir, module_dir.name, requested,
                               src_mtime, rel, ruleset, tag_map, e2e_cells=e2e_cells)
+        # phase1_reuse per versi = tak ada lapis selain e2e/adversarial yang rerun; clean hanya
+        # dimuat bila phase1_reuse V true (file Lapis 1/2/5 V lewat fungsi lapis ps-aggregate).
+        try:
+            for ver, entry in pv.items():
+                entry["phase1_reuse"] = phase1_reuse_of(entry["rerun"])
+                entry["clean"] = (entry["phase1_reuse"]
+                                  and version_clean(args.reports_dir, module_dir.name, ver))
+        except PlanInputError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
         result = {"module": module_dir.name, "versions": requested,
                   "newest_source": rel, "source_fingerprint": fingerprint,
                   "mode": "per-version", "per_version": pv,
-                  **per_version_rollup(pv, e2e_cells)}
+                  **per_version_rollup(pv, e2e_cells),
+                  "phase1_reuse": all(e["phase1_reuse"] for e in pv.values()),
+                  **tier}
     else:
         plans = {}
         for layer in LAYERS:
@@ -906,7 +1323,8 @@ def main(argv=None):
             rerun = sorted(rerun + ["e2e"], key=LAYERS.index)
         result = {"module": module_dir.name, "versions": requested,
                   "newest_source": rel, "source_fingerprint": fingerprint,
-                  "layers": plans, "rerun": rerun}
+                  "layers": plans, "rerun": rerun,
+                  "phase1_reuse": phase1_reuse_of(rerun), **tier}
 
     if notes:
         result["e2e_scenario_notes"] = notes

@@ -19,6 +19,14 @@ resolver bila pemanggil tak menyebutnya). Salinan itu = `<cfg>`: teruskan sebaga
 tiap plan, `ps-run-layer.py`, dan agregat, dan `--session <t>` ke tiap plan dan run E2E — jadi
 `ready` dan `versions` mencakup persis sel pemanggil. Cakupan run = semua sel di salinan itu.
 
+**Canary di salinan.** Aturan tangan (tak ada mode skrip): bila `psm_e2e_canary` berbentuk sah —
+di-trim, tepat satu `:`, dua bagian tak kosong — dan, dinormalisasi (versi di-trim; browser
+di-trim dan huruf kecil), selnya di luar versi × browser pemanggil, set `psm_e2e_canary` salinan
+ke `""` (canary default) dan catat `assumption` yang menyebut nilai yang dibuang. Nilai lain
+dibiarkan apa adanya (yang salah bentuk biar exit 2 plan mengembalikan `blocked`). Contoh: pemanggil hanya 9.1,
+canary `8.1:chromium` → salinan ber-`psm_e2e_canary: ""` + assumption "psm_e2e_canary
+`8.1:chromium` di luar sel pemanggil — dikosongkan ke default".
+
 Catat asumsi yang diambil (module-path di-infer, default resolver dipakai) ke
 `<psm_reports_dir>/<module>-validate.memlog.md` via
 `uv run {project-root}/_bmad/scripts/memlog.py` — `init --path <file> --field skill=psm-validate`
@@ -30,18 +38,44 @@ Bila jatuh ke fallback inline — seluruhnya atau satu lensa — tak ada ringkas
 mengakuinya: catat satu `assumption` ke memlog yang menyebut lensa mana yang ditinjau inline
 tanpa konteks bersih.
 
+## Langkah E2E: berhenti di langkah tak bersih pertama
+
+Alur dua fase sama dengan interaktif (`references/run-phases.md`), tanpa operator: tak ada patch,
+tak ada tanya sebab infra, tak ada warm container — `e2e_warm` dan `e2e_scenarios` diabaikan,
+tiap run dingin dan skenario penuh, jadi tiap langkah meninggalkan bukti gate-grade. Tiap run tetap
+persis `--cells <e2e_cells_arg> --tier <e2e_tier>` plan cakupan-run.
+
+- Sesudah tiap run E2E, satu plan dengan flag yang sama. Langkah itu **bersih** bila tak satu pun
+  sel di `e2e_next_cells` plan yang memilih run itu punya entri e2e `rerun_matrix` selain ber-`reason`
+  `not-gradeable`. `blocked-by-scope`, `blocked-not-gradeable` dan `blocked-infra` tak bersih.
+- Anak exit 2 (baris output tercetak) atau exit 143 = langkah tak bersih. Selama rekaman `stopped`
+  belum ada, sel job yang dihentikan mempertahankan rekaman lamanya.
+- Langkah tak bersih pertama mengakhiri **hanya** langkah E2E: loop Fase 1 tiap versi tetap
+  menjalankan Lapis 1, 2 dan 5. Di mana pun berhenti, lalu wrap-up (lensa Lapis 3 di-spawn dulu bila
+  berhenti sebelum Fase 2), jadi tiap kembalian menjalankan agregat — dengan `--session <t>`.
+
 ## Kembalian
 
 Objek JSON kecil, bukan prosa: `status` (`complete`|`blocked`), path laporan, path memlog,
 `ready`, `pass`, dan konklusivitas (`flashlight_conclusive`, `e2e_conclusive`, `layers_run`,
-plus `e2e_smoke_only` bila E2E jalan).
+plus `e2e_smoke_only` bila E2E jalan), plus:
 
-`blocked` + `reason` satu baris bila skill tak bisa menilai sama sekali: module-path tak
-resolve, `main_file_reason: no_php_at_root` (bukan module PrestaShop), Lapis 1 tak
-menghasilkan JSON, atau exit 2 error input — termasuk exit 2 run E2E pra-spawn (tanpa baris
-output; `reason` = stderr-nya). Exit 2 run E2E yang berasal dari anak (baris output
-`e2e_status: ran` tercetak) **bukan** `blocked`: loop E2E berakhir (`references/run-phases.md`
-> Istilah E2E), sisa run jalan sampai agregat.
+- `versions: {<ver>: {e2e_state, reason}}` dan `not_run_cells`, disalin dari agregat ber-`--session
+  <t>`; versi ber-`reached: false` mempertahankan `e2e_state`-nya dan, kecuali `fail`, mendapat
+  `reason` `not reached: stopped at <step>`.
+- `e2e_tier_reached` = `{tier, step}` dari plan cakupan-run terakhir — atau, bila berhenti sesudah
+  run yang tak bersih, dari plan yang memilih run itu (langkah tempat berhenti). `<step>` di
+  `not reached` sama.
+
+Tiap kembalian awal — langkah tak bersih (termasuk job E2E yang dihentikan aturan log diam),
+`blocked-*`, E2E `skipped` — adalah `status: complete` dengan `ready: false`.
+
+`blocked` + `reason` satu baris hanya bila skill tak bisa menilai sama sekali: module-path tak
+resolve, `main_file_reason: no_php_at_root` (bukan module PrestaShop), Lapis 1 tak menghasilkan
+JSON, exit 2 error input — termasuk exit 2 run E2E tanpa baris output (pra-spawn atau gagal
+append) dan exit run E2E lain tanpa baris output (130, 1 mis. traceback), seketika, tanpa wrap-up,
+`reason` = stderr-nya — atau job lapis lain yang dihentikan (di bawah). Exit 2 run E2E dari anak
+(baris output `e2e_status: ran`) **bukan** `blocked`: langkah tak bersih.
 
 Gerbang CI membaca **`ready`**: lolos + lapis yang di-`--require` tuntas (default keempatnya).
 Runner tanpa Docker/browser menghasilkan `ready: false` — jujur, bukan cacat module; `pass`
@@ -58,8 +92,8 @@ diberi laporan atau dimintai izin — jadi aturannya lebih sempit, bukan lebih l
 - **Log diam ±3 menit tanpa `DONE`** (proses menggantung di luar fase berlog) → hentikan
   **hanya job yang dimulai run ini**: `uv run scripts/ps-flashlight-run.py --stop-job <id>`
   (`<id>` dari baris `JOB` / `job=`). Catat satu `assumption` ke memlog (job, versi, fase
-  terakhir), lalu kembalikan `blocked` + `reason` yang menyebut job & fasenya — seketika,
-juga untuk job E2E (exit 143).
+  terakhir). Job lapis lain → kembalikan `blocked` + `reason` yang menyebut job & fasenya,
+  seketika. Job E2E (exit 143) → langkah tak bersih: wrap-up, lalu `complete`.
 - Job yang **bukan** dimulai run ini tak pernah disentuh — tak ada operator yang bisa
   mengizinkannya. Larangan perintah luas di SKILL.md (pkill, `docker rm|kill|stop` berdasarkan
   nama/prefix, `compose down` tanpa project, prune) berlaku penuh.
@@ -69,12 +103,12 @@ juga untuk job E2E (exit 143).
   (`references/run-phases.md` > Job ID); job hidup milik siapa pun tetap tak tersentuh.
   Jangan menambah pembersihan lain.
 - **`no-slots` / `not-run` bukan `blocked`.** Cap slot penuh (`no-slots`, alasan infra) atau
-  sel yang dilewati fail-fast (`not-run`) hanya membuat sel itu tak terbukti; tanpa infra retry
-  headless, langkah E2E versi itu tak jatuh tempo lagi (`references/run-phases.md` > Istilah E2E).
+  sel yang dilewati fail-fast (`not-run`) hanya membuat sel itu tak terbukti: langkahnya tak
+  bersih, jadi langkah E2E berhenti di situ (di atas).
 
 ## Yang tak boleh di headless
 
 - **Jangan pernah** teruskan `--allow-image-pull` ke Lapis 2/4 — jangan tarik image tanpa
   manusia. Pemanggil yang memang mau menarik meneruskannya eksplisit.
 - Lewati verifikasi visual Lapis 4: tak ada peninjau, jadi `--screenshot-dir` tak berguna
-  dan tak ada yang boleh menulis cacat visual ke file lapis adversarial.
+  dan tak ada yang boleh menulis cacat visual (`visual-pending.json` maupun file adversarial).

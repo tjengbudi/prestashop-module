@@ -33,8 +33,9 @@ adanya sesudah `--`, jadi flag baru di skrip lapis tak perlu didaftarkan ulang d
 
 `--config <psm-config.json>` berlaku untuk SEMUA lapis dan diteruskan apa adanya ke tiap anak
 (Lapis 2/5 tak memvalidasinya). `--config`, `--browsers`, `--engines`, `--run-id`, `--slot-cost`,
-`--progress-append`, `--sequential-browsers` (dan flag lain milik skrip ini, termasuk singkatan
-awalan >= 4 karakter, mis. `--slo`) DILARANG di passthrough sesudah `--`.
+`--progress-append`, `--sequential-browsers`, `--tier` (dan flag lain milik skrip ini, termasuk
+singkatan awalan >= 4 karakter, mis. `--slo`; khusus `--tier` baru mulai `--tie`, karena `--ti`
+adalah singkatan `--timeout` anak yang sah) DILARANG di passthrough sesudah `--`.
 
 Lapis 2/5 — exit 2 = error input (lapis tak paralel, flag milik skrip ini ada di passthrough,
 token path belum diresolve, anak menolak inputnya, bukti tak konsisten) — bukti per-versi
@@ -46,7 +47,12 @@ LAPIS E2E (cell-contract.md > Evidence record, Runner):
   - Cakupan: TEPAT SATU dari `--cells <ver>:<browser>[+<browser>],...` atau `--versions`
     (= versi itu x SEMUA browser terkonfigurasi). Himpunan terkonfigurasi = psm_target_versions
     x psm_e2e_browsers dari `--config` (default skrip bila absen); sel di luarnya = exit 2.
-    `--session <[a-z0-9]{16}>` WAJIB (dari ps-plan-layers.py --new-session). `--per-version`
+    `--session <[a-z0-9]{16}>` WAJIB (dari ps-plan-layers.py --new-session). `--tier 0|1` WAJIB
+    (= `e2e_tier` dari ps-plan-layers; absen atau selain `0`/`1` = exit 2) dan distempel sebagai
+    bilangan bulat JSON `tier` di SETIAP rekaman yang ditulis run ini (hasil sel anak, `crash`,
+    `browser-unavailable`, `no-slots`, `not-run`). `--tier` dgn `--merge-only` atau lapis lain =
+    exit 2. `psm_e2e_canary` di `--config` divalidasi (normalizer ps-flashlight-run; tak sah =
+    exit 2 menyebut key-nya, apa pun `psm_e2e_enabled`). `--per-version`
     atau `--jobs` (juga dgn --merge-only) = exit 2. Browser dipilih lewat `--cells`/config,
     BUKAN `--browsers` sesudah `--` (anak menerima `--engines` dari skrip ini).
   - SLOT (CAP-3): admisi per slot SEDAEMON — N = `--slots` (override manual), else
@@ -87,7 +93,7 @@ LAPIS E2E (cell-contract.md > Evidence record, Runner):
 
 Contoh:
   uv run scripts/ps-run-layer.py --layer e2e --module modules/mymod --session <token> \\
-      --cells 1.7.8:chromium+firefox,9.1:firefox --reports-dir reports \\
+      --tier 1 --cells 1.7.8:chromium+firefox,9.1:firefox --reports-dir reports \\
       --config reports/psm-config.json -- --tag-map 1.7.8=1.7.8.11,8.1=8.1.6-nginx,9.1=9.1.4-nginx
   uv run scripts/ps-run-layer.py --layer flashlight --module modules/mymod \\
       --versions 1.7.8,8.1,9.1 --reports-dir reports --config reports/psm-config.json
@@ -130,10 +136,16 @@ SERIAL_LAYERS = {
 # `--run-id`, `--slot-cost`, `--progress-append`, `--sequential-browsers`: diset skrip ini pada
 # tiap anak E2E (klaim slot, biaya, log wait-slots, mode sekuensial) — salinan di passthrough
 # memalsukan klaim/biaya yang dihitung seluruh daemon.
+# `--tier`: distempel skrip ini di tiap rekaman histori; anak tak mengenalnya, jadi salinan di
+# passthrough hanya bisa jadi salah ketik yang menyesatkan pembaca log.
 RESERVED_PASSTHROUGH = ("--versions", "-o", "--output", "--cleanup-orphans", "--progress-file",
                         "--job-id", "--stop-job", "--list-jobs", "--config", "--browsers",
                         "--engines", "--run-id", "--slot-cost", "--progress-append",
-                        "--sequential-browsers")
+                        "--sequential-browsers", "--tier")
+# Panjang singkatan awalan MINIMUM per flag reserved (default 4, mis. `--co`). `--tier` baru
+# tertangkap mulai `--tie`: `--ti` adalah singkatan `--timeout` milik anak yang sah dan harus
+# tetap sampai ke anak.
+RESERVED_MIN_PREFIX = {"--tier": len("--tie")}
 
 DEFAULT_JOBS = 3  # Lapis 2/5: tiap job mem-boot container PS + DB
 # Lapis 4: admisi per SLOT sedaemon (cell-contract.md > Config keys > psm_e2e_slots), bukan
@@ -338,7 +350,8 @@ def reserved_in_passthrough(extra):
             # Seluruh tuple, bukan daftar tangan: tiap flag milik skrip ini juga terjangkau
             # lewat singkatan awalan yang argparse anak terima (`--conf`, `--brow`, `--eng`).
             for full in RESERVED_PASSTHROUGH:
-                if full.startswith("--") and full.startswith(head):
+                if (full.startswith("--") and full.startswith(head)
+                        and len(head) >= RESERVED_MIN_PREFIX.get(full, 4)):
                     hits.append(full)
                     break
     return hits
@@ -677,13 +690,19 @@ def _passthrough_value(extra, full, min_len=5):
 def read_e2e_config(path, fl):
     """Peta key ps-run-layer atas `--config` (bukan apply_config_file): himpunan sel,
     `psm_flashlight_tag_map`, `psm_flashlight_startup_timeout`, `psm_e2e_slots` (kosong =
-    default; bukan bilangan bulat >= 1 = error, juga bila --slots diberikan). Error -> InputError."""
+    default; bukan bilangan bulat >= 1 = error, juga bila --slots diberikan), `psm_e2e_canary`
+    (normalizer bersama ps-flashlight-run; tak sah = error menyebut key-nya, apa pun
+    `psm_e2e_enabled` — run ini tak membacanya). Error -> InputError."""
     try:
         cfg = fl.read_config_json(path) if path else {}
         versions = fl.normalize_versions(cfg.get("psm_target_versions"))
         browsers = fl.normalize_engines(cfg.get("psm_e2e_browsers"))
     except fl.CellConfigError as e:
         raise InputError(f"himpunan sel terkonfigurasi tak sah: {e}") from None
+    try:
+        canary = fl.normalize_canary(cfg.get(fl.CANARY_KEY), versions, browsers)
+    except fl.CellConfigError as e:
+        raise InputError(f"--config: {e}") from None
     tag_map = cfg.get("psm_flashlight_tag_map")
     if tag_map is not None and not isinstance(tag_map, str):
         raise InputError(f"--config: psm_flashlight_tag_map={tag_map!r} harus string versi=tag,...")
@@ -706,7 +725,7 @@ def read_e2e_config(path, fl):
             raise InputError(f"--config: psm_e2e_slots={cfg.get('psm_e2e_slots')!r} harus "
                              "bilangan bulat >= 1") from None
     return {"versions": versions, "browsers": browsers, "tag_map": tag_map,
-            "startup_timeout": timeout, "slots": slots}
+            "startup_timeout": timeout, "slots": slots, "canary": canary}
 
 
 def parse_slots(raw):
@@ -722,6 +741,16 @@ def parse_slots(raw):
     if val < 1:
         raise ValueError(raw)
     return val
+
+
+def parse_tier(raw):
+    """`--tier` run Lapis 4 -> int 0/1 (= `e2e_tier` plan). Absen / selain `0`/`1` -> InputError."""
+    if raw is None:
+        raise InputError("--tier wajib untuk lapis e2e — beri `e2e_tier` dari ps-plan-layers.py "
+                         "(0 = fix loop, 1 = gerbang rilis)")
+    if raw not in ("0", "1"):
+        raise InputError(f"--tier {raw!r} harus 0 atau 1 (`e2e_tier` dari ps-plan-layers.py)")
+    return int(raw)
 
 
 def resolve_tags(extra, cfg_tag_map, versions, fl):
@@ -777,7 +806,8 @@ def build_record(pl, ver, engine, *, vres, cell, reason, admitted, ctx, run_id=N
 
     `run_id` = RUN_ID klaim versi yang diadmisi (semua rekamannya, crash termasuk); tanpa itu
     `ctx["run_id"]` (milik ps-run-layer: not-run/no-slots). `wait` = hasil `wait-slots`
-    ({seconds, outcome}) yang digabung ke `phase_durations` (dict baru bila null).
+    ({seconds, outcome}) yang digabung ke `phase_durations` (dict baru bila null). `tier` =
+    `ctx["tier"]` (int `--tier`) di SETIAP jenis rekaman — semua lewat fungsi ini.
     """
     rec = dict.fromkeys(RECORD_KEYS)
     if vres is not None:
@@ -795,7 +825,7 @@ def build_record(pl, ver, engine, *, vres, cell, reason, admitted, ctx, run_id=N
             rec[k] = cell.get(k)
     rec.update(version=ver, browser=engine, session=ctx["session"],
                source_fingerprint=ctx["fingerprint"], job_id=ctx["job_id"],
-               tier=None, keeper_boot=None)
+               tier=ctx["tier"], keeper_boot=None)
     if reason:
         rec.update(state=state, conclusive=False, reason=reason)
     elif cell is not None and cell.get("state") == "not-run":
@@ -848,6 +878,7 @@ def _e2e_input(args, extra, fl, log):
                          "bukan file per-versi")
     if bool(args.cells) == bool(args.versions):
         raise InputError("lapis e2e butuh TEPAT SATU dari --cells atau --versions")
+    tier = parse_tier(args.tier)
     if args.session is None:
         raise InputError("--session wajib untuk lapis e2e — buat token sekali per run dengan "
                          "`ps-plan-layers.py --new-session`")
@@ -907,7 +938,8 @@ def _e2e_input(args, extra, fl, log):
     except pl.PlanInputError as e:
         raise InputError(str(e)) from None
     return {"cells": cells, "extra": extra, "shot_base": shot_base, "tags": tags,
-            "fingerprint": fingerprint, "slots": slots, "startup_timeout": startup_timeout}
+            "fingerprint": fingerprint, "slots": slots, "startup_timeout": startup_timeout,
+            "tier": tier}
 
 
 def _count_error_tail(err):
@@ -938,7 +970,8 @@ class _SlotRun:
         self.slots = inp["slots"]
         self.limit = max(0, inp["startup_timeout"])
         self.ctx = {"session": args.session, "fingerprint": inp["fingerprint"],
-                    "job_id": job_id, "run_id": fl.RUN_ID, "tags": inp["tags"]}
+                    "job_id": job_id, "run_id": fl.RUN_ID, "tags": inp["tags"],
+                    "tier": inp["tier"]}
         self.claim_of = {v: uuid.uuid4().hex[:12] for v in self.versions}
         self.logs = {v: progress_file(args.reports_dir, args.module, "e2e", v)
                      for v in self.versions}
@@ -1447,6 +1480,8 @@ def main(argv=None):
                                     "dijalankan (eksklusif dgn --versions)")
     ap.add_argument("--session", help="Lapis e2e saja (WAJIB): token sesi validasi [a-z0-9]{16} "
                                       "dari ps-plan-layers.py --new-session")
+    ap.add_argument("--tier", help="Lapis e2e saja (WAJIB kecuali --merge-only): 0|1 = `e2e_tier` "
+                                   "dari ps-plan-layers.py; distempel di tiap rekaman histori")
     ap.add_argument("--config", help="JSON psm-config (resolve-psm-config.py) — diteruskan apa "
                                      "adanya ke tiap anak. Lapis e2e membaca himpunan sel, "
                                      "psm_flashlight_tag_map dan psm_flashlight_startup_timeout")
@@ -1496,7 +1531,7 @@ def main(argv=None):
         return 2
     if args.layer != "e2e":
         for flag, val in (("--cells", args.cells), ("--session", args.session),
-                          ("--slots", args.slots)):
+                          ("--slots", args.slots), ("--tier", args.tier)):
             if val is not None:
                 log(f"error: {flag} hanya untuk lapis e2e")
                 return 2
@@ -1521,7 +1556,8 @@ def main(argv=None):
     if args.merge_only:
         if args.layer == "e2e":
             given = [f for f, v in (("--cells", args.cells), ("--versions", args.versions),
-                                    ("--session", args.session)) if v is not None]
+                                    ("--session", args.session), ("--tier", args.tier))
+                     if v is not None]
             if extra:
                 given.append("passthrough sesudah `--`")
             if given:

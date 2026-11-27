@@ -1,0 +1,458 @@
+{
+ "run_id": "20261126-192048",
+ "round": 1,
+ "complete": true,
+ "lenses": {
+  "adversarial": {
+   "reported": 15,
+   "valid": true,
+   "count": 15
+  },
+  "edge-case": {
+   "reported": 16,
+   "valid": true,
+   "count": 16
+  },
+  "implementer": {
+   "reported": 22,
+   "valid": true,
+   "count": 22
+  }
+ },
+ "invalid": [],
+ "missing": [],
+ "unexpected": [],
+ "findings": [
+  {
+   "id": "adversarial-1",
+   "lens": "adversarial",
+   "location": "Boundaries > Docs ('Docs replace the interim orchestration as a whole') vs. interim-orchestration.md > Definitions",
+   "issue": "Replacing the interim orchestration as a whole deletes rules that the contract has no equivalent for: pre-spawn exit 2 does not end the loop; a child exit 2 (output line `ran`, exit 2) ends the E2E loop; the interactive infra-retry prompt (ask Budi to fix the environment or decline before re-running); and interactive handling of an E2E exit 143. Contract > E2E loop ended lists only `skipped`, `blocked-*`, `psm_e2e_enabled` false and `--require` without e2e. After CAP-1 the plan is stateless about these. A child exit 2 leaves `not-run input-error` records, the plan derives the same step, and the orchestrator re-runs the rejected input forever. One infra record (e.g. a missing image) is re-run at once without asking, which burns a second cold boot before `blocked-infra` fires. After a 143, the step is simply derived again.",
+   "implementation_impact": "The doc writer must either invent rules (which counts as an Ask First contract change) or drop them silently. That reintroduces an infinite-loop risk and unprompted retries that the interim had already closed.",
+   "suggestion": "Add a 'Kept interim rules' bullet that names which of these survive CAP-1 (child exit 2 and pre-spawn exit 2 behaviour, the infra-retry prompt, interactive 143 handling) and where they live in run-phases.md. Otherwise, mark them as an Ask First contract amendment before implementation."
+  },
+  {
+   "id": "adversarial-2",
+   "lens": "adversarial",
+   "location": "Boundaries > Runner (`stopped` records) and I/O row 'Stop'",
+   "issue": "The spec says `stopped` records are written 'for every admitted cell of a child reaped with STOPPED_CODES and of every child still in flight when the run itself is stopped'. It never says each admitted cell gets exactly one record. --stop-job signals the job's processes in arbitrary order, so ps-run-layer can reap a SIGTERM'd child through `_on_reaped` (rc 143, which now writes `stopped`) and then catch its own JobStopped and write `stopped` again for a child it still considers in flight. The case of a child that finished normally but was not yet reaped when JobStopped arrives is also unaddressed: its result file exists, so the spec does not say whether it is reaped normally or overwritten with `stopped`.",
+   "implementation_impact": "Duplicate `stopped` lines per cell, or a real pass/fail result discarded in favour of `stopped`. A duplicate does not affect blocked-infra, but it pollutes `appended`, and a lost `fail` changes failing and focus derivation.",
+   "suggestion": "State that each admitted cell gets exactly one record per run, tracked by a reaped/recorded set. On JobStopped, first reap every child whose future is already done, as usual. Only cells of children still running get `stopped`, appended after their processes exit or after JOB_STOP_GRACE. Add I/O rows for 'child reaped rc 143 then own JobStopped' and 'child finished but unreaped at stop'."
+  },
+  {
+   "id": "adversarial-3",
+   "lens": "adversarial",
+   "location": "Boundaries > Runner (`stopped` for every admitted cell of a STOPPED_CODES child)",
+   "issue": "Under the CAP-3 interim every child runs `--sequential-browsers`. If chromium has already finished (for example with `fail`) when firefox is SIGTERM'd, the child writes no `-o` output on JobStopped (`run_main_with_progress` returns 143). The spec's blanket rule then records both cells as `stopped`, and the completed engine's conclusive result is lost. The contract's wording, 'the child's per-cell result, or, when the child left none', implies the finished engine should keep its result. The spec neither preserves it nor acknowledges the loss.",
+   "implementation_impact": "A conclusive `fail` that should make the cell failing, and so move the focus cell, disappears after an operator stop. The next plan derives from older evidence.",
+   "suggestion": "Either state explicitly that a stopped child's finished engines are lost (accepted interim loss, documented in run-phases.md), or require the child to flush per-engine results before re-raising JobStopped so ps-run-layer can keep the finished cells and mark only the undriven ones `stopped`."
+  },
+  {
+   "id": "adversarial-4",
+   "lens": "adversarial",
+   "location": "Boundaries > Plan ('phase1_reuse/clean per version ... in both modes') and Design Notes (top-level phase1_reuse)",
+   "issue": "`clean` and per-version `phase1_reuse` are required 'in both modes', but canonical mode has no `per_version` object and judges canonical files, not per-version files. The spec does not say where the per-version fields go in canonical output or which files canonical-mode `clean` reads. The contract also says every call that reads these fields uses --per-version. Separately, 'blocking finding' is not mapped to the layer functions' outputs: static_layer gives error/warning severities and a `conclusive` flag, scenario_layer gives `conclusive: false` with zero findings when a module ships no scenarios, and flashlight_layer has its own shape. Nothing says whether an inconclusive layer is clean.",
+   "implementation_impact": "Two implementers will emit different canonical shapes and different `clean` values. For example, a module with no tests/scenarios, or a static scan with rules_evaluated 0, could be judged clean or dirty either way, so the Phase 1 loop may never end or may end too early.",
+   "suggestion": "Pin the following. (1) The canonical-mode location of per-version fields, or drop them from canonical mode and emit only top-level `phase1_reuse`. (2) clean = phase1_reuse(V) AND (static errors == 0) AND (flashlight errors == 0) AND (scenario errors == 0), with conclusiveness explicitly ignored or included. (3) The per-version files are read only when phase1_reuse(V) is true, and a read error yields clean=false rather than ps-aggregate's `load_json` sys.exit(2). Add I/O rows for all of these."
+  },
+  {
+   "id": "adversarial-5",
+   "lens": "adversarial",
+   "location": "I/O & Edge-Case Matrix (missing rows)",
+   "issue": "Several Boundary items have no row or acceptance criterion. Missing: aggregate `versions[ver].reached` (true, false, and field absent without --session); per-version `clean`/`phase1_reuse`; a single child reaped with STOPPED_CODES while siblings continue (the case that flips the existing CAP-3 test); the not-gradeable variant with scenario_notes equal to the current notes; canary validation in the aggregate; and `--browsers` empty.",
+   "implementation_impact": "These behaviours ship untested or get tested against the implementer's own reading. 'Every I/O row' in Tasks then means less than the Boundaries promise.",
+   "suggestion": "Add one row each for reached (including whether a version with only `not-run`/`no-slots`/`stopped` records of the session counts as reached; the contract says yes, so pin it), clean/phase1_reuse, the single-child SIGTERM, scenario-notes not-gradeable, aggregate bad canary, and `--browsers \"\"`."
+  },
+  {
+   "id": "adversarial-6",
+   "lens": "adversarial",
+   "location": "I/O row 'Hosted in 8.1'",
+   "issue": "The row feeds the default scope and expects next `[9.1:chromium]`. That is the plain `cold-canary` output and does not depend on hosting at all. The real failure mode, the orchestrator passing the hosting loop's `--versions 8.1` to the E2E plan call, lives in the docs, and no script test can catch it.",
+   "implementation_impact": "The row passes trivially and gives false assurance that the hosting rule is covered.",
+   "suggestion": "Make the row assert the contrast: the same state with `--versions 8.1` derives `blocked-by-scope` with required `[9.1:chromium]`, while default scope derives `cold-canary`. Add a docs check that the hosting loop's E2E plan call uses the operator's run scope, not V."
+  },
+  {
+   "id": "adversarial-7",
+   "lens": "adversarial",
+   "location": "Acceptance Criteria #1 (generated-history invariant test)",
+   "issue": "The generator is underspecified. Focus derivation depends on `job_id` (run grouping) and `started_at` across cells, and blocked-infra and e2e_warm depend on `session` and `image_tag`, but the AC fixes none of these. 'Stale and warm variants for the focus cell' is circular, because the focus cell is an output of the derivation under test. One record per cell never exercises multi-record orderings (fail then pass, the diverge sequence), which is where step 5/6/7 bugs live.",
+   "implementation_impact": "The implementer picks one job_id and timestamp scheme, for example all in one run, which never tests cross-run focus selection, and the invariant passes vacuously for the interesting cases.",
+   "suggestion": "Specify the generator: each cell's record gets its own job_id with distinct started_at (plus a variant where all share one job_id), every record carries the current session and resolved image_tag, and stale/warm variants apply to every failing cell rather than 'the focus cell'. Add two-record histories (fail→pass, pass→fail, warm-pass after cold-fail) for at least one non-canary cell and the canary."
+  },
+  {
+   "id": "adversarial-8",
+   "lens": "adversarial",
+   "location": "I/O row 'Diverge' and contract Plan step 7 (diverge predicate)",
+   "issue": "'A warm or partial pass on the current fingerprint is newer than a cold full fail on it' can mean any cold full fail or the newest one. Under 'any', the sequence cold fail → warm pass → warm fail also diverges and forces cold forever, even though no cold run contradicted the warm pass. The single test row cannot tell the two readings apart.",
+   "implementation_impact": "Implementations can differ on whether warm/failed-only iterations are ever offered again after one warm pass. That decides CAP-5's value once it lands, and the plan's `e2e_warm` output is already emitted this slice.",
+   "suggestion": "Pin the predicate in Design Notes, e.g. 'diverges iff, on the current fingerprint, some warm/partial pass P exists and the newest cold full conclusive record is a fail newer than P'. Add a row for cold fail → warm pass → warm fail (expect not diverged, e2e_warm true)."
+  },
+  {
+   "id": "adversarial-9",
+   "lens": "adversarial",
+   "location": "I/O row 'Two failing'",
+   "issue": "The expected sequence is 'focus 1.7.8:chromium, then 8.1:firefox once it passes'. That omits the `cold-version` 1.7.8 step that tier-matrix Loop-back requires ('steps 1 and 2 run for each in focus-cell order') whenever the fix-loop pass is warm or partial. 'Once it passes' is also ambiguous about which cell must pass and whether it is a fresh warm pass or a cold full pass.",
+   "implementation_impact": "A test written from this row can encode the interim cold-full path only, or skip cold-version, and still pass while contradicting the contract for the hand-written warm-record path that Design Notes says the tests must reach.",
+   "suggestion": "Spell out both variants as the Loop-back rows do. Warm pass on 1.7.8:chromium: focus 1.7.8:chromium → cold-version [1.7.8 ×2] → focus 8.1:firefox → … → cold-canary → gate. Cold full pass: focus 1.7.8:chromium → focus 8.1:firefox → … ."
+  },
+  {
+   "id": "adversarial-10",
+   "lens": "adversarial",
+   "location": "Boundaries > Runner (`--tier` required) / Bad input row",
+   "issue": "The spec says `--tier` is required for non-`--merge-only` e2e runs and exit 2 for other layers. It is silent on `--merge-only --layer e2e --tier 0`, which the contract restricts to `--module`/`--reports-dir`/`--config`. It is also silent on canary validation scope in the runner: e2e only, or also Layers 2/5 and merge-only, which also read `--config`. And it does not say whether a mis-tiered call is detected; nothing reads `tier`, so `--tier 1` on a focus run is stamped silently.",
+   "implementation_impact": "The merge-only behaviour and runner-side canary rejection will differ by implementer. A bad `psm_e2e_canary` could abort Layer 2 runs or the wrap-up's report view for no reason, or never be rejected on the merge-only path.",
+   "suggestion": "State: `--tier` with `--merge-only` = exit 2; canary validated only in `read_e2e_config` (non-merge-only `--layer e2e`); `tier` is informational, never read by plan or aggregate. Add the merge-only `--tier` case to the Bad input row."
+  },
+  {
+   "id": "adversarial-11",
+   "lens": "adversarial",
+   "location": "Boundaries > Canary normalizer / Bad input row",
+   "issue": "'Malformed' is undefined beyond the contract's 'version must match a configured string exactly'. The spec does not say what happens with `9.1` without a browser, `9.1:chromium:x`, surrounding whitespace, `9.1:Chromium` (normalize_engines lowercases browsers, so is this normalized or rejected?), `9.1.0:chromium` when `9.1` is configured, or JSON `null`/absent versus `\"\"`. The Bad input row tests only 'not configured'.",
+   "implementation_impact": "Plan, runner and aggregate share one normalizer, but its accepted grammar is chosen ad hoc, and only the not-configured case is pinned by tests.",
+   "suggestion": "Give the grammar in Design Notes: `^<configured-version-string>:<engine>$` after strip; engine compared case-sensitively or lowercased (choose one); null/absent/\"\" → default. Add malformed variants to the Bad input row."
+  },
+  {
+   "id": "adversarial-12",
+   "lens": "adversarial",
+   "location": "Boundaries > Plan (field list) / Design Notes",
+   "issue": "Empty or N/A shapes are unpinned for several fields. `e2e_cells_arg` when `e2e_next_cells` is empty (done, blocked-*): \"\" or null? `e2e_focus_cell` for `done`/`blocked-*`: the canary per the contract definition, or null? `e2e_scenarios`/`e2e_warm` on blocked steps. And the top-level `phase1_reuse` key versus `per_version[V].phase1_reuse` naming in per-version mode.",
+   "implementation_impact": "An orchestrator following docs that say 'run exactly e2e_cells_arg' may pass `--cells \"\"` or `--cells None`, and the tests will encode whichever shape the implementer chose.",
+   "suggestion": "Add a one-line shape table: e2e_cells_arg = \"\" (or null) when next is empty; e2e_focus_cell always set (canary when no failing cell); e2e_warm false and e2e_scenarios \"full\" outside `focus`."
+  },
+  {
+   "id": "adversarial-13",
+   "lens": "adversarial",
+   "location": "Acceptance Criteria #3 (headless config-copy) and Verification",
+   "issue": "AC 3 is about a rule the orchestrator (the model, via docs) applies. No script writes the headless config copy, and Verification runs only unit tests, so the AC cannot be verified by any listed command. The copies `<module>-psm-config.headless.<session>.json` also accumulate in psm_reports_dir with no cleanup rule.",
+   "implementation_impact": "The AC will be marked done on a doc edit with no executable check. The canary-reset rule is the kind of transform the project elsewhere moves into scripts because model-applied transforms drift.",
+   "suggestion": "Either add a tiny script or flag (e.g. a resolver option that writes the headless copy with versions/browsers and resets an out-of-set canary, logging the assumption) and test it, or rewrite AC 3 as a docs-review check and add it to Verification as a grep or manual step. Also state when the headless copy is deleted."
+  },
+  {
+   "id": "adversarial-14",
+   "lens": "adversarial",
+   "location": "Boundaries > Docs ('contract > Docs to update') vs. Never (later slices)",
+   "issue": "Docs are written 'per contract > Docs to update', but that section includes CAP-4/5/7 material: `requires` in e2e-quickstart, foreign keepers in On Activation, keeper logs and `ALIVE idle`, the warm stop via --stop-job, `parallel_only`, and the `snapshot-db`/`lock-wait`/`barrier-wait` phases. The spec does not list which Docs-to-update items are in scope for CAP-1 and which stay deferred. It also omits contract items that are in scope, such as the On Activation step 2 scope menu gaining browsers.",
+   "implementation_impact": "The doc writer will either document features that do not exist (warm keepers, failed-only) or omit CAP-1 items. Either way the docs drift from the scripts, which the orchestrator then follows.",
+   "suggestion": "Enumerate the CAP-1 doc deltas file by file (SKILL.md: Lapis 4, Fase 1/2, stop convergence, On Activation scope with browsers; run-phases.md: ...; headless.md: ...; four callers: `not reached`), and add an explicit 'not yet' list (requires, keeper, warm, parallel phases)."
+  },
+  {
+   "id": "adversarial-15",
+   "lens": "adversarial",
+   "location": "Code Map / Tasks",
+   "issue": "The Code Map omits files the Tasks touch or depend on. It leaves out `spec-psm-e2e-cap2-cap6-cell-evidence.interim-orchestration.md` (it gets a superseded note) and `references/headless.md`'s return-shape consumers. It does not mention that ps-aggregate loading ps-plan-layers at import, while plan now lazily loads ps-aggregate, yields a second ps-plan-layers module instance, so exception classes such as PlanInputError differ in identity. The pure step-derivation function's inputs are also not listed: fingerprint, per-version image tags, current notes, session, canary, configured order, scope.",
+   "implementation_impact": "`except PlanInputError` around aggregate-loaded helpers silently misses errors raised by the other instance, and a 'pure function' without a fixed signature gets designed ad hoc, which makes the unit tests brittle.",
+   "suggestion": "Add the interim companion to the Code Map, note the dual-module-instance hazard (catch by name or keep the lazy calls free of plan exceptions), and give the derivation function's signature, e.g. `derive_e2e_step(cells_records, *, configured, canary, fingerprint, tags, notes, session, scope)`."
+  },
+  {
+   "id": "edge-case-1",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Canary",
+   "issue": "The canary value is a non-string JSON value (null, a number, a list, or a YAML mapping such as `9.1: chromium`), or uses different case or whitespace (`9.1:Chromium`, ` 9.1:chromium`), or has a `+`-joined browser list. The spec does not say how the normalizer treats these.",
+   "implementation_impact": "Plan, runner and aggregate may each parse it differently. One may fall back to the default canary while another exits 2, so tier derivation is not deterministic.",
+   "suggestion": "Define one canonical form: `str`, matching `^<dotted-digits>:<engine>$` after strip, with no case folding. A null value is treated as \"\" (the default). Anything else exits 2 with the same message in all three scripts."
+  },
+  {
+   "id": "edge-case-2",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`--tier`)",
+   "issue": "`--tier` (or a malformed canary) is passed with `--merge-only --layer e2e`. The spec covers only non-merge-only runs and other layers.",
+   "implementation_impact": "Wrap-up `--merge-only` calls may be rejected or silently accepted, depending on how this is implemented. The wrap-up can then fail after the E2E loop ends.",
+   "suggestion": "State the rule. For example: `--tier` together with `--merge-only` exits 2, the same as `--jobs`/`--slots`. Also say whether merge-only validates the canary (it reads `--config`)."
+  },
+  {
+   "id": "edge-case-3",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`stopped` records)",
+   "issue": "A child reaped with a STOPPED_CODES exit code still leaves a readable per-cell payload, for example a cell that finished before SIGTERM. The contract writes `stopped` only when the child left no result; this spec says every admitted cell gets `stopped`.",
+   "implementation_impact": "A conclusive `fail` (or `pass`) the child already produced may be replaced by an inconclusive `stopped` record. That loses evidence and changes failing/focus derivation.",
+   "suggestion": "Reconcile with the contract: if the payload has a cell result, use it; otherwise append an inconclusive record with reason `stopped`. Add a test for each branch."
+  },
+  {
+   "id": "edge-case-4",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`stopped` records); I/O row Stop",
+   "issue": "The run is stopped while cells are still queued or waiting in `wait-slots`. These cells were never admitted, and the spec gives `stopped` records only to admitted cells.",
+   "implementation_impact": "Queued cells get no record. This conflicts with the headless rule that the cells of a stopped job get `stopped`, and the history does not show that the stop covered them.",
+   "suggestion": "Specify what unadmitted queued cells get on a run stop: either a `stopped` record, or explicitly no record (and update the headless wording to match). Add a Stop row with one queued cell."
+  },
+  {
+   "id": "edge-case-5",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`stopped` records)",
+   "issue": "The run's own stop SIGTERMs an in-flight child, which is then reaped with STOPPED_CODES, or the child finishes normally while the stop handler is running. Both stopped paths, or the normal reap and the stop path, can cover the same cell.",
+   "implementation_impact": "A cell can get two records (a real result plus `stopped`, or two `stopped`). This breaks the one-record-per-cell-per-run rule and can skew blocked-infra counting.",
+   "suggestion": "Each admitted cell gets exactly one record per run. Keep a per-version `recorded` flag under the reap lock. The stop path appends `stopped` only for versions whose flag is still unset."
+  },
+  {
+   "id": "edge-case-6",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`stopped` records, exit 143)",
+   "issue": "Appending a `stopped` record fails (disk or permission error) inside the stop handler. Under CAP-3 an append error means exit 2, but a stop means exit 143.",
+   "implementation_impact": "The exit code is undefined, so the orchestrator may treat an operator stop as an environment error, or the reverse.",
+   "suggestion": "Pick one: exit 143 wins and the append error goes to stderr only, or exit 2 wins. Document the choice and test it."
+  },
+  {
+   "id": "edge-case-7",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (`clean` via ps-aggregate layer functions)",
+   "issue": "A per-version Layer 1, 2 or 5 file is inconclusive with no findings (boot or install error, `errors` > 0), or has a shape the aggregate layer function rejects or raises on. The spec defines `clean` only as having no blocking finding.",
+   "implementation_impact": "An inconclusive Layer 2/5 result may count as clean and open the E2E step. A malformed file may crash the plan with a traceback instead of exiting 2.",
+   "suggestion": "Define `clean` as `phase1_reuse and every layer conclusive-or-skipped and no blocking finding`. If a layer function raises, the plan exits 2 and names the file."
+  },
+  {
+   "id": "edge-case-8",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (`phase1_reuse`/`clean` \"in both modes\")",
+   "issue": "In canonical mode (no `--per-version`), `per_version[V].clean` is requested from the per-version files, but in Phase 2 only canonical files are written.",
+   "implementation_impact": "In canonical mode `clean` may read missing or stale per-version files and report false or true wrongly. Wrap-up or Phase 2 entry may then misjudge versions.",
+   "suggestion": "Say which files canonical mode judges for `clean`/`phase1_reuse` per version, or emit `per_version[V].clean` only in `--per-version` mode."
+  },
+  {
+   "id": "edge-case-9",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (`e2e_cells_arg`)",
+   "issue": "`e2e_next_cells` is empty (`done`, `blocked-*`, or the run-scope filter). The value of `e2e_cells_arg` in that case is not given (\"\", null, or omitted).",
+   "implementation_impact": "An orchestrator that \"runs exactly `e2e_cells_arg`\" may call `--cells \"\"`, get exit 2, and end the E2E loop for the wrong reason.",
+   "suggestion": "Set `e2e_cells_arg = null` when `e2e_next_cells` is empty, and have the docs say: run nothing when it is null. Test it for `done` and `blocked-by-scope`."
+  },
+  {
+   "id": "edge-case-10",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (`--browsers` run scope)",
+   "issue": "The spec defines the `--browsers` errors, but not what happens when `--versions` in the plan lists a version that is not configured, or one that is equal only numerically (`9.1.0` vs `9.1`).",
+   "implementation_impact": "The scope filter may match by numeric value in one place and by exact string in another. That can produce a spurious `blocked-by-scope` or run unintended cells.",
+   "suggestion": "State that the run-scope filter matches configured version strings exactly, and that an E2E-relevant `--versions` entry outside the configured versions exits 2 (or is ignored), mirroring `--browsers`."
+  },
+  {
+   "id": "edge-case-11",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (hosting version)",
+   "issue": "The focus cell's version is outside the run scope, so the hosting version is \"the first in-scope version\". \"First\" is not defined: numeric order or `--versions` written order.",
+   "implementation_impact": "The docs or the orchestrator may pick different hosting loops, which changes which version's Phase 1 runs first.",
+   "suggestion": "Define first as the lowest in numeric dotted order among in-scope versions (or as written order) and state it in run-phases.md."
+  },
+  {
+   "id": "edge-case-12",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (Phase 1 loop, Phase 2 loop)",
+   "issue": "Inside the hosting or Phase 2 loop, `ps-run-layer` exits 143 (operator stop), or exits 2 with no output line (append error), or exits 2 after a child exit 2. The spec says nothing about what the orchestrator does next.",
+   "implementation_impact": "The next plan call re-derives the same step (`stopped` records are skipped), so the orchestrator may re-run a step the operator just stopped, or loop forever.",
+   "suggestion": "Docs must map each run outcome to an action. 143: end the E2E loop, or ask the operator interactively. Exit 2 with no line: fix and retry. Exit 2 after a child exit 2: the E2E loop ends."
+  },
+  {
+   "id": "edge-case-13",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Aggregate (`reached`)",
+   "issue": "A version's only records in the session are `not-run`, `no-slots` or `stopped`. The version counts as reached even though no engine drove it.",
+   "implementation_impact": "Headless reports such a version with reason not-run/stopped rather than `not reached`. Callers may treat the two differently, and the spec does not say which is intended.",
+   "suggestion": "State explicitly whether records with `state not-run` or reason in {`no-slots`, `stopped`} count toward `reached`, and add a test row."
+  },
+  {
+   "id": "edge-case-14",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Aggregate (`reached`); Docs > Headless",
+   "issue": "The E2E loop ended without any E2E step running: Docker is absent (`skipped`), `psm_e2e_enabled` is false, or `--require` is given without `e2e`, while `--session` is passed. Every version then gets `reached: false`.",
+   "implementation_impact": "Headless reports `not reached: stopped at <step>` for a step that never ran. Callers read this as a tiering stop rather than E2E being disabled or skipped.",
+   "suggestion": "Specify the reason text for versions not reached because the E2E loop ended before any run. For example, use the skip reason, or omit `reached` when no E2E run happened in the session."
+  },
+  {
+   "id": "edge-case-15",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs > Headless (config copy with canary reset)",
+   "issue": "The resolved config's `psm_e2e_canary` is malformed, not merely outside the caller's cells. The copy rule resets the canary only when it names a cell outside the caller's set.",
+   "implementation_impact": "A headless run exits 2 at the first plan call, and callers get no per-version verdict, where a reset with an assumption log might have been intended.",
+   "suggestion": "Say whether headless resets a malformed canary to \"\" with an assumption logged, or returns `blocked` with an input-error reason."
+  },
+  {
+   "id": "edge-case-16",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (focus cell per contract)",
+   "issue": "Two failing records from different `job_id`s have the same highest `started_at`, or the failing record's `job_id` is null. Tie-breaks are defined only inside one run.",
+   "implementation_impact": "The \"newest run\" is ambiguous, so the focus cell, and with it the hosting step, can vary between plan calls.",
+   "suggestion": "Add a deterministic fallback. For example: break ties across runs by the cells' history append position, then numeric version, then browser order. A null `job_id` forms its own run per record."
+  },
+  {
+   "id": "implementer-1",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Docs bullet; Tasks > docs; cell-contract.md > Docs to update",
+   "issue": "The docs bullet says the docs replace the interim orchestration 'as a whole (contract > Docs to update)'. That contract section also lists items owned by later slices: `requires` in e2e-quickstart.md (CAP-4), listing foreign keepers and warm stop via `--stop-job` (CAP-5), the keeper log and `ALIVE idle` lines in 'Pantau run Docker' (CAP-5), the `no warm container` text in headless.md, and `parallel_only`/`e2e_phase_durations` in 'Vonis dan output' (CAP-6/7). The spec's own list (hosting version ... four headless callers) names only part of it. It also never says that e2e-quickstart.md must gain `--tier 0`. The interim companion's 'Quickstart TDD verdict' explicitly says 'no `--versions`, `--tier`, `--e2e`', so once `--tier` is required the documented quickstart command exits 2.",
+   "implementation_impact": "The implementer has to guess which 'Docs to update' items belong in this slice. Writing CAP-4/5 doc text documents flags that do not exist and that the Never list forbids. Leaving the quickstart as it is leaves a broken command.",
+   "suggestion": "List exactly which 'Docs to update' items are in scope for CAP-1 and which wait for CAP-4/5/6/7. Name e2e-quickstart.md (`--cells 9.1:chromium --tier 0 --session <t>`) and adversarial-lens.md (respawn after loop-back) explicitly."
+  },
+  {
+   "id": "implementer-2",
+   "lens": "implementer",
+   "location": "Boundaries > Docs bullet ('replace the interim orchestration as a whole'); interim-orchestration.md > Definitions (E2E loop ended, Pre-spawn exit 2, Infra retry, V's E2E step is due); cell-contract.md > Plan > E2E loop ended",
+   "issue": "The interim file has several rules that the contract's 'E2E loop ended' list does not have: (a) a child exit 2 ends the E2E loop; (b) a pre-spawn exit 2 does not end it (fix the input and rerun; headless returns `blocked`); (c) an interactive exit 143 ends the loop unless Budi asks to rerun; (d) Budi declining to patch an E2E `fail` ends it; (e) 'V's E2E step is due', which prevents rerunning on an unchanged fingerprint. CAP-1 replaces the file 'as a whole' and does not say which of these survive. Without (a), a child input error leaves `not-run` records with reason `input-error after <ver>`, which are not an infra cause, so `blocked-infra` never fires. The plan keeps deriving the same step and the orchestrator reruns it forever. Without (c), an interactive operator stop is followed at once by a rerun of the same step, because `stopped` records are skipped by blocked-infra and the plan derives the same step.",
+   "implementation_impact": "The docs writer must invent loop-termination rules. If any of them is dropped, the orchestrator can loop forever or override a stop Budi chose.",
+   "suggestion": "State in the spec which interim rules carry over into the CAP-1 docs: child exit 2 ends the E2E loop, pre-spawn exit 2 handling, interactive exit 143, and decline-to-patch, which is now 'stop convergence'. Mark any that the contract supersedes, or add them to Ask First."
+  },
+  {
+   "id": "implementer-3",
+   "lens": "implementer",
+   "location": "Boundaries > Docs bullet; tier-matrix.md > Rules (clean: 'report the infra cause and rerun that cell'); interim-orchestration.md > Infra retry",
+   "issue": "In the interim, the orchestrator asked Budi to fix the environment before an infra retry (`--allow-image-pull`, `playwright install`, freeing slots). Under the contract, an infra result is simply rerun. A second infra record in the same session and fingerprint gives `blocked-infra`, which ends the E2E loop for the whole session; only a new session retries. The spec does not say whether the orchestrator still pauses for an environment fix before that rerun.",
+   "implementation_impact": "If the rerun happens without a pause, a missing image or browser deterministically spends the one retry and ends E2E for the session. If the pause is kept, that is an undocumented interim decision.",
+   "suggestion": "Decide explicitly. For example: 'Before rerunning a cell whose newest record has an infra cause, report it and offer the environment fix (interactive); headless reruns once.' Write the decision into the Docs bullet."
+  },
+  {
+   "id": "implementer-4",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Canary bullet ('malformed ... = exit 2')",
+   "issue": "'Malformed' is not defined, and neither is where the runner validates. Open cases: whitespace or upper case (`' 9.1 : Chromium '`; `normalize_engines` lower-cases browsers), a missing key, JSON `null`, a list value, extra colons, and a numerically equal version (`9.1.0:chromium` against configured `9.1`). The contract requires an exact configured-string match, but the spec drops that clause. Runner scope is also open: today `read_e2e_config` runs only for non-`--merge-only` e2e runs, while `--merge-only --layer e2e` and Layer 2/5 runs call `configured_cells`. Should a bad canary also exit 2 there?",
+   "implementation_impact": "Three scripts must agree on one normalizer. Different guesses produce divergent exit codes and drift in the tests.",
+   "suggestion": "Specify: a string `<ver>:<browser>`, trimmed, with the browser lower-cased; the version must equal a configured string exactly; absent, null and '' mean the default; any other type is exit 2. Also list the entry points that validate it, for example plan, aggregate, and ps-run-layer e2e runs including `--merge-only` (or not), but not Layer 2/5."
+  },
+  {
+   "id": "implementer-5",
+   "lens": "implementer",
+   "location": "Boundaries > Plan bullet ('plus `phase1_reuse`/`clean` per version ... in both modes'); Design Notes > top-level `phase1_reuse`",
+   "issue": "Canonical (non-`--per-version`) output has no `per_version` object, and it judges canonical layer files, not per-version files. The Boundaries text says per-version `phase1_reuse`/`clean` are emitted 'in both modes', using the per-version files. The Design Notes define only a top-level canonical `phase1_reuse`, computed from the canonical `rerun`. The contract says every call that reads these fields uses `--per-version`.",
+   "implementation_impact": "The implementer has to guess whether canonical mode gains a `per_version` block (and whether it reads per-version or canonical files for `clean`), or emits only the top-level `phase1_reuse`.",
+   "suggestion": "State it outright. For example: 'canonical mode: top-level `phase1_reuse` only (from canonical `rerun`), no `per_version`/`clean`; per-version mode: `per_version[V].phase1_reuse`, `per_version[V].clean`, and top-level AND'. Alternatively define canonical `clean`."
+  },
+  {
+   "id": "implementer-6",
+   "lens": "implementer",
+   "location": "Boundaries > Plan bullet (`clean` via ps-aggregate `static_layer`/`flashlight_layer`/`scenario_layer`); cell-contract.md > Plan > Phase 1",
+   "issue": "Two cases are not defined. (1) A per-version file that parses as JSON but has the wrong shape: `plan_layer` checks only JSON, mtime and version coverage, while `static_layer` reads `f['id']`/`f['severity']` directly, and ps-aggregate normally gates this with `validate_layer_shape` first. (2) An inconclusive layer result: static `conclusive: false` because no rule hit that major, flashlight `ran: false` or a timeout, or scenario 'versi tak dijalankan'. These have no blocking findings, so V reads as clean. Nothing says whether that is intended.",
+   "implementation_impact": "(1) can crash the plan with a traceback instead of exit 2. (2) can open Phase 2 on versions whose Layer 1/2/5 evidence proves nothing. Implementers will decide this silently.",
+   "suggestion": "Say that `clean` runs `validate_layer_shape` (failure means not clean, or exit 2), and say whether an inconclusive layer counts as clean. Per the contract text it does, so the spec should confirm that explicitly."
+  },
+  {
+   "id": "implementer-7",
+   "lens": "implementer",
+   "location": "Boundaries > Runner bullet (`stopped` records); I/O row 'Stop'",
+   "issue": "The rule covers 'every child still in flight when the run itself is stopped'. Several cases are open. (a) A future that is already done but not yet reaped when JobStopped arrives: reap its real output, or write `stopped`? (b) Cells still queued in `wait-slots`: today's `test_e2e_stopped` asserts they get no record. Is that kept? (c) Does ps-run-layer wait for in-flight children to exit before appending, or append at once from the handler? The contract says 'written from the stop handler before teardown ends'. (d) Fields on these records: the `run_id` claim, `phase_durations.wait-slots`, `tier`. (e) The exit code when a child is reaped with `STOPPED_CODES` but the run itself is not stopped. Today that is 1 through `child_stopped`.",
+   "implementation_impact": "The race in (a) can overwrite a real pass or fail with `stopped`. Leaving (b) open forces a guess against an existing test assertion.",
+   "suggestion": "Specify: a done-but-unreaped child is reaped normally; queued cells get no record (unchanged); records are appended from the JobStopped path without waiting for the children; fields follow `build_record` with `reason='stopped'`, the claim `run_id`, the merged `wait-slots` and `tier`; a single STOPPED child keeps run exit 1."
+  },
+  {
+   "id": "implementer-8",
+   "lens": "implementer",
+   "location": "Boundaries > Runner bullet ('required for every non-`--merge-only` `--layer e2e` run')",
+   "issue": "The spec does not say what happens when `--tier` is given together with `--merge-only --layer e2e`. The contract says merge-only takes only `--module`, `--reports-dir` and `--config`, and the code rejects `--cells`/`--versions`/`--session` there. `--tier` is not in that list.",
+   "implementation_impact": "An implementer may silently accept `--tier` on merge-only, which contradicts the contract.",
+   "suggestion": "Add: '`--tier` with `--merge-only` = exit 2 (joins the existing merge-only rejection list)'. Add a test."
+  },
+  {
+   "id": "implementer-9",
+   "lens": "implementer",
+   "location": "Boundaries > Plan bullet (fields); cell-contract.md > Plan (`e2e_focus_cell`, `e2e_cells_arg`)",
+   "issue": "Several field values are undefined for steps with no next cells (`done`, `blocked-*`, `blocked-by-scope`). Is `e2e_cells_arg` an empty string or null? Is `e2e_focus_cell` null, or the canary, which is what the literal rule 'no failing cell → the canary' gives? What are `e2e_scenarios` and `e2e_warm`: 'All other steps are full', and false? The same question for `e2e_focus_cell` on `gate`.",
+   "implementation_impact": "The orchestrator docs and headless callers parse these values. Divergent guesses break the 'run exactly `e2e_cells_arg`' rule. Passing an empty `--cells` is exit 2.",
+   "suggestion": "Add a short table of the value of every tier field for each step, including `blocked-*` and `done`."
+  },
+  {
+   "id": "implementer-10",
+   "lens": "implementer",
+   "location": "I/O matrix row 'Two failing'",
+   "issue": "The expectation is 'focus 1.7.8:chromium, then 8.1:firefox once it passes'. That holds only if the pass of 1.7.8:chromium is cold full, which clears `failing`. If the pass is warm or partial, step 5 derives `cold-version` [1.7.8:chromium, 1.7.8:firefox] first. The row does not say which pass it means, and it does not mention that under CAP-3 sequential fail-fast 1.7.8:firefox would be `not-run`.",
+   "implementation_impact": "The test writer must pick a sequence. One reading contradicts the derivation.",
+   "suggestion": "Spell the sequence out, for example: 'cold full pass of 1.7.8:chromium → focus 8.1:firefox → cold full pass → cold-canary → gate'. Optionally add the warm variant with its `cold-version` step."
+  },
+  {
+   "id": "implementer-11",
+   "lens": "implementer",
+   "location": "I/O matrix row 'Promote order'",
+   "issue": "The row does not say which cell (the canary, step 6, or a non-canary focus cell, step 5), what boot or scenario set the 'pass' uses, or what 'promotes' means as a step value. For the canary, a cold full fail then a cold full pass derives `gate` (step 4), not `cold-canary`; only a warm pass yields `cold-canary`.",
+   "implementation_impact": "The test can pass while exercising the wrong step, or a correct implementation can fail a mis-specified test.",
+   "suggestion": "Give two concrete sub-cases with expected `e2e_step`. Non-canary focus: fail, then warm pass → `cold-version`; pass, then fail → `focus`. Canary: fail, then warm pass → `cold-canary`; pass, then fail → `focus`."
+  },
+  {
+   "id": "implementer-12",
+   "lens": "implementer",
+   "location": "I/O matrix row 'Hosted in 8.1'",
+   "issue": "The hosting rule is an orchestrator rule: the E2E step comes from a separate plan call with the operator's scope, not `--versions 8.1`. A plan-only test with default scope at `cold-canary` returns [9.1:chromium] trivially and cannot fail, so it does not test hosting.",
+   "implementation_impact": "The row looks covered but verifies nothing about hosting.",
+   "suggestion": "Test the contrast at plan level: the same state with `--versions 8.1` gives `blocked-by-scope`, and with the default scope gives [9.1:chromium]. Mark the separate-plan-call rule as a docs-only requirement in run-phases.md."
+  },
+  {
+   "id": "implementer-13",
+   "lens": "implementer",
+   "location": "Acceptance Criteria #3 (headless config copy)",
+   "issue": "The criterion is a docs rule that the LLM orchestrator follows while writing `<module>-psm-config.headless.<session>.json`. No script implements it, and the Verification commands, which run unit tests only, cannot exercise it.",
+   "implementation_impact": "This done-criterion cannot be checked by any listed command.",
+   "suggestion": "Either move the canary reset into a script (for example a helper that writes the headless copy) and test it, or reword it as a docs criterion checked by review with a concrete wording check."
+  },
+  {
+   "id": "implementer-14",
+   "lens": "implementer",
+   "location": "Acceptance Criteria #1 (generated histories invariant)",
+   "issue": "The generator is underspecified. (a) 'Stale and warm variants for the focus cell': the focus cell is an output of derivation, so the generator must derive it first. (b) Focus selection depends on `job_id`/`started_at`, and no assignment rule is given. (c) 'inconclusive' needs a `reason`. (d) The invariant does not check that `e2e_next_cells` is empty for `done`, `blocked-*` and `blocked-by-scope`, or that `cold-canary` yields exactly the canary.",
+   "implementation_impact": "Different generators give very different coverage. The test may never reach `cold-version`/`cold-canary` with stale variants.",
+   "suggestion": "Specify: every failing record shares one `job_id`, with `started_at` increasing in plan order; inconclusive records use reason `crash`; the variants are applied to the cell derived as focus on the base combination. Extend the assertion to steps with no next cells."
+  },
+  {
+   "id": "implementer-15",
+   "lens": "implementer",
+   "location": "SPEC.md CAP-1 success vs Acceptance Criteria / I/O matrix",
+   "issue": "SPEC CAP-1 success says: 'With a clean module, both tiers run and `ready` is true.' No I/O row or AC covers the end state: canary cold pass, then gate passes, then step `done`, `e2e_tier` null, empty next, and an aggregate with `ready: true` from the same histories. The smoke-only row also never asserts that `ready` stays false.",
+   "implementation_impact": "The headline success criterion of CAP-1 has no regression test.",
+   "suggestion": "Add an I/O row 'Clean module: canary pass + gate pass → done, tier null, next [], aggregate ready true'. Add `ready` false to the smoke-only row."
+  },
+  {
+   "id": "implementer-16",
+   "lens": "implementer",
+   "location": "Design Notes > 'Interim consequence'; SPEC.md CAP-1 intent ('re-proves V and the canary cold before the gate resumes'); tier-matrix.md > Loop-back step 2",
+   "issue": "Because a cold full fix-loop pass clears `failing`, `cold-version` (Loop-back step 2) is never reached in the interim. It is also never reached in headless permanently, since headless is always cold full. V's other browsers are then re-proved only inside tier 1, after the canary. That changes the SPEC intent, and the spec records it as a Design Note rather than under Ask First ('changing a contract rule'). It is also not interim-only for headless.",
+   "implementation_impact": "Whoever reviews the docs or behaviour may treat this as a bug. Headless callers lose the 'V re-proved before gate' ordering for good.",
+   "suggestion": "Note it explicitly as an accepted change of SPEC meaning (or get it confirmed under Ask First). Note also that it applies to headless beyond CAP-4/5. The headless docs should say V's other browsers are re-proved in tier 1."
+  },
+  {
+   "id": "implementer-17",
+   "lens": "implementer",
+   "location": "Boundaries > Docs bullet (`visual-pending.json`); tier-matrix.md > Visual review",
+   "issue": "The tier-matrix limits visual review to the cold canary run, tier 1, `cold-version` and `cold-canary`, and never warm or failed-only runs. In the interim, every fix-loop `focus` run after a failure is also cold full. The spec does not say whether those runs are reviewed. The interim companion reviewed every run.",
+   "implementation_impact": "The docs writer must guess, and the Layer 4 review scope changes silently.",
+   "suggestion": "State whether interim post-failure `focus` runs, which are cold full, get visual review, for example 'yes, every cold full run'. Otherwise list them as excluded."
+  },
+  {
+   "id": "implementer-18",
+   "lens": "implementer",
+   "location": "Design Notes > '`e2e_blocked_causes` is `{}` outside `blocked-*`'; cell-contract.md > Plan (`out-of-scope` for each cell the run scope removed)",
+   "issue": "The contract can be read as reporting `out-of-scope` for every cell the scope filter removed. The spec limits causes to `blocked-*` steps, so a `gate` step that is only partly in scope reports nothing about the cells it skipped. This narrows the contract's meaning.",
+   "implementation_impact": "Operators get no machine-readable signal for a partially filtered step. A reviewer may flag a contract deviation.",
+   "suggestion": "Either keep `{}` and note it as a deliberate interim decision (the dropped cells remain visible as `e2e_required_cells` minus `e2e_next_cells`), or emit `out-of-scope` for removed cells on any step."
+  },
+  {
+   "id": "implementer-19",
+   "lens": "implementer",
+   "location": "Boundaries > Plan bullet (`e2e_scenarios`); Never (CAP-4); cell-contract.md > Plan step 7 / Failed-only rerun",
+   "issue": "`e2e_scenarios: failed-only` depends on the CAP-4 'failed set': the union of `findings[].scenario` and `inconclusive[].scenario` from the latest full-scenario record, cold or warm, fresh or stale. CAP-4 is listed under Never, and the spec does not restate the definition or say whether that computation is built now. The Canary blocking bug row expects `failed-only`.",
+   "implementation_impact": "The implementer may half-build CAP-4 selection logic, or emit `failed-only` on a different predicate.",
+   "suggestion": "Say that the plan implements only the failed-set emptiness check (the union above, from the newest `scenario_set: full` record) and that no scenario selection is built."
+  },
+  {
+   "id": "implementer-20",
+   "lens": "implementer",
+   "location": "Code Map > ps-plan-layers.py (`plan_e2e_cells`); Tasks > 'step derivation as a pure function over per-cell records'",
+   "issue": "`plan_e2e_cells` returns only `{reuse, reason, path}` per cell. Derivation needs the records, the corrupt tail and the resolved tags. The module docstring declares `plan_e2e_cells` a stable shared API ('nama & bentuknya stabil'), but grep shows that only ps-plan-layers calls it. The spec does not say whether its shape changes or whether histories are read twice.",
+   "implementation_impact": "A minor design guess, with risk of double reads or breaking a declared-stable API.",
+   "suggestion": "Say whether `plan_e2e_cells` gains a records-returning sibling (for example `read_e2e_cells` → records, corrupt, tag) that both `plan_e2e_cells` and the derivation use. Update the docstring claim."
+  },
+  {
+   "id": "implementer-21",
+   "lens": "implementer",
+   "location": "Boundaries > Plan bullet (`--browsers` 'empty or outside the configured browsers = exit 2')",
+   "issue": "Normalization of `--browsers` is not given. Open points: case (`Chromium`), duplicates, whitespace, an unsupported engine (`safari`: outside configured, or unsupported?), and what `--browsers ''` means compared with leaving the flag out. `apply_config_file` fills `browsers` from `psm_e2e_browsers` only when the parser default is unchanged, so the default must be None.",
+   "implementation_impact": "This needs a small guess. Error messages and tests may diverge from the `--cells` parser, which lower-cases engines.",
+   "suggestion": "Say that `--browsers` goes through `normalize_engines` (lower-case, dedupe), with the default None filled from config, and then a subset check against the configured browsers."
+  },
+  {
+   "id": "implementer-22",
+   "lens": "implementer",
+   "location": "Boundaries > Aggregate bullet (`reached`); cell-contract.md > Aggregate / Headless",
+   "issue": "'A record of that session' counts any record, including `not-run`, `no-slots` and `stopped`. A version whose cells were all fail-fast `not-run` in this session therefore has `reached: true`. Headless then reports reason `not-run` rather than `not reached: stopped at <step>`, even though no engine drove it. The spec mirrors the contract without saying whether that is intended.",
+   "implementation_impact": "Headless callers may treat such a version as reached or assessed. The implementer may 'fix' this by filtering record states.",
+   "suggestion": "Confirm that any record state counts, as the literal contract says. Otherwise define it as 'a record with a driven engine (`pass`/`fail`/`inconclusive` not in {not-run, no-slots, stopped})'. Add a test either way."
+  }
+ ],
+ "duplicates_removed": [],
+ "clusters": [
+  [
+   "edge-case-3",
+   "edge-case-5"
+  ]
+ ]
+}

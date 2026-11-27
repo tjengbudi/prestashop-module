@@ -318,7 +318,7 @@ def test_cli_gates():
                     json.loads(korban.read_text())["pass"] is True)
         ok &= check("gerbang menyala SEBELUM anak di-spawn", fake.cmds == [])
 
-        for layer, sess in (("flashlight", []), ("e2e", ["--session", SESSION])):
+        for layer, sess in (("flashlight", []), ("e2e", ["--session", SESSION, "--tier", "0"])):
             rc_t, err_t = _run_main(["--layer", layer, "--module", m, "--versions", "9.1",
                                      "--reports-dir", "{project-root}/rep", *sess], fake)
             ok &= check(f"{layer}: token {{project-root}} di --reports-dir -> exit 2",
@@ -990,12 +990,15 @@ def _e2e_env(tmp):
     return rep, m
 
 
-def _e2e(rep, m, cfg, *scope, extra=(), session=SESSION, more=()):
+def _e2e(rep, m, cfg, *scope, extra=(), session=SESSION, more=(), tier="0"):
+    """argv run Lapis 4; `--tier` (wajib) default `0`, `tier=None` = tanpa `--tier`."""
     argv = ["--layer", "e2e", "--module", m, "--reports-dir", rep, *scope]
     if cfg:
         argv += ["--config", cfg]
     if session:
         argv += ["--session", session]
+    if tier is not None:
+        argv += ["--tier", tier]
     argv += list(more)
     if extra:
         argv += ["--", *extra]
@@ -1176,10 +1179,11 @@ def test_e2e_record_fields():
         r = recs[0] if recs else {}
         ok &= check("rekaman: kunci PERSIS Fields + boot_wall_clock + boot_log",
                     set(r) == RECORD_FIELDS and set(mod.RECORD_KEYS) == RECORD_FIELDS)
-        ok &= check("rekaman: field runner (session, fingerprint, job_id, tier/keeper_boot null)",
+        ok &= check("rekaman: field runner (session, fingerprint, job_id, tier 0, keeper_boot null)",
                     r.get("session") == SESSION and r.get("job_id") == job
                     and r.get("source_fingerprint") == _line(out)["source_fingerprint"]
-                    and r.get("tier") is None and r.get("keeper_boot") is None)
+                    and type(r.get("tier")) is int and r.get("tier") == 0
+                    and r.get("keeper_boot") is None)
         ok &= check("rekaman: state/conclusive/reason dari derive_state",
                     (r.get("state"), r.get("conclusive"), r.get("reason")) == ("pass", True, None))
         ok &= check("rekaman: field level-versi anak disalin apa adanya",
@@ -2237,6 +2241,154 @@ def test_e2e_append_error_cancels():
     return ok
 
 
+# --- CAP-1: --tier & canary (spec-psm-e2e-cap1-tiered-gate > Design Notes > Runner) ---------
+def test_e2e_tier_bad_input():
+    """I/O 'Bad input' sisi runner: --tier absen/2, --tier dgn lapis lain atau --merge-only,
+    canary di luar himpunan -> exit 2 sebelum spawn."""
+    ok = True
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        webkit = _cfg(tmp, name="webkit.json", psm_e2e_canary="9.1:webkit")
+        webkit_off = _cfg(tmp, name="webkit-off.json", psm_e2e_canary="9.1:webkit",
+                          psm_e2e_enabled=False)
+        cases = [
+            ("e2e tanpa --tier", _e2e(rep, m, cfg, "--versions", "9.1", tier=None), "--tier"),
+            ("--tier 2", _e2e(rep, m, cfg, "--versions", "9.1", tier="2"), "--tier"),
+            ("--tier x", _e2e(rep, m, cfg, "--cells", "9.1:chromium", tier="x"), "--tier"),
+            ("--tier kosong", _e2e(rep, m, cfg, "--cells", "9.1:chromium", tier=""), "--tier"),
+            ("--tier dgn lapis flashlight", ["--layer", "flashlight", "--module", m,
+                                             "--reports-dir", rep, "--versions", "9.1",
+                                             "--tier", "0"], "--tier"),
+            ("--tier dgn lapis scenario", ["--layer", "scenario", "--module", m,
+                                           "--reports-dir", rep, "--versions", "9.1",
+                                           "--tier", "1"], "--tier"),
+            ("--tier dgn --merge-only e2e", ["--layer", "e2e", "--module", m, "--reports-dir",
+                                             rep, "--config", cfg, "--merge-only",
+                                             "--tier", "0"], "--tier"),
+            ("--tier dgn --merge-only flashlight", ["--layer", "flashlight", "--module", m,
+                                                    "--reports-dir", rep, "--versions", "9.1",
+                                                    "--merge-only", "--tier", "0"], "--tier"),
+            ("canary 9.1:webkit tak terkonfigurasi", _e2e(rep, m, webkit, "--versions", "9.1"),
+             "psm_e2e_canary"),
+            ("canary 9.1:webkit walau psm_e2e_enabled false",
+             _e2e(rep, m, webkit_off, "--cells", "9.1:chromium"), "psm_e2e_canary"),
+        ]
+        for raw in ("9.1", "9.1:chromium:x", "7.0:chromium", 91):
+            c = _cfg(tmp, name=f"canary-{raw}.json".replace(":", "_"), psm_e2e_canary=raw)
+            cases.append((f"canary {raw!r}", _e2e(rep, m, c, "--versions", "9.1"),
+                          "psm_e2e_canary"))
+        for name, argv, needle in cases:
+            fake = E2EChild()
+            rc, err, out = _run_full(argv, fake)
+            ok &= check(f"input: {name} -> exit 2, tak spawn, tanpa baris output, menyebut {needle}",
+                        rc == 2 and fake.cmds == [] and out.strip() == "" and needle in err)
+        ok &= check("tak ada histori tertulis oleh error input --tier/canary",
+                    not list(Path(rep).glob("*.jsonl")))
+        # Kontrol positif: canary sah (bentuk longgar) dan tier 1 diterima.
+        loose = _cfg(tmp, name="loose.json", psm_e2e_canary=" 8.1 : Firefox ")
+        fake = E2EChild()
+        rc, _err, _out = _run_full(_e2e(rep, m, loose, "--cells", "9.1:chromium", tier="1"), fake)
+        ok &= check("kontrol: canary ' 8.1 : Firefox ' + --tier 1 -> exit 0, anak di-spawn",
+                    rc == 0 and len(fake.cmds) == 1)
+        ok &= check("kontrol: merge-only e2e tanpa --tier tetap sah",
+                    _run_full(["--layer", "e2e", "--module", m, "--reports-dir", rep,
+                               "--config", cfg, "--merge-only"], E2EChild())[0] == 0)
+    return ok
+
+
+def test_e2e_tier_stamped():
+    """`tier` = bilangan bulat JSON di SETIAP jenis rekaman: hasil anak, crash,
+    browser-unavailable, no-slots, not-run."""
+    ok = True
+
+    def tiers(rep, cells):
+        recs = [r for v, b in cells for r in _hist(rep, v, b)]
+        return recs, [r.get("tier") for r in recs]
+
+    def is_int(vals, want):
+        return bool(vals) and all(type(t) is int and t == want for t in vals)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        rc, _e, _o = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium", tier="1"), E2EChild())
+        recs, ts = tiers(rep, [("9.1", "chromium")])
+        ok &= check("tier: rekaman hasil anak (pass) -> tier 1 int",
+                    rc == 0 and [r["state"] for r in recs] == ["pass"] and is_int(ts, 1))
+        rc, _e, _o = _run_full(_e2e(rep, m, cfg, "--cells", "8.1:chromium+firefox"),
+                               E2EChild(lambda v, e: (None, 1)))
+        recs, ts = tiers(rep, [("8.1", "chromium"), ("8.1", "firefox")])
+        ok &= check("tier: rekaman crash -> tier 0 int",
+                    rc == 1 and [r["reason"] for r in recs] == ["crash", "crash"] and is_int(ts, 0))
+        rc, _e, _o = _run_full(_e2e(rep, m, cfg, "--cells", "1.7.8:chromium+firefox", tier="1"),
+                               E2EChild(lambda v, e: (_child_payload(v, ["chromium"],
+                                                                     available=["chromium"]), 0)))
+        recs, ts = tiers(rep, [("1.7.8", "firefox")])
+        ok &= check("tier: rekaman browser-unavailable -> tier 1 int",
+                    [r["reason"] for r in recs] == ["browser-unavailable"] and is_int(ts, 1))
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        fake = E2EChild()
+        rc, _e, _o = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium", tier="1",
+                                    more=["--slots", "1"], extra=["--startup-timeout", "0"]),
+                               fake, usage=_usage(1, [{"job": "x-e2e-0900-beef", "host": "h",
+                                                       "run": "r", "cost": 1}]))
+        recs, ts = tiers(rep, [("9.1", "chromium")])
+        ok &= check("tier: rekaman no-slots -> tier 1 int",
+                    fake.cmds == [] and [r["reason"] for r in recs] == ["no-slots"]
+                    and is_int(ts, 1))
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        fake = E2EChild(lambda v, e: (_child_payload(v, e, kind="fail"), 3) if v == "9.1"
+                        else (_child_payload(v, e), 0))
+        rc, _e, _o = _run_full(_e2e(rep, m, cfg, "--cells", THREE, tier="1",
+                                    more=["--slots", "1"]), fake, usage=_usage(0))
+        recs, ts = tiers(rep, [("9.1", "chromium"), ("8.1", "chromium"), ("1.7.8", "chromium")])
+        ok &= check("tier: rekaman fail anak + not-run fail-fast -> tier 1 int",
+                    rc == 3 and [r["state"] for r in recs] == ["fail", "not-run", "not-run"]
+                    and is_int(ts, 1))
+        line = PL.history_path(rep, "mymod", "8.1", "chromium").read_text().strip()
+        ok &= check("tier: tertulis di baris histori sebagai angka JSON, bukan string",
+                    '"tier": 1' in line or '"tier":1' in line)
+    return ok
+
+
+def test_e2e_tier_passthrough():
+    """`--ti 30` sesudah `--` tetap sampai ke anak (= --timeout); `--tier`/`--tie` ditolak."""
+    ok = True
+    ok &= check("RESERVED_PASSTHROUGH memuat --tier", "--tier" in mod.RESERVED_PASSTHROUGH)
+    ok &= check("reserved_in_passthrough: --ti lolos, --tie/--tier/--tier=1 tertangkap",
+                mod.reserved_in_passthrough(["--ti", "30"]) == []
+                and mod.reserved_in_passthrough(["--tie", "1"]) == ["--tier"]
+                and mod.reserved_in_passthrough(["--tier", "1"]) == ["--tier"]
+                and mod.reserved_in_passthrough(["--tier=1"]) == ["--tier"])
+    with tempfile.TemporaryDirectory() as tmp:
+        rep, m = _e2e_env(tmp)
+        cfg = _cfg(tmp)
+        fake = E2EChild()
+        rc, err, _out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium",
+                                       extra=["--ti", "30"]), fake)
+        cmd = fake.cmds[0] if fake.cmds else []
+        ok &= check("--ti 30 sesudah `--` -> exit 0, anak menerima `--ti 30` apa adanya",
+                    rc == 0 and len(fake.cmds) == 1 and "--ti" in cmd
+                    and cmd[cmd.index("--ti") + 1] == "30")
+        for extra in (["--tier", "1"], ["--tie", "1"], ["--tier=0"]):
+            fake = E2EChild()
+            rc, err, out = _run_full(_e2e(rep, m, cfg, "--cells", "9.1:chromium", extra=extra),
+                                     fake)
+            ok &= check(f"{extra[0]} sesudah `--` -> exit 2, tak spawn, menyebut --tier",
+                        rc == 2 and fake.cmds == [] and out.strip() == "" and "--tier" in err)
+    # Argparse anak asli memetakan `--ti` ke `--timeout` (bukti singkatan itu memang milik anak).
+    p = subprocess.run([sys.executable, str(SCRIPTS / "ps-e2e-run.py"), "/tidak/ada", "--ti",
+                        "bukan-angka"], capture_output=True, text=True, timeout=60)
+    ok &= check("anak ps-e2e-run: `--ti` diurai sebagai --timeout",
+                p.returncode == 2 and "--timeout" in p.stderr)
+    return ok
+
+
 def main():
     ok = True
     for name, fn in (("test_pure", test_pure),
@@ -2284,6 +2436,9 @@ def main():
                      ("test_e2e_child_not_run_kept", test_e2e_child_not_run_kept),
                      ("test_e2e_append_error_cancels", test_e2e_append_error_cancels),
                      ("test_e2e_own_exception", test_e2e_own_exception),
+                     ("test_e2e_tier_bad_input", test_e2e_tier_bad_input),
+                     ("test_e2e_tier_stamped", test_e2e_tier_stamped),
+                     ("test_e2e_tier_passthrough", test_e2e_tier_passthrough),
                      ("test_help_prints_docstring", test_help_prints_docstring)):
         print(f"{name}:")
         ok &= fn()

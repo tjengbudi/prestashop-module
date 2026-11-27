@@ -1,0 +1,47 @@
+{
+ "round": 2,
+ "critical_high": 13,
+ "fixed": 13,
+ "escalated": 0,
+ "dropped": 2,
+ "code_defects": 0,
+ "questions_for_budi": [],
+ "medium_low": [
+  {
+   "location": "Verification > docs (adversarial-6, implementer-11)",
+   "issue": "Tak ada cek mekanis/checklist bahwa contoh perintah `--layer e2e` di docs memuat `--tier`, aturan interim yang dibawa benar-benar mendarat, dan butir CAP-4/5/7 tetap absen."
+  },
+  {
+   "location": "Docs > On Activation scope (adversarial-7)",
+   "issue": "Menu cakupan bisa memperingatkan bila cakupan menyingkirkan focus cell (E2E lalu blocked-by-scope); perilaku sesuai kontrak, peringatan = perluasan."
+  },
+  {
+   "location": "Boundaries > Canary (adversarial-8, edge-case-3)",
+   "issue": "Plan/aggregate menolak canary buruk di semua mode, termasuk E2E nonaktif; sesuai kontrak, usulan pesan galat yang menyebut key dan validasi di On Activation."
+  },
+  {
+   "location": "AC 2 (adversarial-11)",
+   "issue": "Prasyarat 'tanpa histori' tersirat; bisa dinyatakan eksplisit plus perbandingan rerun_matrix dengan/tanpa scope."
+  },
+  {
+   "location": "Docs > headless child exit 2 / exit 143 (edge-case-8)",
+   "issue": "Hasil headless (complete) dapat diturunkan dari kontrak Headless; bisa dinyatakan eksplisit."
+  },
+  {
+   "location": "Docs > headless blocked (edge-case-9)",
+   "issue": "Kembalian blocked untuk exit 2 pra-spawn tanpa wrap-up sudah aturan headless.md kini; bisa dinyatakan eksplisit."
+  },
+  {
+   "location": "I/O Promote order (implementer-9)",
+   "issue": "Kasus kedua bisa menambah asersi diverge (`e2e_warm` false, `full`); baris Diverge sudah menutup aturannya."
+  },
+  {
+   "location": "Runner > RESERVED_PASSTHROUGH (implementer-12)",
+   "issue": "`--tier` setelah `--` sampai ke anak (exit 2 anak); hardening opsional di luar daftar kontrak."
+  },
+  {
+   "location": "Docs > aggregate --session (implementer-13)",
+   "issue": "Hanya headless yang wajib meneruskan `--session`; wrap-up interaktif boleh dinyatakan eksplisit."
+  }
+ ]
+}
