@@ -1,0 +1,62 @@
+[
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (run's own stop: '... then exit 143') and Docs (infra-cause rule: 'a cell in its `appended` ... (the run exited 143 ...)')",
+    "issue": "The run is stopped (exit 143) after a done child's real records were appended, for example a `crash` or `no-slots` record. The spec does not say whether the stop path prints the output line. `run_e2e` today returns 143 without calling `emit`, so the run has no `appended` list. The parenthetical '(the run exited 143 ...)' can also be read as 'every record of a 143 run is `stopped`'.",
+    "implementation_impact": "The orchestrator cannot evaluate the infra-cause rule for a run Budi asks to rerun after exit 143. Either a real `crash` from that run gets no environment prompt, or the orchestrator reads histories ad hoc, which the interim Run outcomes rule forbids.",
+    "suggestion": "State whether the stop path prints `{e2e_status: \"ran\", appended: [...]}` before exit 143 (listing done-child records and `stopped` records). If it does not, state that a 143 run never counts as leaving an infra cause."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (append-error exit 2 = 'fix the input ... and run again'; infra-cause rule keyed on `appended`)",
+    "issue": "An append-error exit 2 prints no output line, but records appended before the error can carry infra causes (`crash`, `no-slots`). The infra rule is keyed on the run's `appended`, so it is undefined for this run. The spec does not say whether the rerun after the fix is preceded by the environment-fix prompt.",
+    "implementation_impact": "After a disk or permission fix, the orchestrator reruns at once over cells whose earlier records already show an infra cause. A second infra record then trips `blocked-infra` and ends the E2E loop for the session without Budi ever being asked to fix the environment.",
+    "suggestion": "State that a run without an output line leaves no infra cause, or have the stderr line 'rekaman yang sudah di-append: ...' stand in for `appended` in the infra rule."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (infra cause = next plan's rerun reason `inconclusive`, `inconclusive-steps` or `browser-notes`)",
+    "issue": "Rerun reason `inconclusive` also covers a `pass`/`fail` record read as `inconclusive` with reason `incomplete-record` (a runner or record defect), not only environment causes. The rule does not exclude it.",
+    "implementation_impact": "The orchestrator asks Budi to fix the environment for a record-shape bug. Installing images or browsers cannot fix it, so the next run repeats it and the session ends in `blocked-infra`, while the actual defect goes unreported.",
+    "suggestion": "Exclude cells whose newest record has reason `incomplete-record` from the infra cause, and report them as a script defect. Alternatively, name the excluded inconclusive reasons explicitly."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs > Headless ('`reached`/`not reached`, `e2e_tier_reached`'; contract: '{tier, step} from the last plan call')",
+    "issue": "Headless judges a step clean after its run, which needs a re-plan. That post-run plan derives the next step: after a failed `gate` run it shows `focus`, tier 0. The spec does not say whether `e2e_tier_reached` and 'not reached: stopped at <step>' use the plan that chose the unclean step or the post-run re-plan.",
+    "implementation_impact": "A headless run that stopped in the tier-1 gate can report `e2e_tier_reached` {0, focus}. Callers such as psm-optimize then record a misleading stop point in their baseline and in the not-comparable verdicts.",
+    "suggestion": "Pin it: `e2e_tier_reached` = `{e2e_tier, e2e_step}` of the plan call whose `e2e_cells_arg` was last run (or of the blocking plan for `blocked-*`), not the clean-check re-plan."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Aggregate (`reached`) and Docs > Headless ('not reached: stopped at <step>')",
+    "issue": "The headless E2E loop ends before any E2E step runs: `psm_e2e_enabled` false, the first run reports `skipped` (Docker absent), or `--require` excludes `e2e`. Every version lacking evidence gets `reached: false`. The spec does not say what `<step>` and `e2e_tier_reached` are when no step ran.",
+    "implementation_impact": "The return says 'not reached: stopped at focus' (tier 0) for a run where E2E was disabled or Docker absent. Callers then report a tier-0 stop instead of 'E2E not run'.",
+    "suggestion": "Define the reason and `e2e_tier_reached` for an E2E loop that ended with no step run. For example: reason 'not reached: e2e <skipped|disabled|not required>' and `e2e_tier_reached` null."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`stopped` records only 'On the run's own stop')",
+    "issue": "ps-run-layer ends by KeyboardInterrupt (Ctrl-C) or an internal exception. `run_e2e` then calls `finish(\"crash\")` and re-raises. Admitted in-flight cells get no record, and the run does not wait for or signal its children. The spec defines records only for a `JobStopped` stop and for a child reaped with `STOPPED_CODES`.",
+    "implementation_impact": "Cells that were admitted and possibly half-driven leave no trace in their histories. The plan re-derives them as before, and the orchestrator cannot tell an interrupted run from one that never started. Children can keep booting under a dead parent's claim.",
+    "suggestion": "Either give in-flight admitted cells `stopped` (or `crash`) records on the crash path too, as on a stop, or state explicitly that a crash or Ctrl-C of ps-run-layer leaves admitted cells without a record."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner ('every other admitted cell without a record this run ... gets `stopped`'; 'queued cells get no record')",
+    "issue": "`JobStopped` lands inside `_pass` after a version's claim is written and its `wait-slots` is closed `ok`, but before `ex.submit` returns or before the future is stored in `running`. The spec does not say whether this version counts as admitted or queued at that instant, and the deferral covers only appends.",
+    "implementation_impact": "Depending on timing, a version whose child was never spawned gets a `stopped` record, or a version whose child was spawned gets no record and its claim and process go untracked. Both break 'at most one record per admitted cell', and the run-stop tests become flaky.",
+    "suggestion": "Define admitted as the point where the future is in `running` (or `self.admitted[ver]` is set), and defer the stop across claim, submit and the `running` bookkeeping as for appends. Add a test that stops inside `_pass`."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner ('each child whose future is `done()` when the stop is handled ... has its records appended')",
+    "issue": "The deferred stop fires between two engines' appends of one child already in `_on_reaped`. The loop has popped its future from `running`, so the stop path's `done()` scan no longer sees it. The spec does not say whether the remaining engines get their payload records or `stopped`.",
+    "implementation_impact": "The second engine's real result (`pass` or `fail`), which was already parsed, is replaced by `stopped`. Evidence is lost, and a `fail` that should have shown as the cell's rerun reason reads as `inconclusive`.",
+    "suggestion": "State that a child whose reap has begun is finished from its payload, with no fail-fast or exit-2 trigger, before the other cells get `stopped`. Track it as 'reaping' in addition to the `running` futures. Extend the mid-append test to a two-engine child."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner ('A stop never lands between a record's write and its bookkeeping: it is deferred around each append')",
+    "issue": "An append is blocked on `LOCK_EX` (another process holds the history lock) when `--stop-job` arrives. The deferral has no bound, while `stop_job` sends SIGKILL after `JOB_STOP_GRACE` (60 s).",
+    "implementation_impact": "ps-run-layer is SIGKILLed while the stop is deferred. No `stopped` records and no `DONE` lines are written, and its registry claims stay until the entry is judged dead.",
+    "suggestion": "Bound the deferred window. For example, take `LOCK_EX` with a timeout during the stop path, or handle the pending stop as soon as the lock wait exceeds a limit well below `JOB_STOP_GRACE`, and log any `stopped` record left unwritten."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner ('`--tier 0|1` ... stamped as `tier` on every record')",
+    "issue": "The spec does not say whether the stamped `tier` is the integer 0/1 or the CLI string \"0\"/\"1\". The plan emits `e2e_tier` as a number.",
+    "implementation_impact": "Records carry `\"tier\": \"0\"` from the raw argparse value. Tests or report code comparing record `tier` with the plan's `e2e_tier`, or with 0/1, silently mismatch.",
+    "suggestion": "State `tier` as a JSON integer (argparse `type=int, choices=(0, 1)`), and assert the type in the run-layer test."
+  }
+]

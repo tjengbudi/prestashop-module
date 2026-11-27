@@ -1,0 +1,326 @@
+{
+ "run_id": "20261126-192048",
+ "round": 3,
+ "complete": true,
+ "lenses": {
+  "adversarial": {
+   "reported": 11,
+   "valid": true,
+   "count": 11
+  },
+  "edge-case": {
+   "reported": 10,
+   "valid": true,
+   "count": 10
+  },
+  "implementer": {
+   "reported": 15,
+   "valid": true,
+   "count": 15
+  }
+ },
+ "invalid": [],
+ "missing": [],
+ "unexpected": [],
+ "findings": [
+  {
+   "id": "adversarial-1",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Docs (4th interim rule: 'a cell in its `appended`' ... 'the run exited 143'); I/O row 'Stop'",
+   "issue": "The infra-cause test is keyed on the cells in the run's `appended` list, and it names the exit-143 case explicitly. An exit-143 run prints no output line, though. `run_e2e` returns 143 before `_e2e_exit`, and `test_e2e_stopped` asserts 'exit 143, tanpa baris output'. So after a stop that Budi asks to rerun, the orchestrator has no `appended` list. Records from the done-child path (for example a `crash` or `no-slots` written before the stop) can never be recognised as an infra cause, and the environment prompt is skipped. The 'Stop' row also does not say whether a stopped run prints the line.",
+   "implementation_impact": "The docs writer cannot implement the rule for the 143 path. An implementer may add an output line on stop that the contract (`ran`|`skipped`) does not define, or break the existing 'no output line' test without guidance.",
+   "suggestion": "Pin one source for the cells a stopped run appended. Either have the stop path log the appended cells to stderr (as the append-error path already does with 'rekaman yang sudah di-append: ...') and let the docs read them from there, or say that on exit 143 the infra check reads the records carrying the run's Job ID. State in the 'Stop' row that no output line is printed."
+  },
+  {
+   "id": "adversarial-2",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Docs (4th interim rule: infra cause read from 'the next plan's e2e `rerun_matrix` reason')",
+   "issue": "`cell_reason` takes its `inconclusive`/`inconclusive-steps`/`browser-notes` reasons from the cell's newest FRESH record. Suppose the module changes after the run started (an edit during a multi-hour run, or a patch before the next plan call). The run's records are then stale and the reason becomes `stale-source`, so the infra cause is silently lost and no environment prompt appears. Each patch also changes the fingerprint, so `blocked-infra` (same fingerprint required) never trips. The orchestrator can therefore rerun into the same missing image or missing browser again and again without ever asking Budi.",
+   "implementation_impact": "The interactive retry guard is defeated in exactly the case where runs are long. The docs rule passes review, but the signal it reads does not depend on what the run produced.",
+   "suggestion": "Define 'left an infra cause' from the run's own records (history lines with this run's `job_id`/`run_id`), using the same infra-cause function as plan step 3, whatever their freshness. Or have the plan expose that per-record cause so the docs do not infer it from the rerun reason."
+  },
+  {
+   "id": "adversarial-3",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Runner ('A stop never lands between a record's write and its bookkeeping: it is deferred around each append')",
+   "issue": "Deferring the stop around each single append does not make a child's reap atomic. In `loop()` a finished future is popped from `self.running` and only then passed to `_on_reaped`, which appends one record per engine and then decides fail-fast. A stop can land (a) after the pop and before `_on_reaped`, or (b) between the chromium and firefox appends of the same child. In (a) the child is no longer in `running`, so the 'future is done()' rule may miss it, and its real result (possibly a `fail`) is replaced by `stopped`. In (b) the done-child rule either appends chromium a second time or firefox gets `stopped` although its parsed result was in hand. A stop inside `_unstarted_records` also leaves a partial set of `not-run` records.",
+   "implementation_impact": "The 'at most one record per admitted cell' guarantee and 'real results kept' can both be broken. The listed test (a stop injected mid-append, one record) does not cover the multi-engine child or the pop-to-reap gap.",
+   "suggestion": "Defer the stop across the whole reap of one child: pop, every record, bookkeeping and the fail-fast decision, and also across a fail-fast/no-slots batch. Or state that the stop path re-processes a child taken off `running` and not yet fully reaped, skipping cells that already have a record this run. Add a test with a two-engine child stopped between its two appends."
+  },
+  {
+   "id": "adversarial-4",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Runner (run's own stop: 'every other admitted cell without a record this run (tracked per cell) gets `stopped`')",
+   "issue": "Take a child whose future is done() at stop time and that exited 2 or reported `status: skipped`. By contract it leaves no record, and the spec keeps 'zero records for an exit-2 or skipped child'. Its cells are still admitted cells 'without a record this run', so the catch-all writes `stopped` for them. This contradicts the zero-record rule. For the skipped case it also turns a 'Playwright/Docker absent' outcome into an inconclusive history line, which the next plan reads as reason `inconclusive`, a candidate infra cause.",
+   "implementation_impact": "Two rules in the same bullet give different answers for the same cell. Whichever the implementer picks, one of the listed tests ('zero records for an exit-2 or skipped child', or the stop test) will disagree with the spec.",
+   "suggestion": "Exclude from the stop path's `stopped` catch-all the cells of a done child with rc 2 or a `skipped` payload: no record, and exit stays 143. Add that case to the run-stop test."
+  },
+  {
+   "id": "adversarial-5",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Runner (stop path appends after `JobStopped`)",
+   "issue": "The SIGTERM handler (`fl._on_sigterm`) stays armed while the stop path runs. A second SIGTERM can come from a repeated `--stop-job`, from the headless silent-log rule together with an operator, or from `stop_job` targeting several registry entries of the same job. It raises `JobStopped` inside the stop path's own appends. The exception then escapes to `_run()`, which returns 143, and the remaining in-flight cells never get their `stopped` records. The spec covers append errors on the stop path but not a re-entrant stop.",
+   "implementation_impact": "Cells end up with no record for that run, which breaks 'exactly one per admitted cell'. The orchestrator then sees reasons left over from older records.",
+   "suggestion": "State that the handler is disarmed (or made to set a flag only) once the stop is being handled, so later SIGTERMs are ignored until exit 143. Add a test that raises a second `JobStopped` during the first stopped append."
+  },
+  {
+   "id": "adversarial-6",
+   "lens": "adversarial",
+   "location": "Code Map > ps-run-layer.py / ps-flashlight-run.py",
+   "issue": "The deferral and stop-path work needs code the Code Map does not list. In ps-flashlight-run that is `_on_sigterm` and `job_register`: the handler that raises `JobStopped`, installed for flashlight, scenario and E2E children as well. In ps-run-layer it is `_SlotRun._append`, `loop`, `_unstarted_records`, `_e2e_exit` and `_run`. The spec says only what must not happen ('a main-thread pthread_sigmask alone does not do it'). It does not say whether the mechanism is a ps-run-layer-local handler or a change to the shared one.",
+   "implementation_impact": "An implementer may patch the shared `_on_sigterm`, which changes stop behaviour in every Docker layer child, out of this slice's scope and without tests there. Or they may miss `loop`/`_unstarted_records`, where the unprotected windows are.",
+   "suggestion": "Add those symbols to the Code Map and pin the mechanism. For example, ps-run-layer installs its own SIGTERM handler after `job_register`; inside a critical section it records a pending stop, and it raises `JobStopped` when the section ends. ps-flashlight-run's handler stays unchanged for the children."
+  },
+  {
+   "id": "adversarial-7",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Runner ('appended from the stop path without waiting for the children')",
+   "issue": "In the current code ps-run-layer cannot leave without waiting. Children run in a `ThreadPoolExecutor`, and `shutdown(wait=False)` does not stop `concurrent.futures`' atexit hook from joining worker threads that are blocked in `_spawn`. The process (and its live registry entry) stays until every child exits. Meanwhile the `finally` block removes `run.tmp` while children may still write their `-o` output there. When the SIGTERM did not come from `--stop-job`, so the children were not signalled, this lasts until the children finish, and their real results are discarded after `stopped` was already written.",
+   "implementation_impact": "The 'without waiting' wording can be read as permission to `os._exit` or to use daemon threads (skipping atexit, registry cleanup and log flushing), or as satisfied when it is not. `--list-jobs` keeps showing a 'stopped' run as alive.",
+   "suggestion": "Say what 'without waiting' means: the records are written before any join, and exit 143 is returned after the existing atexit and registry cleanup. Also state whether the tmp directory is kept until the children exit, or accept that late child writes fail."
+  },
+  {
+   "id": "adversarial-8",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Docs (Headless: 'stop at the first unclean step, `reached`/`not reached`, `e2e_tier_reached`')",
+   "issue": "The contract defines `e2e_tier_reached` as '{tier, step} from the last plan call', and headless judges a step clean 'after the run'. The spec does not say which plan call that is. If headless re-plans after a run to judge cleanliness (the only script source for it), then after a tier-1 gate failure the last plan derives `focus` (tier 0) for the failing cell. The return then reports `e2e_tier_reached: {tier: 0, step: focus}` and 'not reached: stopped at focus', although tier 1 ran and produced the failure. After a canary failure both calls say `focus`, so only the gate case misreports.",
+   "implementation_impact": "Headless callers (psm-develop, psm-optimize baselines) get a tier and step that understate how far validation went. The four caller docs then report a gate failure as a fix-loop stop.",
+   "suggestion": "Pin `e2e_tier_reached` to the plan call whose step was last run (or found blocked), and pin cleanliness to the post-run plan's `rerun_matrix` entries for that step's `e2e_next_cells`. Add a docs criterion for the gate-failure case."
+  },
+  {
+   "id": "adversarial-9",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Docs (4th interim rule: 'before the next E2E run after one that left an infra cause ..., whatever its step')",
+   "issue": "Firing the environment prompt before ANY next run, whatever its step, goes beyond 'before an infra retry'. The interim scoped it per version: an infra retry of V was pending until V's next E2E run. Example: a gate run leaves 1.7.8:firefox `no-slots` and fails 8.1:chromium. The next step is a loop-back `focus` on 8.1:chromium, which does not drive 1.7.8 at all. Budi is still asked to fix the 1.7.8 environment first, and a decline ends the whole E2E loop, killing an unrelated fix loop.",
+   "implementation_impact": "The docs will either end E2E for a session over an infra cause the next run cannot hit, or give the orchestrator reason to drift from the written rule.",
+   "suggestion": "Prompt only when the next step's `e2e_next_cells` include a cell (or a version) that left the infra cause. Otherwise carry the cause forward until such a step comes, as the interim's 'infra retry of V pending' did."
+  },
+  {
+   "id": "adversarial-10",
+   "lens": "adversarial",
+   "location": "Boundaries > Always > Docs (Headless: 'config copy with canary reset, only for a well-formed canary outside the set, a malformed one kept') and AC 3",
+   "issue": "The LLM orchestrator, not a script, writes the copy. It must tell 'well-formed but outside the caller's cells' apart from 'malformed' by re-implementing the normalizer in prose: whole-value trim, a single `:`, per-part trim, browser case-folding, an exact configured version string, `chromium`/`firefox`/`webkit` only. `9.1:Chromium `, `9.1.0:chromium` (exact match against which set?) or `9.1:webkit` with webkit unconfigured are easy to misclassify. One mistake either blocks a valid headless call or resets a broken config and hides it.",
+   "implementation_impact": "The rule is untestable by the Verification commands, and it duplicates the normalizer's rules outside their single owner.",
+   "suggestion": "Give the docs a script signal. Have the normalizer distinguish 'malformed' from 'outside configured cells' in its exit-2 message (a stable prefix naming `psm_e2e_canary`). Headless then writes the copy, runs the plan, and resets the canary only when the plan's stderr reports the 'outside' kind. Or add a tiny check mode to the plan."
+  },
+  {
+   "id": "adversarial-11",
+   "lens": "adversarial",
+   "location": "Tasks > tests (run-stop test with `--slots 3` and four versions)",
+   "issue": "The test leaves the outcome of the 'one reaped' version unstated. If its child appended a `fail`, fail-fast fires before the stop and writes `not-run` for the queued version, contradicting the expected 'nothing for the queued one'. Four versions also need a config with four `psm_target_versions`; the test helpers' default config is 3×n, and the spec does not say so.",
+   "implementation_impact": "Different fixtures give contradictory expectations, so the test can be written to pass for the wrong reason or fail against a correct implementation.",
+   "suggestion": "State that the reaped version's child passes (no fail-fast before the stop) and that the test uses a four-version config. Also assert the 'one reaped' records are untouched by the stop path."
+  },
+  {
+   "id": "edge-case-1",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (run's own stop: '... then exit 143') and Docs (infra-cause rule: 'a cell in its `appended` ... (the run exited 143 ...)')",
+   "issue": "The run is stopped (exit 143) after a done child's real records were appended, for example a `crash` or `no-slots` record. The spec does not say whether the stop path prints the output line. `run_e2e` today returns 143 without calling `emit`, so the run has no `appended` list. The parenthetical '(the run exited 143 ...)' can also be read as 'every record of a 143 run is `stopped`'.",
+   "implementation_impact": "The orchestrator cannot evaluate the infra-cause rule for a run Budi asks to rerun after exit 143. Either a real `crash` from that run gets no environment prompt, or the orchestrator reads histories ad hoc, which the interim Run outcomes rule forbids.",
+   "suggestion": "State whether the stop path prints `{e2e_status: \"ran\", appended: [...]}` before exit 143 (listing done-child records and `stopped` records). If it does not, state that a 143 run never counts as leaving an infra cause."
+  },
+  {
+   "id": "edge-case-2",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (append-error exit 2 = 'fix the input ... and run again'; infra-cause rule keyed on `appended`)",
+   "issue": "An append-error exit 2 prints no output line, but records appended before the error can carry infra causes (`crash`, `no-slots`). The infra rule is keyed on the run's `appended`, so it is undefined for this run. The spec does not say whether the rerun after the fix is preceded by the environment-fix prompt.",
+   "implementation_impact": "After a disk or permission fix, the orchestrator reruns at once over cells whose earlier records already show an infra cause. A second infra record then trips `blocked-infra` and ends the E2E loop for the session without Budi ever being asked to fix the environment.",
+   "suggestion": "State that a run without an output line leaves no infra cause, or have the stderr line 'rekaman yang sudah di-append: ...' stand in for `appended` in the infra rule."
+  },
+  {
+   "id": "edge-case-3",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (infra cause = next plan's rerun reason `inconclusive`, `inconclusive-steps` or `browser-notes`)",
+   "issue": "Rerun reason `inconclusive` also covers a `pass`/`fail` record read as `inconclusive` with reason `incomplete-record` (a runner or record defect), not only environment causes. The rule does not exclude it.",
+   "implementation_impact": "The orchestrator asks Budi to fix the environment for a record-shape bug. Installing images or browsers cannot fix it, so the next run repeats it and the session ends in `blocked-infra`, while the actual defect goes unreported.",
+   "suggestion": "Exclude cells whose newest record has reason `incomplete-record` from the infra cause, and report them as a script defect. Alternatively, name the excluded inconclusive reasons explicitly."
+  },
+  {
+   "id": "edge-case-4",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs > Headless ('`reached`/`not reached`, `e2e_tier_reached`'; contract: '{tier, step} from the last plan call')",
+   "issue": "Headless judges a step clean after its run, which needs a re-plan. That post-run plan derives the next step: after a failed `gate` run it shows `focus`, tier 0. The spec does not say whether `e2e_tier_reached` and 'not reached: stopped at <step>' use the plan that chose the unclean step or the post-run re-plan.",
+   "implementation_impact": "A headless run that stopped in the tier-1 gate can report `e2e_tier_reached` {0, focus}. Callers such as psm-optimize then record a misleading stop point in their baseline and in the not-comparable verdicts.",
+   "suggestion": "Pin it: `e2e_tier_reached` = `{e2e_tier, e2e_step}` of the plan call whose `e2e_cells_arg` was last run (or of the blocking plan for `blocked-*`), not the clean-check re-plan."
+  },
+  {
+   "id": "edge-case-5",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Aggregate (`reached`) and Docs > Headless ('not reached: stopped at <step>')",
+   "issue": "The headless E2E loop ends before any E2E step runs: `psm_e2e_enabled` false, the first run reports `skipped` (Docker absent), or `--require` excludes `e2e`. Every version lacking evidence gets `reached: false`. The spec does not say what `<step>` and `e2e_tier_reached` are when no step ran.",
+   "implementation_impact": "The return says 'not reached: stopped at focus' (tier 0) for a run where E2E was disabled or Docker absent. Callers then report a tier-0 stop instead of 'E2E not run'.",
+   "suggestion": "Define the reason and `e2e_tier_reached` for an E2E loop that ended with no step run. For example: reason 'not reached: e2e <skipped|disabled|not required>' and `e2e_tier_reached` null."
+  },
+  {
+   "id": "edge-case-6",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`stopped` records only 'On the run's own stop')",
+   "issue": "ps-run-layer ends by KeyboardInterrupt (Ctrl-C) or an internal exception. `run_e2e` then calls `finish(\"crash\")` and re-raises. Admitted in-flight cells get no record, and the run does not wait for or signal its children. The spec defines records only for a `JobStopped` stop and for a child reaped with `STOPPED_CODES`.",
+   "implementation_impact": "Cells that were admitted and possibly half-driven leave no trace in their histories. The plan re-derives them as before, and the orchestrator cannot tell an interrupted run from one that never started. Children can keep booting under a dead parent's claim.",
+   "suggestion": "Either give in-flight admitted cells `stopped` (or `crash`) records on the crash path too, as on a stop, or state explicitly that a crash or Ctrl-C of ps-run-layer leaves admitted cells without a record."
+  },
+  {
+   "id": "edge-case-7",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner ('every other admitted cell without a record this run ... gets `stopped`'; 'queued cells get no record')",
+   "issue": "`JobStopped` lands inside `_pass` after a version's claim is written and its `wait-slots` is closed `ok`, but before `ex.submit` returns or before the future is stored in `running`. The spec does not say whether this version counts as admitted or queued at that instant, and the deferral covers only appends.",
+   "implementation_impact": "Depending on timing, a version whose child was never spawned gets a `stopped` record, or a version whose child was spawned gets no record and its claim and process go untracked. Both break 'at most one record per admitted cell', and the run-stop tests become flaky.",
+   "suggestion": "Define admitted as the point where the future is in `running` (or `self.admitted[ver]` is set), and defer the stop across claim, submit and the `running` bookkeeping as for appends. Add a test that stops inside `_pass`."
+  },
+  {
+   "id": "edge-case-8",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner ('each child whose future is `done()` when the stop is handled ... has its records appended')",
+   "issue": "The deferred stop fires between two engines' appends of one child already in `_on_reaped`. The loop has popped its future from `running`, so the stop path's `done()` scan no longer sees it. The spec does not say whether the remaining engines get their payload records or `stopped`.",
+   "implementation_impact": "The second engine's real result (`pass` or `fail`), which was already parsed, is replaced by `stopped`. Evidence is lost, and a `fail` that should have shown as the cell's rerun reason reads as `inconclusive`.",
+   "suggestion": "State that a child whose reap has begun is finished from its payload, with no fail-fast or exit-2 trigger, before the other cells get `stopped`. Track it as 'reaping' in addition to the `running` futures. Extend the mid-append test to a two-engine child."
+  },
+  {
+   "id": "edge-case-9",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner ('A stop never lands between a record's write and its bookkeeping: it is deferred around each append')",
+   "issue": "An append is blocked on `LOCK_EX` (another process holds the history lock) when `--stop-job` arrives. The deferral has no bound, while `stop_job` sends SIGKILL after `JOB_STOP_GRACE` (60 s).",
+   "implementation_impact": "ps-run-layer is SIGKILLed while the stop is deferred. No `stopped` records and no `DONE` lines are written, and its registry claims stay until the entry is judged dead.",
+   "suggestion": "Bound the deferred window. For example, take `LOCK_EX` with a timeout during the stop path, or handle the pending stop as soon as the lock wait exceeds a limit well below `JOB_STOP_GRACE`, and log any `stopped` record left unwritten."
+  },
+  {
+   "id": "edge-case-10",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner ('`--tier 0|1` ... stamped as `tier` on every record')",
+   "issue": "The spec does not say whether the stamped `tier` is the integer 0/1 or the CLI string \"0\"/\"1\". The plan emits `e2e_tier` as a number.",
+   "implementation_impact": "Records carry `\"tier\": \"0\"` from the raw argparse value. Tests or report code comparing record `tier` with the plan's `e2e_tier`, or with 0/1, silently mismatch.",
+   "suggestion": "State `tier` as a JSON integer (argparse `type=int, choices=(0, 1)`), and assert the type in the run-layer test."
+  },
+  {
+   "id": "implementer-1",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Runner (run's own stop: 'every other admitted cell without a record this run (tracked per cell) gets `stopped`')",
+   "issue": "The sweep has no stated exceptions, but some admitted cells legitimately have no record by the time the stop is handled. (a) A child reaped earlier in the run that exited 2 or reported `skipped`: the first Runner sentence allows zero records for these cells. (b) A cell whose real record failed to append (append error): the run then attempts `stopped` with `force=True`. (c) A done-but-unreaped child that exited 2 or reported `skipped` at stop time. Read literally, 'every other admitted cell without a record' writes `stopped` for all three. That gives an exit-2 or skipped version an inconclusive record, and gives a finished cell a `stopped` record in place of its lost real one. It is unclear whether 'other' means 'cells of children not done when the stop is handled' or 'any admitted cell lacking a record'.",
+   "implementation_impact": "The stop path either writes `stopped` for exit-2, skipped and append-failed cells or leaves them alone. The two readings produce different histories, different `reached` values and different `blocked-infra` counts. The new run-stop test cannot pin it down either way.",
+   "suggestion": "Scope the sweep explicitly. `stopped` goes only to admitted cells whose child was still running, or whose future raised `JobStopped`, when the stop was handled. A cell of a child already reaped, or done at stop time, keeps whatever the normal reap rules give it, which may be no record (exit 2, skipped, append error)."
+  },
+  {
+   "id": "implementer-2",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Runner ('A stop never lands between a record's write and its bookkeeping: it is deferred around each append') and Tasks > tests ('a stop injected mid-append leaves exactly one record for that cell')",
+   "issue": "The spec says what must not be used (a main-thread `pthread_sigmask` alone) but not what the deferral is. The choices are: swap `_on_sigterm` for a flag-setting handler around the critical section and re-raise `JobStopped` afterwards, or block the signal process-wide. The deferral also covers only a single append, so a stop can still land mid-`_on_reaped`: the future is already popped from `self.running` and some of that child's cells are already appended. It can also land mid-`_fire`, after some queued versions already got `not-run` and their logs were truncated to `DONE rc=not-run`. Separately, the test cannot be written by raising `JobStopped` from a patched `append_record`: an exception raised synchronously goes around any signal-based deferral. The test has to deliver a real SIGTERM with the `job_register` handler installed, and the spec does not say so.",
+   "implementation_impact": "Two implementers would build different deferral mechanisms. A stop that lands mid-reap can leave a done child half-recorded, with the rest of its cells swept into `stopped` instead of getting their real results. The mid-append test may pass while proving nothing.",
+   "suggestion": "Name the mechanism: while `_append` and the per-child bookkeeping in `_on_reaped`/`_fire` run, the SIGTERM handler only sets a flag, and `JobStopped` is raised when the section exits. Extend the deferral to the whole reap of one child. Specify the test injection: `os.kill(os.getpid(), SIGTERM)` from inside a patched `append_record`, with the real handler installed."
+  },
+  {
+   "id": "implementer-3",
+   "lens": "implementer",
+   "location": "Code Map > ps-plan-layers.py ('new step derivation (pure: configured cells, canary, per-cell records, fingerprint, tags, session, current notes in; step and tier fields out)')",
+   "issue": "The listed inputs leave out each cell's `corrupt_tail` flag from `read_history`. `has_passing_evidence(records, corrupt_tail, …)` needs it, and the contract (Evidence record > Storage) says a cell with a corrupt tail has no passing gate-grade evidence. The listed inputs also leave out the run scope (`--versions`/`--browsers`), yet `blocked-by-scope`, `e2e_next_cells` vs `e2e_required_cells` and the `out-of-scope` causes depend on it. It is also unstated whether the pure function returns the step before or after the scope filter.",
+   "implementation_impact": "A derivation that follows this signature literally calls `has_passing_evidence(..., False, ...)`. A corrupt-tail cell whose older valid records pass would then count as passing: `done`, or `gate` from a canary with a corrupt tail. That breaks the honesty law. Unit tests built on the listed signature cannot express scope cases.",
+   "suggestion": "Add `corrupt_tail` per cell and the scope (versions, browsers) to the pure function's inputs. State that it returns both the unfiltered step and the filtered result (the `blocked-by-scope` rewrite included). Add a unit case: a corrupt tail after a passing canary derives `focus` or `cold-canary`, not `gate`."
+  },
+  {
+   "id": "implementer-4",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Docs (Headless: 'stop at the first unclean step, `reached`/`not reached`, `e2e_tier_reached`') and cell-contract.md > Headless",
+   "issue": "A headless step is 'clean when every cell in its `e2e_next_cells` has passing gate-grade evidence or is not-gradeable after the run'. Neither the spec nor the contract says how the orchestrator judges that without reading histories. One option is a post-run plan call (the cells absent from the e2e `rerun_matrix`, or carrying reason `not-gradeable`). Another is the run's exit code. `e2e_tier_reached` is '{tier, step} from the last plan call', and `not reached: stopped at <step>` names a step. After a failed canary or gate run, the last plan call is the post-run one, which already shows the next step (for example `focus` after a gate failure). So the step that failed and the step reported can differ.",
+   "implementation_impact": "The headless return can report a step the run never attempted, and the four callers would log a misleading stop point. Two doc writers would pick different cleanliness checks.",
+   "suggestion": "Specify it: after each E2E run, headless makes one plan call (same flags). The step was clean iff none of the run's `e2e_next_cells` has an e2e `rerun_matrix` entry other than reason `not-gradeable`. `e2e_tier_reached` and `stopped at <step>` use the step and tier of the plan call that chose the run, not the post-run call."
+  },
+  {
+   "id": "implementer-5",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Docs (4th interim rule: 'A run left an infra cause when the next plan's e2e `rerun_matrix` reason for a cell in its `appended` is … and that cell's record from the run is not `stopped` (the run exited 143, or its stderr reports the child stopped)')",
+   "issue": "A run that exits 143 prints no output line (ps-run-layer docstring, existing stop test: `out.strip() == ''`). It therefore has no `appended`. The parenthetical '(the run exited 143 …)' describes a case where the `appended` test can never apply. So after an interactive exit 143 that Budi chooses to rerun, done children with real infra causes (for example `crash`) are never detected, and the environment-fix prompt is skipped. The rule also does not say which stderr line counts as 'reports the child stopped'. Today it is `versi <ver>: anak dihentikan (rc=…)`, per version rather than per cell.",
+   "implementation_impact": "The doc writer has to invent how the exit-143 case is detected, or drop it. The interactive orchestrator may rerun straight into the same infra failure without the decided prompt.",
+   "suggestion": "Either state that after exit 143 no infra check applies (the rerun is Budi's explicit request), or have the orchestrator take the cells from the command's `--cells` when there is no output line. Quote the exact stderr marker (per version) that excludes a version's cells."
+  },
+  {
+   "id": "implementer-6",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Docs (Headless: 'config copy with canary reset, only for a well-formed canary outside the set, a malformed one kept') and AC 3",
+   "issue": "'Well-formed' is not defined, and the model applies the rule by judgment because no script writes the copy. The normalizer rules are: a string, trimmed, exactly one `:`, parts trimmed, browser lower-cased, version compared as an exact string, no engine or version-format check. Under these rules it is unclear whether `9.1:safari`, `x.y:chromium`, `9.1:Chromium ` or a list value is 'well-formed but outside the set' (reset, run continues) or 'malformed' (kept, plan exit 2, headless `blocked`).",
+   "implementation_impact": "The same config gives `complete` or `blocked` depending on how the doc writer, and later the model at runtime, reads 'well-formed'. AC 3 only covers the clear case.",
+   "suggestion": "Define 'well-formed' in the docs in normalizer terms. Proposed: a string that, after trimming, splits at exactly one `:` into two non-empty trimmed parts. Everything else is malformed. State that the browser-part case and engine support do not matter for the reset."
+  },
+  {
+   "id": "implementer-7",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Docs (Headless) vs cell-contract.md > Headless bullet 3; spec-psm-e2e-cap2-cap6-cell-evidence.md > Never ('new return fields' deferred)",
+   "issue": "CAP-2 deferred 'the new return fields' to this slice. The contract's headless return gains `versions: {<ver>: {e2e_state, reason}}` and `not_run_cells`, both copied from the aggregate run with `--session`. `headless.md` today returns neither. The spec's Headless list names `reached`/`not reached` and `e2e_tier_reached` but not these two fields. Yet the four callers' new 'not reached' handling reads `versions[ver].reason`, which only exists once `versions` is in the return.",
+   "implementation_impact": "A doc writer following the spec's explicit list could add `e2e_tier_reached` and the 'not reached' wording but no `versions`/`not_run_cells` in the return. The callers' updated SKILL.md would then read a field headless never returns.",
+   "suggestion": "Add to the Headless list: 'the return gains `versions` (per-version `e2e_state`, `reason`) and `not_run_cells`, copied from the aggregate run with this call's `--session`'. Have Verification > Manual check that `headless.md` > Kembalian lists them."
+  },
+  {
+   "id": "implementer-8",
+   "lens": "implementer",
+   "location": "Design Notes > `clean` ('one that does not load, fails `validate_layer_shape` (static, flashlight) or is a scenario payload whose `versions` is not an object = exit 2')",
+   "issue": "The note does not say which `finding_keys` the static gate uses. ps-aggregate uses `(\"id\", \"severity\", \"message\")` because `static_layer` indexes `f[\"id\"]` directly. With `()` a static finding missing `id` passes the gate and crashes `static_layer` (KeyError → traceback, exit 1). The scenario gate checks only the top-level `versions` type. `scenario_layer` also calls `.get` on `versions[V]` and on each `scenarios[i]`, so a non-object entry crashes it too.",
+   "implementation_impact": "A malformed per-version file whose `phase1_reuse` is true can crash the plan with exit 1, a code orchestrator docs never handle, instead of the specified exit 2 naming the file.",
+   "suggestion": "State: static is gated with ps-aggregate's keys `(id, severity, message)`, flashlight with `()`. For scenario, `versions` must be an object, `versions[V]` an object, and `scenarios`, if present, a list of objects. Any violation = exit 2 naming the file."
+  },
+  {
+   "id": "implementer-9",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Docs (hosting loop and Phase 2 loop) vs cell-contract.md > Plan step 5 and Run scope",
+   "issue": "A `cold-version` step lists every configured browser of V whatever its evidence. If the run scope excludes some of V's browsers (for example `--browsers chromium` while the focus cell is V:firefox), the filter leaves [V:chromium]. That is not empty, so there is no `blocked-by-scope`. After V:chromium passes, the focus cell and its warm or partial pass are unchanged, so the plan derives the same `cold-version` [V:chromium] again. The hosting loop, which ends only at `gate`/`done`/loop ended, reruns it forever. The step is unreachable in CAP-1 practice (only warm or partial records reach step 5). But the CAP-1 docs and tests (hand-written warm records) define the loop now, and nothing documents the terminal case.",
+   "implementation_impact": "The docs written now encode an endless hosting loop that surfaces as soon as CAP-4/5 land, or as soon as a test drives the scoped `cold-version` state through more than one iteration.",
+   "suggestion": "Add an orchestrator rule (or an Ask First note for the contract): a step whose filtered `e2e_next_cells` all already hold fresh passing gate-grade evidence while the step is unchanged is treated as `blocked-by-scope` and ends the E2E loop. At minimum, record it as a known CAP-4/5 follow-up."
+  },
+  {
+   "id": "implementer-10",
+   "lens": "implementer",
+   "location": "Tasks > tests (run-stop test: '`--slots 3` and four versions (one reaped, one done but unreaped holding a `fail`, one still running, one queued …)')",
+   "issue": "The fixture is under-specified and, as written, internally inconsistent. (a) The 'one reaped' child's outcome is not given. If it is a `fail`, or exits 2, `_fire` writes `not-run` for the queued version, which contradicts 'nothing for the queued one'. (b) After the first child is reaped, its claim is released, so 2 running + 1 ≤ 3 and the next pass admits the fourth version, unless the stubbed `daemon_slot_usage` is raised after that reap. (c) The existing `test_e2e_stopped` (`JobStopped` from the 9.1 future's `result()`, expecting `_hist(9.1) == []` and no output line) must also change: under the new rule that cell gets `stopped`. The Tasks mention only the single-child SIGTERM case.",
+   "implementation_impact": "The test writer has to guess the fixture. A naive harness either admits the 'queued' version or fires fail-fast, and the test fails for reasons unrelated to the stop path. The old stop test silently contradicts the new rule.",
+   "suggestion": "Specify it. The reaped child passes. The stubbed daemon count rises to fill the cap once that child is reaped, so the fourth version stays queued. Also list `test_e2e_stopped`'s `JobStopped` sub-case: the 9.1 cell now gets one `stopped` record, still no output line, exit 143."
+  },
+  {
+   "id": "implementer-11",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Runner ('`--tier 0|1` … stamped as `tier` on every record')",
+   "issue": "The record type is not stated. The CLI value is a string. The plan's `e2e_tier` is an integer (or null), and the contract says `tier` = 'the plan's `e2e_tier`'.",
+   "implementation_impact": "The runner may write `\"tier\": \"0\"`, so later readers (CAP-6 timing reports, tests comparing `tier == 0`) diverge.",
+   "suggestion": "State: `tier` is written as the integer 0 or 1. argparse uses `type=int, choices=(0, 1)`, or equivalent validation keeps the exit 2 for any other value."
+  },
+  {
+   "id": "implementer-12",
+   "lens": "implementer",
+   "location": "Tasks > tests vs cell-contract.md > State, freshness, gate-grade ('Test: pass then fail on the same fingerprint gives `ready=false` and a step other than `done`')",
+   "issue": "CAP-2 implemented this contract test without the step ('no step'), because steps were out of scope. CAP-1 owns `e2e_step`, but neither its Tasks nor its I/O matrix adds the 'step other than `done`' assertion. The contract's step 5/6 test ('pass then fail does not promote') is covered by Promote order only for warm passes, not for two cold full records.",
+   "implementation_impact": "A derivation bug that picks the older gate-grade pass (for example `done` with a newer cold fail) would pass every listed test.",
+   "suggestion": "Add to Tasks > tests: a cold full pass then a cold full fail on the current fingerprint for one cell derives a step other than `done` (`focus` on that cell), and the aggregate `ready` is false."
+  },
+  {
+   "id": "implementer-13",
+   "lens": "implementer",
+   "location": "Boundaries > Always > Runner ('a child reaped with `STOPPED_CODES` … even one whose engine finished before the signal') vs Docs (4th interim rule) and the `appended` output",
+   "issue": "Single-child stops now append `stopped` records, so their cells appear in the output line's `appended`. Since `stopped` maps to plan reason `inconclusive`, the 4th rule needs the stderr marker to exclude them. The marker `versi <ver>: anak dihentikan` is per version, and the spec does not say whether ps-run-layer's log text changes, even though the existing log says 'tak ada rekaman untuk versi ini' (no record for this version). That message becomes false.",
+   "implementation_impact": "The runner keeps a log line that contradicts its new behaviour, and the docs' infra-cause exclusion depends on log wording the spec never pins.",
+   "suggestion": "Require the STOPPED_CODES log line to read, for example, `versi <ver>: anak dihentikan (rc=…) — sel <cells> dicatat stopped`. Have the docs quote that marker for the 4th rule."
+  },
+  {
+   "id": "implementer-14",
+   "lens": "implementer",
+   "location": "Never ('the bankwire timing report') vs SPEC.md > Success signal",
+   "issue": "SPEC.md makes the before/after bankwire timing report mandatory. 'Before' must run 'on the scripts of the commit preceding the first script change', and that commit predates CAP-2, which is already merged. The spec lists the report under 'later slices' but names no slice that owns it. CAP-1 is the slice whose tier ordering produces the 'after' release-gate measurement (cold canary run plus tier-1 run).",
+   "implementation_impact": "Nobody is tasked with the report. The baseline commit keeps getting further away and may stop working on the current host. Each later slice can defer it again.",
+   "suggestion": "Name the owning slice (for example the one that lands CAP-5/CAP-7) and the baseline commit hash for 'before' (the parent of CAP-2's first script change), so the deferral is traceable."
+  },
+  {
+   "id": "implementer-15",
+   "lens": "implementer",
+   "location": "Code Map > ps-flashlight-run.py (`configured_cells`, `CONFIG_KEY_TO_DEST`, `version_key`)",
+   "issue": "`CONFIG_KEY_TO_DEST` is listed, but no task says what changes in it. The contract says the canary has no flag and is read directly from `--config`. Adding `psm_e2e_canary` there would make `apply_config_file` fill a dest on any script that has one. The plan's new `--browsers` is filled from the existing `psm_e2e_browsers → browsers` mapping with no edit. The `configured_cells` docstring also says 'psm_e2e_canary diabaikan slice ini' (psm_e2e_canary is ignored this slice), and the spec does not say whether the canary is folded into `configured_cells`. Folding it in would make ps-run-layer's `--merge-only` (which calls `configured_cells`) reject a bad canary, against 'non-`--merge-only` runs only'.",
+   "implementation_impact": "The implementer may edit the key map without need, or fold canary parsing into `configured_cells` and so break `--merge-only` on a bad canary.",
+   "suggestion": "State: `CONFIG_KEY_TO_DEST` stays unchanged (listed only because the plan's `--browsers` relies on it). The canary normalizer is a separate function that plan, aggregate and `read_e2e_config` call explicitly. `configured_cells` keeps its signature and drops the 'ignored this slice' note."
+  }
+ ],
+ "duplicates_removed": [],
+ "clusters": [
+  [
+   "adversarial-4",
+   "implementer-1"
+  ],
+  [
+   "adversarial-10",
+   "implementer-6"
+  ]
+ ]
+}

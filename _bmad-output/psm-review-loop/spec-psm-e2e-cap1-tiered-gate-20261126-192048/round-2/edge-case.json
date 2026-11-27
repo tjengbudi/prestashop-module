@@ -1,0 +1,80 @@
+[
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (\"Exactly one record per admitted cell per run\")",
+    "issue": "An admitted cell's child exits 2 or reports `status: skipped`, or its append fails. Under the contract (Evidence record > Storage; Runner > Output) these cells get no record, but the spec states an unconditional invariant of exactly one record per admitted cell per run.",
+    "implementation_impact": "An implementer or test that enforces the invariant writes records the contract forbids, such as a record for a skipped child. That turns an E2E-loop-ending `skipped` into a re-derivable cell. A test that follows the contract instead contradicts the spec.",
+    "suggestion": "Scope the invariant: 'exactly one record per admitted cell whose child is reaped with a result, crash or STOPPED_CODES; a child exit 2 or `status: skipped` leaves none (contract), and an append error leaves the cell without a record'."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (run's own stop: \"children whose result is already in are reaped normally ... queued cells get no record\")",
+    "issue": "During the run's own stop, a child whose result is already in is reaped normally and has a `fail` record or exited 2. The normal reap path fires fail-fast (`_fire`), which appends `not-run` records for queued cells. This contradicts 'queued cells get no record'.",
+    "implementation_impact": "Queued cells get `not-run` records or no record depending on whether the stop or the reap is processed first. The I/O row Stop and the CAP-3 tests cannot pin one outcome, so history contents after a stop are nondeterministic.",
+    "suggestion": "State the order: on the run's own stop, a normal reap appends only that child's records and does not fire fail-fast, so queued cells get no record; or state that fail-fast `not-run` wins when the reap finished before the stop signal."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Canary (\"exit 2 in plan, aggregate and ps-run-layer's read_e2e_config\")",
+    "issue": "A malformed or unconfigured `psm_e2e_canary` exists while E2E is not in play: `psm_e2e_enabled` false, `--require` without `e2e`, or a Phase 1 `--versions V --per-version` plan call whose E2E fields are never read. The runner validates the canary only for e2e runs, while plan and aggregate validate it always.",
+    "implementation_impact": "An unused E2E key makes every plan call and the aggregate exit 2. With E2E disabled, the Layer 1, 2 and 5 convergence loop and the non-E2E verdict cannot run at all. No rule says whether this is intended.",
+    "suggestion": "Either state explicitly that plan and aggregate reject a bad canary in every mode (including E2E disabled), or validate it in plan and aggregate only when the E2E fields are computed or `--require` includes `e2e`, matching the runner's e2e-only check."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Canary (\"trimmed ... absent, null or \\\"\\\" = newest target\")",
+    "issue": "The canary value is whitespace-only (`\"  \"`), or has spaces around the colon (`\"9.1 : chromium\"`). The spec does not say whether the empty check runs before or after trimming, or whether each part is trimmed.",
+    "implementation_impact": "Plan, aggregate and runner may disagree. For example, one reads `\"  \"` as the default canary and another rejects it with exit 2, or `9.1 ` fails the exact match with the configured `9.1`.",
+    "suggestion": "Specify: 'trim the whole string, then empty after trim = default; split on the single `:`, trim each part; a part that is empty after trimming = exit 2'."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (\"--browsers run scope ... from --config when absent\")",
+    "issue": "`--browsers` is absent and no `--config` is given, which is allowed when no psm-config.json exists. In that case `apply_config_file` fills nothing, and the spec gives no default for the run-scope browsers.",
+    "implementation_impact": "`args.browsers` stays None. The scope filter then either crashes or treats the scope as empty, which gives a spurious `blocked-by-scope` on every step without `--config`, for example in unit tests and the quickstart.",
+    "suggestion": "Add: 'absent in both flag and config = all configured browsers (script defaults when no config)'."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > `clean` (\"a per-version file that does not load or fails validate_layer_shape = exit 2\")",
+    "issue": "V's per-version Layer 1, 2 or 5 file is unreadable or has a bad shape. `plan_layer` already marks an unreadable file as rerun, so `phase1_reuse` for V is false. The spec does not say whether `clean` still loads the file in that case. It also does not cover a file that is valid JSON and fresh but fails `validate_layer_shape`.",
+    "implementation_impact": "If `clean` loads files without checking `phase1_reuse` first, a corrupt file that the plan would self-heal by a rerun makes every plan call exit 2. The Phase 1 loop can then never rerun the layer that would fix the file. A fresh but badly shaped file has the same effect, with no stated way to recover.",
+    "suggestion": "State: 'clean = false without loading files when phase1_reuse[V] is false; files are loaded only when it is true; on a shape failure the plan exits 2 naming the file, and the orchestrator reruns that layer for V (or the operator fixes it)'."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (interim rules cover only ps-run-layer exits)",
+    "issue": "A plan or aggregate call exits 2 in the middle of a loop, for example because of a bad canary or `--browsers`, a history read error, or a per-version file shape failure. The four interim rules define the orchestrator's action only for `ps-run-layer` exit 2 and exit 143.",
+    "implementation_impact": "The docs give no action for a failed plan call. The orchestrator may retry the same call in a loop, treat it as `blocked-*`, or abort. Headless may return `complete` instead of `blocked`, or skip the aggregate.",
+    "suggestion": "Add a docs rule: 'plan/aggregate exit 2 = input error: interactive, report stderr, fix and rerun the call; headless, return `blocked` with stderr as `reason`'."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (interim rule: child exit 2 ends the E2E loop; Headless complete/blocked rule)",
+    "issue": "In a headless run, an E2E run exits 2 because a child exited 2 (`e2e_status` `ran`), or exits 143 for a reason other than the silent-log rule. The interim rule gives the headless outcome only for a pre-spawn or append-error exit 2.",
+    "implementation_impact": "Headless callers may get `status: complete, ready: false` (the contract's early return) or `blocked` for the same event. psm-optimize and the other callers then treat versions as unproven versus unassessable inconsistently.",
+    "suggestion": "State: 'headless child exit 2 = E2E loop ended → wrap-up, `complete`, `ready: false`, stderr in the report; headless exit 143 not caused by the silent-log rule = <complete|blocked>'."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (headless pre-spawn/append-error exit 2 \"return blocked\")",
+    "issue": "Headless returns `blocked` after a pre-spawn or append-error exit 2. The contract's Headless section says every return runs the Phase 2 wrap-up and `ps-aggregate.py`. The spec does not say whether this `blocked` return does so.",
+    "implementation_impact": "A `blocked` return may carry no `versions`/`not_run_cells`/`e2e_tier_reached` fields or leave Layer 3 lenses unspawned, or it may run a wrap-up that the 'cannot assess' meaning of `blocked` excludes. The headless callers' parsing then differs per return path.",
+    "suggestion": "Specify: 'the `blocked` return for a pre-spawn/append exit 2 <does|does not> run the wrap-up; when it does not, the return carries only `status`, `reason`, `e2e_tier_reached`'."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (interim rule: \"before an infra retry (re-running a step whose previous run left an infra cause ...)\")",
+    "issue": "The orchestrator has to decide whether the next run is an infra retry. The plan's rerun reason maps `stopped` (an operator or single-child SIGTERM stop), `no-slots` and `crash` all to `inconclusive`. The spec also does not define 'the same step', for example a `gate` pass after a loop-back that again includes a cell left `crash` earlier.",
+    "implementation_impact": "After a stop, the orchestrator may ask Budi to fix an environment that is fine, and his decline then wrongly ends the E2E loop. Or it may skip the prompt for a genuine infra cause when the step name changed between runs.",
+    "suggestion": "Define the trigger from plan output: 'infra retry = some cell in `e2e_next_cells` whose newest non-`stopped` record in this `--session` has an infra cause per contract Plan step 3'. Optionally have the plan emit `e2e_infra_causes` so the orchestrator never reads histories."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Diverge (\"on the current fingerprint\")",
+    "issue": "The tag map changes during a session. The cold full `fail` and the warm or partial `pass` share the current `source_fingerprint` but have different `image_tag`s, so they are on the current fingerprint but are not fresh.",
+    "implementation_impact": "One implementation compares only the fingerprint and diverges on a fail from another core image. Another uses `is_fresh` (fingerprint plus tag) and does not diverge. Step 7's `e2e_warm`/cold choice and the AC-1 generator then differ between implementation and tests.",
+    "suggestion": "State: 'both records must be fresh (fingerprint and resolved image_tag, `is_fresh`)', or explicitly 'fingerprint only, tag ignored'."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Aggregate (`--session` → `reached`)",
+    "issue": "`ps-aggregate.py --session` gets a malformed or empty token. Plan and runner reject such a token with exit 2, but the spec gives no validation for the aggregate.",
+    "implementation_impact": "A typo matches no record. Every version lacking evidence then gets `reached: false`, and headless reports `not reached: stopped at <step>` for versions that were actually driven. Callers record them as unproven without any error.",
+    "suggestion": "Add: 'aggregate `--session` must be `[a-z0-9]{16}` (`valid_session`); otherwise exit 2'."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (fields emitted \"in both modes\")",
+    "issue": "The step is not `focus`, for example `blocked-by-scope` whose blocked step is `focus` with a recorded failure, or `done`/`gate`/`blocked-*`. The spec does not give the values of `e2e_warm`, `e2e_scenarios` and `e2e_focus_cell` for these steps.",
+    "implementation_impact": "`blocked-by-scope` over a `focus` step may emit `e2e_warm: true` and `failed-only` or `false`/`full`. `e2e_focus_cell` may be null or the canary for `done`. Exact-output tests and the hosting-version rule, which reads `e2e_focus_cell`, then disagree.",
+    "suggestion": "Specify: '`e2e_warm` false and `e2e_scenarios` `full` unless the step is `focus` (blocked-by-scope copies the blocked step's values or forces false/full); `e2e_focus_cell` is always emitted (canary when no cell is failing), never null'."
+  }
+]

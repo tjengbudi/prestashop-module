@@ -1,0 +1,38 @@
+[
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Docs > Headless ('e2e_tier_reached and stopped at <step> come from ... (the last plan call when none ran)')",
+    "issue": "No E2E step ran in a headless call because `psm_e2e_enabled` is false, `--require` excludes `e2e`, or the first run reported `skipped`. The orchestrator also makes Phase 1 `--versions V --per-version` plan calls, and their E2E fields are scoped to V and, per the contract, not read. The spec does not say which call counts as 'the last plan call'. When E2E is disabled, the run-scope E2E plan call may never be made at all.",
+    "implementation_impact": "The docs may take `e2e_tier_reached` and 'not reached: stopped at <step>' from a Phase 1 call scoped to one version. That call can show `blocked-by-scope` (for example, canary 9.1 seen from V=8.1), so headless returns a step the run never had.",
+    "suggestion": "State that `e2e_tier_reached` and `<step>` come only from plan calls whose `--versions`/`--browsers` are the run scope. When no such call was made (E2E loop ended before the first one), make one run-scope plan call before the wrap-up and use its step and tier."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Docs > Headless ('from the plan call that chose the last step run or derived the blocked-* step')",
+    "issue": "Two cases are left open. First, a step ran and the post-run plan then derives a `blocked-*` step, for example `gate` followed by `blocked-not-gradeable`. Both alternatives of the rule apply, and the spec gives no precedence. Second, a headless call finishes clean at `done`. The rule gives `{1, gate}` when the gate ran this call, but `{null, done}` when all evidence was reused and no step ran.",
+    "implementation_impact": "The same final state reports a different `e2e_tier_reached` depending on whether evidence was reused. Implementers may also pick either plan call for the blocked case, so test expectations and caller-visible return JSON diverge.",
+    "suggestion": "Add an ordering: a `blocked-*` step derived by a later call wins over the last step run. A call that ends at `done` reports the `done` plan call (`{tier: null, step: done}`) and no 'stopped at'. Add one I/O row for each case."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Docs (interim rules: exit 2 with or without output line, exit 143)",
+    "issue": "ps-run-layer can end with an exit code other than 0/1/3 (with output line), 2 or 143. An uncaught exception in `run_e2e` calls `finish('crash')`, re-raises and exits 1 with a traceback and no output line. A Ctrl-C exits 130. The interim rules and the infra-cause rule ('runs without an output line leave none') do not say what the orchestrator does after such a run, interactive or headless.",
+    "implementation_impact": "The orchestrator re-plans and may get the same step back, because admitted cells may have no records. It then reruns indefinitely, with no infra prompt and no `blocked-infra`. Headless has no defined `complete`/`blocked` outcome for this run.",
+    "suggestion": "Add a rule: an E2E run whose stdout has no parseable output line and whose exit is not 2 or 143 is treated like a pre-spawn exit 2. Interactive: report stderr, fix, then rerun. Headless: return `blocked` with stderr, no wrap-up. Alternatively, make it end the E2E loop. State which."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Docs (interim rules: 'interactive: fix and rerun'; 'Interactive exit 143 ends the E2E loop unless Budi reruns')",
+    "issue": "The rules do not say whether 'rerun' means repeating the same `--cells`/`--tier` command or making a fresh plan call and running its `e2e_next_cells`. An append-error exit 2 or a 143 can leave some records appended. A `fail` may already have landed, so the derived step can change, for example from `gate` to `focus`. The rules also do not say whether the orchestrator asks Budi after a 143 or waits for him to volunteer.",
+    "implementation_impact": "Repeating the old command re-drives cells that already have fresh records. It can also skip a loop-back the plan would now derive, so a tier-1 command runs although a cell is failing. Exit-143 handling may hang waiting for Budi or end the loop without asking.",
+    "suggestion": "State that 'rerun' always means a new run-scope plan call followed by exactly its `e2e_cells_arg --tier <e2e_tier>`. State that after an exit 143 the orchestrator asks Budi 'rerun or end the E2E loop' and treats no answer or a decline as the loop ended."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Docs > Headless ('config copy resets the canary only when it is well-formed ... and outside the caller's set')",
+    "issue": "The spec does not say how 'outside the caller's set' is compared. The plan trims both parts, lower-cases the browser, and matches the version string exactly. The copy rule only says the canary must be trimmed and have two non-empty parts. Values such as `8.1:Chromium`, ` 8.1:chromium` or `8.1 : chromium`, with caller versions including 8.1, are in the set after plan normalization but outside it under a raw string compare.",
+    "implementation_impact": "A raw compare resets a valid in-set canary to the default newest×chromium and logs a false assumption. The headless run then canaries a different cell than the plan or interactive run would.",
+    "suggestion": "Before the membership test, normalize the canary as Design Notes > Canary does (trim each part, lower-case the browser like `normalize_engines`, exact configured-version string). Compare against the caller's normalized versions × browsers, and add an AC-3 variant with `8.1:Chromium`."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Docs ('hosting version (out-of-scope → first in-scope version, numeric order)')",
+    "issue": "The hosting version is fixed 'on entering Phase 1 (session start or loop-back)'. The Phase 2 entry check can also send the orchestrator back to 'the hosting loop for a tier-0 step'. For example, the 8.1 hosting loop ended at `gate`, then a Layer 1 patch in 1.7.8's loop staled the canary, so the entry check shows `cold-canary`. That is neither session start nor loop-back, and the spec does not say whether the old hosting version (8.1) or the current focus version (9.1) hosts it.",
+    "implementation_impact": "The docs may rerun a loop for the wrong version, for example re-running 8.1's Layers 1, 2 and 5 while the tier-0 step belongs to 9.1. They may also leave the tier-0 step with no hosting loop, so the entry check repeats without running it.",
+    "suggestion": "State that every re-entry for a tier-0 step, the entry-check re-entry included, recomputes the hosting version from that plan call's `e2e_focus_cell` (out of scope → first in-scope version in numeric order). Add this case to the orchestration docs."
+  }
+]

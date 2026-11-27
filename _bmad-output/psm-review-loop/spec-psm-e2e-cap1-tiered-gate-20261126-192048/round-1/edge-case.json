@@ -1,0 +1,98 @@
+[
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Canary",
+    "issue": "The canary value is a non-string JSON value (null, a number, a list, or a YAML mapping such as `9.1: chromium`), or uses different case or whitespace (`9.1:Chromium`, ` 9.1:chromium`), or has a `+`-joined browser list. The spec does not say how the normalizer treats these.",
+    "implementation_impact": "Plan, runner and aggregate may each parse it differently. One may fall back to the default canary while another exits 2, so tier derivation is not deterministic.",
+    "suggestion": "Define one canonical form: `str`, matching `^<dotted-digits>:<engine>$` after strip, with no case folding. A null value is treated as \"\" (the default). Anything else exits 2 with the same message in all three scripts."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`--tier`)",
+    "issue": "`--tier` (or a malformed canary) is passed with `--merge-only --layer e2e`. The spec covers only non-merge-only runs and other layers.",
+    "implementation_impact": "Wrap-up `--merge-only` calls may be rejected or silently accepted, depending on how this is implemented. The wrap-up can then fail after the E2E loop ends.",
+    "suggestion": "State the rule. For example: `--tier` together with `--merge-only` exits 2, the same as `--jobs`/`--slots`. Also say whether merge-only validates the canary (it reads `--config`)."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`stopped` records)",
+    "issue": "A child reaped with a STOPPED_CODES exit code still leaves a readable per-cell payload, for example a cell that finished before SIGTERM. The contract writes `stopped` only when the child left no result; this spec says every admitted cell gets `stopped`.",
+    "implementation_impact": "A conclusive `fail` (or `pass`) the child already produced may be replaced by an inconclusive `stopped` record. That loses evidence and changes failing/focus derivation.",
+    "suggestion": "Reconcile with the contract: if the payload has a cell result, use it; otherwise append an inconclusive record with reason `stopped`. Add a test for each branch."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`stopped` records); I/O row Stop",
+    "issue": "The run is stopped while cells are still queued or waiting in `wait-slots`. These cells were never admitted, and the spec gives `stopped` records only to admitted cells.",
+    "implementation_impact": "Queued cells get no record. This conflicts with the headless rule that the cells of a stopped job get `stopped`, and the history does not show that the stop covered them.",
+    "suggestion": "Specify what unadmitted queued cells get on a run stop: either a `stopped` record, or explicitly no record (and update the headless wording to match). Add a Stop row with one queued cell."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`stopped` records)",
+    "issue": "The run's own stop SIGTERMs an in-flight child, which is then reaped with STOPPED_CODES, or the child finishes normally while the stop handler is running. Both stopped paths, or the normal reap and the stop path, can cover the same cell.",
+    "implementation_impact": "A cell can get two records (a real result plus `stopped`, or two `stopped`). This breaks the one-record-per-cell-per-run rule and can skew blocked-infra counting.",
+    "suggestion": "Each admitted cell gets exactly one record per run. Keep a per-version `recorded` flag under the reap lock. The stop path appends `stopped` only for versions whose flag is still unset."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Runner (`stopped` records, exit 143)",
+    "issue": "Appending a `stopped` record fails (disk or permission error) inside the stop handler. Under CAP-3 an append error means exit 2, but a stop means exit 143.",
+    "implementation_impact": "The exit code is undefined, so the orchestrator may treat an operator stop as an environment error, or the reverse.",
+    "suggestion": "Pick one: exit 143 wins and the append error goes to stderr only, or exit 2 wins. Document the choice and test it."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (`clean` via ps-aggregate layer functions)",
+    "issue": "A per-version Layer 1, 2 or 5 file is inconclusive with no findings (boot or install error, `errors` > 0), or has a shape the aggregate layer function rejects or raises on. The spec defines `clean` only as having no blocking finding.",
+    "implementation_impact": "An inconclusive Layer 2/5 result may count as clean and open the E2E step. A malformed file may crash the plan with a traceback instead of exiting 2.",
+    "suggestion": "Define `clean` as `phase1_reuse and every layer conclusive-or-skipped and no blocking finding`. If a layer function raises, the plan exits 2 and names the file."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (`phase1_reuse`/`clean` \"in both modes\")",
+    "issue": "In canonical mode (no `--per-version`), `per_version[V].clean` is requested from the per-version files, but in Phase 2 only canonical files are written.",
+    "implementation_impact": "In canonical mode `clean` may read missing or stale per-version files and report false or true wrongly. Wrap-up or Phase 2 entry may then misjudge versions.",
+    "suggestion": "Say which files canonical mode judges for `clean`/`phase1_reuse` per version, or emit `per_version[V].clean` only in `--per-version` mode."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (`e2e_cells_arg`)",
+    "issue": "`e2e_next_cells` is empty (`done`, `blocked-*`, or the run-scope filter). The value of `e2e_cells_arg` in that case is not given (\"\", null, or omitted).",
+    "implementation_impact": "An orchestrator that \"runs exactly `e2e_cells_arg`\" may call `--cells \"\"`, get exit 2, and end the E2E loop for the wrong reason.",
+    "suggestion": "Set `e2e_cells_arg = null` when `e2e_next_cells` is empty, and have the docs say: run nothing when it is null. Test it for `done` and `blocked-by-scope`."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (`--browsers` run scope)",
+    "issue": "The spec defines the `--browsers` errors, but not what happens when `--versions` in the plan lists a version that is not configured, or one that is equal only numerically (`9.1.0` vs `9.1`).",
+    "implementation_impact": "The scope filter may match by numeric value in one place and by exact string in another. That can produce a spurious `blocked-by-scope` or run unintended cells.",
+    "suggestion": "State that the run-scope filter matches configured version strings exactly, and that an E2E-relevant `--versions` entry outside the configured versions exits 2 (or is ignored), mirroring `--browsers`."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (hosting version)",
+    "issue": "The focus cell's version is outside the run scope, so the hosting version is \"the first in-scope version\". \"First\" is not defined: numeric order or `--versions` written order.",
+    "implementation_impact": "The docs or the orchestrator may pick different hosting loops, which changes which version's Phase 1 runs first.",
+    "suggestion": "Define first as the lowest in numeric dotted order among in-scope versions (or as written order) and state it in run-phases.md."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs (Phase 1 loop, Phase 2 loop)",
+    "issue": "Inside the hosting or Phase 2 loop, `ps-run-layer` exits 143 (operator stop), or exits 2 with no output line (append error), or exits 2 after a child exit 2. The spec says nothing about what the orchestrator does next.",
+    "implementation_impact": "The next plan call re-derives the same step (`stopped` records are skipped), so the orchestrator may re-run a step the operator just stopped, or loop forever.",
+    "suggestion": "Docs must map each run outcome to an action. 143: end the E2E loop, or ask the operator interactively. Exit 2 with no line: fix and retry. Exit 2 after a child exit 2: the E2E loop ends."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Aggregate (`reached`)",
+    "issue": "A version's only records in the session are `not-run`, `no-slots` or `stopped`. The version counts as reached even though no engine drove it.",
+    "implementation_impact": "Headless reports such a version with reason not-run/stopped rather than `not reached`. Callers may treat the two differently, and the spec does not say which is intended.",
+    "suggestion": "State explicitly whether records with `state not-run` or reason in {`no-slots`, `stopped`} count toward `reached`, and add a test row."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Aggregate (`reached`); Docs > Headless",
+    "issue": "The E2E loop ended without any E2E step running: Docker is absent (`skipped`), `psm_e2e_enabled` is false, or `--require` is given without `e2e`, while `--session` is passed. Every version then gets `reached: false`.",
+    "implementation_impact": "Headless reports `not reached: stopped at <step>` for a step that never ran. Callers read this as a tiering stop rather than E2E being disabled or skipped.",
+    "suggestion": "Specify the reason text for versions not reached because the E2E loop ended before any run. For example, use the skip reason, or omit `reached` when no E2E run happened in the session."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Docs > Headless (config copy with canary reset)",
+    "issue": "The resolved config's `psm_e2e_canary` is malformed, not merely outside the caller's cells. The copy rule resets the canary only when it names a cell outside the caller's set.",
+    "implementation_impact": "A headless run exits 2 at the first plan call, and callers get no per-version verdict, where a reset with an assumption log might have been intended.",
+    "suggestion": "Say whether headless resets a malformed canary to \"\" with an assumption logged, or returns `blocked` with an input-error reason."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Always > Plan (focus cell per contract)",
+    "issue": "Two failing records from different `job_id`s have the same highest `started_at`, or the failing record's `job_id` is null. Tie-breaks are defined only inside one run.",
+    "implementation_impact": "The \"newest run\" is ambiguous, so the focus cell, and with it the hosting step, can vary between plan calls.",
+    "suggestion": "Add a deterministic fallback. For example: break ties across runs by the cells' history append position, then numeric version, then browser order. A null `job_id` forms its own run per record."
+  }
+]

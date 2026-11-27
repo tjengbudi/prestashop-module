@@ -98,6 +98,8 @@ def test_missing_psm_keys_get_defaults():
           data["psm_e2e_browsers"] == "chromium,firefox", res.stdout)
     check("default: e2e_slots kanonik (selaras DEFAULT_E2E_SLOTS ps-run-layer)",
           data["psm_e2e_slots"] == "6", res.stdout)
+    check("default: e2e_canary kosong (= versi terbaru x chromium, dinormalisasi skrip)",
+          data["psm_e2e_canary"] == "", res.stdout)
     check("default: reports_dir kanonik (diekspansi)",
           data["psm_reports_dir"] == f"{proj}/_bmad-output/psm-validate", res.stdout)
     check("default: communication_language kanonik", data["communication_language"] == "Indonesia", res.stdout)

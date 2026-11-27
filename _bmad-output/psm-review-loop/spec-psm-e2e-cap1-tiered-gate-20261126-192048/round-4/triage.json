@@ -1,0 +1,11 @@
+{"round": 4, "critical_high": 9, "fixed": 8, "escalated": 1, "dropped": 1, "code_defects": 0,
+ "questions_for_budi": [{"id": "20261126-192048.r4-q1", "finding": "Tawaran 'stop convergence' (kontrak Plan > Stop convergence) butuh fakta 'focus cell punya recorded failure', tapi tak ada field plan yang memuatnya (fail basi tampil sebagai stale-source); docs tak bisa menurunkannya tanpa menebak.", "options": ["Proxy di docs: tawarkan bila V tak bersih atau e2e_step tier 0 dan focus cell punya entri e2e rerun_matrix selain missing; sel gagal untuk laporan diambil dari e2e_cells aggregate", "Tambah field plan mis. e2e_focus_recorded_failure (ubah kontrak, Ask First)"], "recommended": "Proxy di docs (menawarkan lebih sering tak berbahaya; Budi tetap yang memilih)", "oscillation": false}],
+ "medium_low": [
+  {"location": "Never (stopped deferred) x Docs interim rules (adversarial-3)", "issue": "single child SIGTERM'd while ps-run-layer survives leaves no record and exit 1; interactive rerun is acceptable, consequence of the decided stopped deferral"},
+  {"location": "Acceptance Criteria #1 (adversarial-4)", "issue": "invariant could also assert exact next cells per step and done/e2e_cells_arg null; test-strength expansion"},
+  {"location": "I/O matrix / Tasks > tests (adversarial-6, implementer-9)", "issue": "no rows for canary-version loop-back (cold-version straight to gate), non-default canary, or default canary without chromium"},
+  {"location": "Verification > Manual (adversarial-9)", "issue": "also check no --merge-only command carries --tier/--cells/--session/--versions"},
+  {"location": "Design Notes > Docs interim rules (edge-case-3)", "issue": "ps-run-layer crash (exit 1, traceback, no output line) or Ctrl-C 130 has no stated handling"},
+  {"location": "I/O Clean module row (implementer-5)", "issue": "aggregate ready-true fixture (default --require with passing Layer 1/2/5 vs --require e2e) not pinned after slimming"},
+  {"location": "Design Notes > Docs orchestration (implementer-10)", "issue": "session-start plan call for hosting version and hosting-loop-first ordering not spelled out (implied by contract and the run-scope --per-version rule)"}
+ ]}

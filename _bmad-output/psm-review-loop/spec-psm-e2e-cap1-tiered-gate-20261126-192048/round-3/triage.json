@@ -1,0 +1,19 @@
+{"round": 3, "critical_high": 19, "fixed": 18, "escalated": 1, "dropped": 0, "code_defects": 0,
+ "questions_for_budi": [
+  {"id": "20261126-192048.r3-q1",
+   "finding": "Aturan prompt perbaikan lingkungan (fix ronde 2) memicu prompt sebelum run E2E berikutnya apa pun langkahnya, padahal langkah itu mungkin tak menyentuh sel yang meninggalkan penyebab infra (mis. no-slots di 1.7.8:firefox lalu loop-back focus 8.1:chromium); menolak berarti loop E2E berakhir. Interim dulu per versi (infra retry V tertunda sampai run V berikutnya). Ini membalik fix ronde 2.",
+   "options": ["Pertahankan: prompt sebelum run berikutnya apa pun langkahnya", "Prompt hanya bila e2e_next_cells langkah berikutnya memuat versi yang meninggalkan penyebab; selain itu penyebab dibawa maju"],
+   "recommended": "Prompt hanya bila langkah berikutnya men-drive versi yang meninggalkan penyebab (sesuai aturan interim per-V)",
+   "oscillation": true}
+ ],
+ "medium_low": [
+  {"location": "Boundaries > Docs (4th interim rule)", "issue": "adversarial-2: infra cause read from next plan's rerun reason is masked as stale-source when the source changed during/after the run; fix needs reading histories (against carried interim rule) or a new plan field"},
+  {"location": "Boundaries > Docs (4th interim rule)", "issue": "edge-case-3: rerun reason inconclusive also covers incomplete-record (runner defect), which would trigger an environment prompt; same as interim"},
+  {"location": "Boundaries > Runner (stop path)", "issue": "adversarial-7: executor atexit still joins worker threads and finally removes run.tmp while children may write; existing behaviour, 'before any join' now pins record timing"},
+  {"location": "Boundaries > Runner (stop path)", "issue": "edge-case-6: Ctrl-C/internal crash of ps-run-layer leaves admitted cells without records (existing behaviour; giving them records expands scope)"},
+  {"location": "Boundaries > Runner (deferral)", "issue": "edge-case-9: deferred stop while blocked on LOCK_EX is unbounded vs JOB_STOP_GRACE SIGKILL; lock is held only for one write"},
+  {"location": "Boundaries > Docs (hosting loop) / contract step 5", "issue": "implementer-9: scoped cold-version could repeat forever once CAP-4/5 land; unreachable in CAP-1 (always cold full), contract-level follow-up"},
+  {"location": "Tasks > tests", "issue": "implementer-12: add contract test cold full pass then cold full fail on one fingerprint derives focus (not done) and ready false"},
+  {"location": "Never (bankwire timing report)", "issue": "implementer-14: name the owning slice and the 'before' baseline commit for the SPEC success-signal report (scope/planning)"},
+  {"location": "Design Notes > clean", "issue": "implementer-8 (rest): scenario payload nested shape (versions[V] object, scenarios list of objects) not gated, can crash scenario_layer; ps-aggregate has the same exposure"}
+ ]}

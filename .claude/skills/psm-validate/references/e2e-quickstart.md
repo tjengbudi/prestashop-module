@@ -83,13 +83,14 @@ langsung di atas **bukan** bukti — agregat hanya membaca histori sel yang ditu
 ```bash
 uv run scripts/ps-plan-layers.py --new-session            # -> <t>
 uv run scripts/ps-run-layer.py --layer e2e --module <module-path> --reports-dir <psm_reports_dir> \
-  --cells 9.1:chromium --session <t> --config <cfg>
+  --cells 9.1:chromium --tier 0 --session <t> --config <cfg>
 uv run scripts/ps-aggregate.py --reports-dir <psm_reports_dir> --module <module-path> \
   --config <cfg> -o verdict.json
 ```
 
-Static dibaca dari `<module>-static.json` (atau `--static`); tanpa `--versions`/`--e2e`
-(`--e2e` = exit 2). Vonisnya `e2e_cells['9.1']['chromium']` (`state`, `gate_grade`, `reason`,
+`--tier 0` wajib (run TDD = loop perbaikan tier 0; di psm-validate tier selalu `e2e_tier`
+plan). Static dibaca dari `<module>-static.json` (atau `--static`); agregat tanpa
+`--versions`/`--e2e`/`--tier` (`--e2e` = exit 2). Vonisnya `e2e_cells['9.1']['chromium']` (`state`, `gate_grade`, `reason`,
 `findings`); `ready=false` memang diharapkan selama sel lain belum terbukti.
 
 ### Format spec skenario (`<module>/tests/e2e/*.json`)
@@ -165,7 +166,10 @@ uv run scripts/ps-e2e-run.py <module> --versions 9.1 --browsers chromium --heade
 
 Screenshot yang kamu tinjau **tak punya jalan ke vonis** kecuali lewat file lapis
 adversarial (`<psm_reports_dir>/<module>-adversarial.json`) — `ps-aggregate.py` tak pernah
-melihat gambar. Cacat visual yang kamu yakini, tulis ke situ SEBELUM agregat jalan:
+melihat gambar. Di psm-validate cacat visual yang kamu yakini masuk dulu ke
+`<psm_reports_dir>/<module>-visual-pending.json` (bentuk sama, tiap entri bertanda `session` dan
+`source_fingerprint`), lalu wrap-up menggabungkannya ke file adversarial sesudah Lapis 3, SEBELUM
+agregat (SKILL.md > Lapis 4). Aturan menulisnya (berlaku untuk kedua file):
 
 - **Tambahkan** ke `findings` yang sudah ada — jangan timpa (SKILL.md menuntut read-merge
   dari kedua arah, jadi Lapis 3 pun tak boleh menimpa temuanmu): di file itu ada temuan

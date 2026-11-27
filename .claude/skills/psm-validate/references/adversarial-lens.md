@@ -51,11 +51,13 @@ dilewati.
 ## Delegasi (default)
 
 **Kapan.** Lintas versi, di awal **Fase 2** — setelah source berhenti dipatch (patch Fase 1
-membasikan review). Fase 2 mulai ulang (sesudah `fail` E2E kembali ke Fase 1)? Spawn lagi,
-kecuali plan kanonik me-reuse adversarial atau lensa dari `source_fingerprint` plan yang sama
+membasikan review). Kegagalan tier 1 memicu **loop-balik** ke Fase 1 (tier 0): kembalian lensa
+yang belum digabung **dibuang** saat itu, tak pernah digabung sesudah patch, dan keempat lensa
+di-spawn lagi di awal Fase 2 berikutnya — kecuali plan kanonik (flag sama tanpa `--per-version`,
+termasuk `--session <t>`) me-reuse adversarial atau lensa dari `source_fingerprint` plan yang sama
 masih belum digabung (syarat & perintah persisnya: `references/run-phases.md` > Fase 2).
-Kembalian lensa yang belum digabung dan di-spawn di bawah `source_fingerprint` lain **dibuang**,
-tak pernah digabung. Spawn keempatnya **dalam satu giliran** supaya jalan paralel; selagi
+Kembalian yang di-spawn di bawah `source_fingerprint` lain juga dibuang. Stop konvergensi (dan
+headless yang berhenti sebelum Fase 2) tetap men-spawn lensa sebelum wrap-up. Spawn keempatnya **dalam satu giliran** supaya jalan paralel; selagi
 mereka bekerja, lanjutkan lapis skrip Fase 2. Agregat **tak boleh** jalan sebelum keempat
 kembalian digabung.
 

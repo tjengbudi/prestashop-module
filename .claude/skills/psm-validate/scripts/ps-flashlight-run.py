@@ -1644,11 +1644,65 @@ def configured_cells(config_path=None):
 
     Dibaca LANGSUNG dari JSON --config: key absen atau null -> default skrip
     (DEFAULT_TARGET_VERSIONS / DEFAULT_E2E_BROWSERS); tanpa config -> keduanya default.
-    `versions` urut numerik, `browsers` urut tertulis. `psm_e2e_canary` diabaikan slice ini.
+    `versions` urut numerik, `browsers` urut tertulis. Canary: configured_canary.
     """
     cfg = read_config_json(config_path) if config_path else {}
     return (normalize_versions(cfg.get("psm_target_versions")),
             normalize_engines(cfg.get("psm_e2e_browsers")))
+
+
+# --- Canary (cell-contract.md > Config keys > psm_e2e_canary) ----------------------
+# SATU normalizer canary, dipakai plan, runner dan agregat (lewat `fl` / `pl.fl`). Dinilai
+# atas himpunan sel terkonfigurasi, apa pun psm_e2e_enabled — canary salah bentuk = exit 2.
+CANARY_KEY = "psm_e2e_canary"
+
+
+def normalize_canary(raw, versions, browsers, key=CANARY_KEY):
+    """Nilai psm_e2e_canary -> `"<versi>:<browser>"` ternormalisasi. Error -> CellConfigError.
+
+    `versions`/`browsers` = himpunan TERKONFIGURASI yang sudah dinormalisasi
+    (normalize_versions / normalize_engines). Aturan (spec CAP-1 > Design Notes > Canary):
+      - ada & bukan null tapi bukan string -> error;
+      - di-strip; absen/null/kosong -> versi terbaru (numerik) x `chromium`, atau browser
+        terkonfigurasi PERTAMA bila chromium tak dikonfigurasi;
+      - selain itu harus terbelah TEPAT di satu `:` jadi versi ter-strip yang SAMA PERSIS dgn
+        string versi terkonfigurasi, dan browser ter-strip + huruf kecil (seperti
+        normalize_engines) yang ada di himpunan browser terkonfigurasi.
+    Pesan error selalu menyebut key-nya.
+    """
+    if raw is not None and not isinstance(raw, str):
+        raise CellConfigError(f"{key}: harus string <versi>:<browser>, dapat {raw!r}")
+    text = (raw or "").strip()
+    if not text:
+        newest = max(versions, key=version_key)
+        browser = "chromium" if "chromium" in browsers else browsers[0]
+        return f"{newest}:{browser}"
+    parts = text.split(":")
+    if len(parts) != 2:
+        raise CellConfigError(f"{key}: {raw!r} harus berbentuk <versi>:<browser> "
+                              "(tepat satu ':'), mis. 9.1:chromium")
+    ver, browser = parts[0].strip(), parts[1].strip().lower()
+    if ver not in versions:
+        raise CellConfigError(f"{key}: versi {ver!r} bukan versi terkonfigurasi — harus PERSIS "
+                              f"salah satu dari: {', '.join(versions)}")
+    if browser not in browsers:
+        raise CellConfigError(f"{key}: browser {browser!r} bukan browser terkonfigurasi "
+                              f"(psm_e2e_browsers: {', '.join(browsers)})")
+    return f"{ver}:{browser}"
+
+
+def configured_canary(config_path=None, versions=None, browsers=None):
+    """Canary dari JSON --config -> `"<versi>:<browser>"`. Error -> CellConfigError (exit 2).
+
+    Tanpa config -> canary default atas himpunan default. `versions`/`browsers` (hasil
+    configured_cells) boleh diberikan supaya tak dinormalisasi ulang; absen -> dibaca dari
+    config yang sama.
+    """
+    cfg = read_config_json(config_path) if config_path else {}
+    if versions is None or browsers is None:
+        versions = normalize_versions(cfg.get("psm_target_versions"))
+        browsers = normalize_engines(cfg.get("psm_e2e_browsers"))
+    return normalize_canary(cfg.get(CANARY_KEY), versions, browsers)
 
 
 def job_start(args, module, layer):

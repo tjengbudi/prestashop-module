@@ -660,14 +660,20 @@ def main():
             Path(__file__).resolve().parent.parent / "ps-plan-layers.py", "DEFAULT_REPORTS_DIR")
         ok &= check("drift: DEFAULT_REPORTS_DIR ps-plan-layers == psm_reports_dir (tanpa {project-root}/)",
                     reports_default == D["psm_reports_dir"].replace("{project-root}/", ""))
-        # --versions default: satu sumber kebenaran, empat salinan literal di argparse.
+        # --versions default: satu sumber kebenaran, tiga salinan literal di argparse.
         scripts_dir = Path(__file__).resolve().parent.parent
         drifted = [name for name in ("ps-flashlight-run.py", "ps-e2e-run.py",
-                                     "ps-static-scan.py", "ps-plan-layers.py")
+                                     "ps-static-scan.py")
                    if _argparse_default(scripts_dir / name, "--versions")
                    != D["psm_target_versions"]]
         ok &= check(f"drift: --versions default tiap skrip == psm_target_versions ({drifted or 'selaras'})",
                     drifted == [])
+        # ps-plan-layers (CAP-1): --versions/--browsers ber-default None supaya nilai eksplisit
+        # yang sama dgn default skrip tetap cakupan run (menang atas --config); fallback-nya
+        # DEFAULT_TARGET_VERSIONS / DEFAULT_E2E_BROWSERS yang sudah dikunci di atas.
+        ok &= check("ps-plan-layers: --versions & --browsers default None (fallback konstanta fl)",
+                    _argparse_default(scripts_dir / "ps-plan-layers.py", "--versions") is None
+                    and _argparse_default(scripts_dir / "ps-plan-layers.py", "--browsers") is None)
 
     # --config: terjemahan key resolved -> flag punya satu jawaban benar, dan alur per-versi
     # memanggil skrip lapis O(lapis x versi) kali. Tiap pengulangan tangan satu kesempatan
@@ -831,6 +837,47 @@ def test_configured_cells():
                     _raises_cfg(mod.configured_cells, str(cfg)))
         ok &= check("configured_cells: config tak terbaca -> CellConfigError",
                     _raises_cfg(mod.configured_cells, str(Path(td) / "tak-ada.json")))
+    ok &= test_canary()
+    return ok
+
+
+def test_canary():
+    """psm_e2e_canary: SATU normalizer (spec CAP-1 > Design Notes > Canary), error menyebut key."""
+    ok = True
+    tv, br = ["1.7.8", "8.1", "9.1"], ["chromium", "firefox"]
+    nc = mod.normalize_canary
+    ok &= check("canary absen/null/kosong/spasi -> versi terbaru x chromium",
+                all(nc(v, tv, br) == "9.1:chromium" for v in (None, "", "   ")))
+    ok &= check("canary default: versi terbaru NUMERIK ('10.0' sesudah '9.1')",
+                nc(None, ["9.1", "10.0"], br) == "10.0:chromium")
+    ok &= check("canary default tanpa chromium -> browser terkonfigurasi pertama",
+                nc("", tv, ["firefox", "webkit"]) == "9.1:firefox")
+    ok &= check("canary ' 9.1 : Chromium ' -> 9.1:chromium (strip + huruf kecil)",
+                nc(" 9.1 : Chromium ", tv, br) == "9.1:chromium")
+    ok &= check("canary non-default 8.1:firefox sah", nc("8.1:firefox", tv, br) == "8.1:firefox")
+    for val in ("9.1", "9.1:chromium:x", ":chromium", "9.1:", "7.0:chromium", "9.1:webkit",
+                "9.1.0:chromium", 9.1, 0, False, ["9.1:chromium"], {"v": "9.1"}):
+        try:
+            nc(val, tv, br)
+            ok &= check(f"canary {val!r} -> CellConfigError", False)
+        except mod.CellConfigError as e:
+            ok &= check(f"canary {val!r} -> CellConfigError menyebut psm_e2e_canary",
+                        "psm_e2e_canary" in str(e))
+    with tempfile.TemporaryDirectory() as td:
+        cfg = Path(td) / "c.json"
+        ok &= check("configured_canary tanpa config -> 9.1:chromium",
+                    mod.configured_canary(None) == "9.1:chromium")
+        cfg.write_text(json.dumps({"psm_target_versions": "8.1,9.1", "psm_e2e_browsers": "firefox",
+                                   "psm_e2e_canary": " 8.1:FIREFOX"}), encoding="utf-8")
+        ok &= check("configured_canary membaca config & menormalisasi",
+                    mod.configured_canary(str(cfg)) == "8.1:firefox")
+        cfg.write_text(json.dumps({"psm_e2e_canary": "9.1:webkit", "psm_e2e_enabled": "false"}),
+                       encoding="utf-8")
+        ok &= check("configured_canary di luar himpunan -> error walau psm_e2e_enabled false",
+                    _raises_cfg(mod.configured_canary, str(cfg)))
+    src = MOD_PATH.read_text(encoding="utf-8")
+    ok &= check("configured_cells tak lagi menyebut 'canary diabaikan'",
+                "diabaikan slice ini" not in src)
     return ok
 
 

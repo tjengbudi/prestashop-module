@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 MOD_PATH = Path(__file__).resolve().parent.parent / "ps-plan-layers.py"
@@ -500,6 +501,629 @@ def test_session_cli():
     return ok
 
 
+# --- CAP-1: tier E2E (derive_e2e_step + CLI) --------------------------------------------
+CELLS6 = [f"{v}:{b}" for v in TV for b in BROWSERS]
+CANARY = "9.1:chromium"
+TM = mod.fl.parse_tag_map(None, None)
+_CLOCK = [0]
+_T0 = datetime(2026, 11, 26, 10, 0, 0, tzinfo=timezone.utc)
+
+
+def _tr(cell, fp="fp1", job=None, **kw):
+    """Record bertimestamp naik (urutan pembuatan) — pass gate-grade passing kecuali di-override."""
+    _CLOCK[0] += 1
+    ver, b = cell.split(":")
+    ts = (_T0 + timedelta(seconds=_CLOCK[0])).isoformat(timespec="microseconds")
+    return _rec(ver, b, fp, started_at=ts, job_id=job if job is not None else f"j{_CLOCK[0]}", **kw)
+
+
+def PASS(cell, fp="fp1", **kw):
+    return _tr(cell, fp, **kw)
+
+
+def FAIL(cell, fp="fp1", scen="s1", **kw):
+    kw.setdefault("findings", [{"scenario": scen, "step": 3, "action": "expect_text"}])
+    return _tr(cell, fp, state="fail", **kw)
+
+
+def WPASS(cell, fp="fp1", **kw):
+    return _tr(cell, fp, boot="warm", **kw)
+
+
+def WFAIL(cell, fp="fp1", **kw):
+    return FAIL(cell, fp, boot="warm", **kw)
+
+
+def INC(cell, reason, fp="fp1", **kw):
+    """Record inconclusive tanpa engine (crash/no-slots/stopped) seperti ditulis runner."""
+    return _tr(cell, fp, state="inconclusive", conclusive=False, reason=reason, boot=None,
+               scenario_set=None, install=None, authored_assertions=None, **kw)
+
+
+def _derive(H, fp="fp1", canary=CANARY, cells=None, sv=None, sb=None, session=SESSION, notes=None):
+    cells = cells or CELLS6
+    vs = sv if sv is not None else sorted({c.split(":")[0] for c in cells}, key=mod.fl.version_key)
+    bs = sb if sb is not None else list(dict.fromkeys(c.split(":")[1] for c in cells))
+    return mod.derive_e2e_step(H, cells, canary, vs, bs, fp, TM, session, current_notes=notes)
+
+
+def _add(H, *recs):
+    for r in recs:
+        H.setdefault(f"{r['version']}:{r['browser']}", []).append(r)
+    return H
+
+
+def _is(d, step, nxt, **kw):
+    """Langkah + e2e_next_cells persis (+ field lain bila disebut)."""
+    if d["e2e_step"] != step or d["e2e_next_cells"] != nxt:
+        return False
+    return all(d[k if k.startswith("e2e_") else "e2e_" + k] == v for k, v in kw.items())
+
+
+def _ac1_invariant(d):
+    """AC 1: sel non-canary di next HANYA bila gate, atau focus/cold-version dan sel itu = /
+    se-versi dgn e2e_focus_cell."""
+    fver = d["e2e_focus_cell"].split(":")[0]
+    for c in d["e2e_next_cells"]:
+        if c == CANARY:
+            continue
+        if d["e2e_step"] == "gate":
+            continue
+        if d["e2e_step"] in ("focus", "cold-version") and (
+                c == d["e2e_focus_cell"] or c.split(":")[0] == fver):
+            continue
+        return False
+    return True
+
+
+def test_tier_derivation():
+    """derive_e2e_step: setiap baris I/O matrix sisi plan, AC 1, langkah & himpunan sel persis."""
+    ok = True
+    # Fresh module: config 3x2, tanpa histori
+    d = _derive({})
+    ok &= check("fresh: focus tier 0 [9.1:chromium], full, warm false, recorded false",
+                _is(d, "focus", [CANARY], tier=0, scenarios="full", warm=False,
+                    focus_cell=CANARY, focus_recorded_failure=False, cells_arg="9.1:chromium",
+                    required_cells=[CANARY], blocked_causes={}))
+    ok &= check("derive_e2e_step mengembalikan SEMUA field tier",
+                set(d) == {"e2e_step", "e2e_tier", "e2e_focus_cell", "e2e_focus_recorded_failure",
+                           "e2e_next_cells", "e2e_required_cells", "e2e_cells_arg",
+                           "e2e_blocked_causes", "e2e_scenarios", "e2e_warm"})
+
+    # Canary blocking bug: canary cold fail, tanpa record lain
+    H = _add({}, FAIL(CANARY))
+    d = _derive(H)
+    ok &= check("canary blocking bug: focus canary saja, warm true, failed-only",
+                _is(d, "focus", [CANARY], tier=0, warm=True, scenarios="failed-only",
+                    focus_recorded_failure=True))
+    # failed set hanya scenario string tak kosong: null / non-string -> kosong -> full
+    d = _derive(_add({}, FAIL(CANARY, findings=[{"scenario": None}, {"scenario": 3},
+                                               {"scenario": ""}, "x"])))
+    ok &= check("failed set tanpa scenario string -> e2e_scenarios full (warm tetap true)",
+                _is(d, "focus", [CANARY], warm=True, scenarios="full"))
+    d = _derive(_add({}, FAIL(CANARY, findings=[{"scenario": None}],
+                              inconclusive=[{"scenario": "s2"}])))
+    ok &= check("failed set memuat inconclusive[].scenario -> failed-only",
+                d["e2e_scenarios"] == "failed-only")
+    # warm-reset / keeper-start di --session ini -> warm false; di sesi lain tak berpengaruh
+    for why in ("warm-reset", "keeper-start"):
+        d = _derive(_add({}, FAIL(CANARY), INC(CANARY, why)))
+        ok &= check(f"record {why} sesi ini -> e2e_warm false (focus tetap)",
+                    _is(d, "focus", [CANARY], warm=False))
+        d = _derive(_add({}, FAIL(CANARY), INC(CANARY, why, session="zzzzzzzzzzzzzzzz")))
+        ok &= check(f"record {why} sesi lain -> e2e_warm true", d["e2e_warm"] is True)
+
+    # Clean canary: canary lulus gate-grade -> gate tier 1, cells_arg persis
+    d = _derive(_add({}, PASS(CANARY)))
+    ok &= check("clean canary: gate tier 1, lima sel, cells_arg persis",
+                _is(d, "gate", [c for c in CELLS6 if c != CANARY], tier=1, warm=False,
+                    scenarios="full", focus_cell=CANARY,
+                    cells_arg="1.7.8:chromium+firefox,8.1:chromium+firefox,9.1:firefox"))
+
+    # Loop-back (tier 1 gagal di 8.1:firefox, patch -> fp1)
+    def _tier1_base(fail_cells=("8.1:firefox",), fp="fp0"):
+        H = _add({}, PASS(CANARY, fp, job="c0"))
+        for c in CELLS6:
+            if c == CANARY:
+                continue
+            _add(H, FAIL(c, fp, job="g1") if c in fail_cells else PASS(c, fp, job="g1"))
+        return H
+    H = _tier1_base()
+    d = _derive(H)
+    ok &= check("loop-back 1: focus [8.1:firefox] tier 0, warm true, failed-only",
+                _is(d, "focus", ["8.1:firefox"], tier=0, focus_cell="8.1:firefox",
+                    warm=True, scenarios="failed-only"))
+    _add(H, WPASS("8.1:firefox"))
+    d = _derive(H)
+    ok &= check("loop-back 2: warm pass -> cold-version [8.1 x2], cold full",
+                _is(d, "cold-version", ["8.1:chromium", "8.1:firefox"], tier=0, warm=False,
+                    scenarios="full", cells_arg="8.1:chromium+firefox"))
+    _add(H, PASS("8.1:chromium", job="cv"), PASS("8.1:firefox", job="cv"))
+    d = _derive(H)
+    ok &= check("loop-back 3: kedua sel 8.1 cold pass -> cold-canary [9.1:chromium]",
+                _is(d, "cold-canary", [CANARY], tier=0, focus_cell=CANARY, cells_arg="9.1:chromium"))
+    hosted = dict((k, list(v)) for k, v in H.items())
+    _add(H, PASS(CANARY, job="cc"))
+    d = _derive(H)
+    ok &= check("loop-back 4: canary cold pass -> gate [1.7.8 x2, 9.1:firefox]",
+                _is(d, "gate", ["1.7.8:chromium", "1.7.8:firefox", "9.1:firefox"], tier=1,
+                    cells_arg="1.7.8:chromium+firefox,9.1:firefox"))
+    _add(H, *(PASS(c, job="g2") for c in ("1.7.8:chromium", "1.7.8:firefox", "9.1:firefox")))
+    d = _derive(H)
+    ok &= check("done: next [], cells_arg null, tier null, required []",
+                _is(d, "done", [], tier=None, cells_arg=None, required_cells=[],
+                    blocked_causes={}, warm=False, scenarios="full"))
+
+    # Hosted in 8.1: loop-back di cold-canary; cakupan default / --versions 8.1
+    d = _derive(hosted, sv=["8.1"])
+    ok &= check("hosted in 8.1 (--versions 8.1): blocked-by-scope tier 0, required [canary]",
+                _is(d, "blocked-by-scope", [], tier=0, required_cells=[CANARY],
+                    blocked_causes={CANARY: "out-of-scope"}, cells_arg=None))
+    d = _derive(hosted)
+    ok &= check("hosted in 8.1 (cakupan default): next [9.1:chromium], bukan blocked-by-scope",
+                _is(d, "cold-canary", [CANARY]))
+
+    # Interim loop-back: fix-loop cold full pass -> cold-canary langsung, gate memuat 8.1:chromium
+    H = _tier1_base()
+    _add(H, PASS("8.1:firefox"))
+    d = _derive(H)
+    ok &= check("interim loop-back: cold full pass -> cold-canary langsung",
+                _is(d, "cold-canary", [CANARY]))
+    _add(H, PASS(CANARY))
+    d = _derive(H)
+    ok &= check("interim loop-back: gate memuat 8.1:chromium (diurut ulang, tak dibuang)",
+                _is(d, "gate", ["1.7.8:chromium", "1.7.8:firefox", "8.1:chromium", "9.1:firefox"]))
+
+    # Two failing: satu run tier 1 gagal di 1.7.8:chromium & 8.1:firefox
+    def _two():
+        H = _add({}, PASS(CANARY, "fp0", job="c0"))
+        _add(H, FAIL("8.1:firefox", "fp0", job="g1"))  # started_at lebih awal...
+        _add(H, FAIL("1.7.8:chromium", "fp0", job="g1"))  # ...tapi urutan versi menang di run
+        for c in ("1.7.8:firefox", "8.1:chromium", "9.1:firefox"):
+            _add(H, _tr(c, "fp0", job="g1", state="not-run", conclusive=False,
+                        reason="fail-fast after 1.7.8:chromium", boot=None, scenario_set=None))
+        return H
+    H = _two()
+    d = _derive(H)
+    ok &= check("two failing: focus 1.7.8:chromium (urutan versi di dalam run)",
+                _is(d, "focus", ["1.7.8:chromium"], focus_cell="1.7.8:chromium"))
+    _add(H, PASS("1.7.8:chromium"))
+    d = _derive(H)
+    ok &= check("two failing: lalu focus 8.1:firefox", _is(d, "focus", ["8.1:firefox"]))
+    _add(H, PASS("8.1:firefox"))
+    d = _derive(H)
+    ok &= check("two failing: lalu cold-canary", _is(d, "cold-canary", [CANARY]))
+    _add(H, PASS(CANARY))
+    d = _derive(H)
+    ok &= check("two failing: lalu gate",
+                _is(d, "gate", ["1.7.8:firefox", "8.1:chromium", "9.1:firefox"]))
+    H = _two()
+    _add(H, WPASS("1.7.8:chromium"))
+    d = _derive(H)
+    ok &= check("two failing: warm pass di 1.7.8:chromium -> cold-version [1.7.8 x2]",
+                _is(d, "cold-version", ["1.7.8:chromium", "1.7.8:firefox"]))
+
+    # Focus cell: run terbaru menang atas urutan versi; job_id null = run sendiri; seri lintas run
+    H = _add({}, FAIL("1.7.8:chromium", job="A"), FAIL("9.1:firefox", job="B"))
+    ok &= check("focus: run terbaru (9.1:firefox) menang atas versi lebih tua di run lama",
+                _derive(H)["e2e_focus_cell"] == "9.1:firefox")
+    H = _add({}, FAIL("1.7.8:chromium", job=None), FAIL("9.1:firefox", job=None))
+    H["1.7.8:chromium"][0]["job_id"] = None
+    H["9.1:firefox"][0]["job_id"] = None
+    ok &= check("focus: job_id null = run sendiri -> record terbaru saja",
+                _derive(H)["e2e_focus_cell"] == "9.1:firefox")
+    a, b = FAIL("8.1:firefox", job="A"), FAIL("1.7.8:firefox", job="B")
+    b["started_at"] = a["started_at"]
+    c = FAIL("9.1:chromium", job="A")
+    c["started_at"] = a["started_at"]
+    H = _add({}, a, b, c)
+    ok &= check("focus: seri started_at lintas run diputus urutan versi -> run B (1.7.8:firefox)",
+                _derive(H)["e2e_focus_cell"] == "1.7.8:firefox")
+
+    # Promote order (satu fp): cold fail lalu warm pass / warm pass lalu cold fail
+    d = _derive(_add({}, FAIL("8.1:firefox"), WPASS("8.1:firefox")))
+    ok &= check("promote: non-canary cold fail -> warm pass = cold-version",
+                _is(d, "cold-version", ["8.1:chromium", "8.1:firefox"]))
+    d = _derive(_add({}, FAIL(CANARY), WPASS(CANARY)))
+    ok &= check("promote: canary cold fail -> warm pass = cold-canary", _is(d, "cold-canary", [CANARY]))
+    for cell in (CANARY, "8.1:firefox"):
+        d = _derive(_add({}, WPASS(cell), FAIL(cell)))
+        ok &= check(f"promote: {cell} warm pass lalu cold fail -> focus, warm false, full",
+                    _is(d, "focus", [cell], warm=False, scenarios="full"))
+    # partial pass setara warm untuk langkah 5
+    d = _derive(_add({}, FAIL("8.1:firefox"), PASS("8.1:firefox", scenario_set="partial")))
+    ok &= check("promote: partial pass juga mempromosikan (cold-version)",
+                d["e2e_step"] == "cold-version")
+
+    # Diverge (bacaan Budi)
+    d = _derive(_add({}, FAIL(CANARY), WPASS(CANARY), FAIL(CANARY)))
+    ok &= check("diverge: cold fail, warm pass, cold fail -> focus cold full",
+                _is(d, "focus", [CANARY], warm=False, scenarios="full", focus_recorded_failure=True))
+    d = _derive(_add({}, FAIL(CANARY), WPASS(CANARY), WFAIL(CANARY)))
+    ok &= check("diverge: cold fail, warm pass, warm fail -> focus, warm true",
+                _is(d, "focus", [CANARY], warm=True))
+    d = _derive(_add({}, FAIL(CANARY), PASS(CANARY, scenario_set="partial"), FAIL(CANARY)))
+    ok &= check("diverge: partial pass juga dihitung", d["e2e_warm"] is False)
+    d = _derive(_add({}, FAIL(CANARY, "fp0"), WPASS(CANARY, "fp0"), FAIL(CANARY)))
+    ok &= check("diverge: pass warm di fingerprint lain tak dihitung -> warm true",
+                d["e2e_warm"] is True)
+
+    # Smoke-only: authored_assertions 0 di setiap record
+    H = _add({}, PASS(CANARY, authored_assertions=0))
+    d = _derive(H)
+    ok &= check("smoke-only: gate lima sel sesudah canary",
+                _is(d, "gate", [c for c in CELLS6 if c != CANARY], tier=1))
+    _add(H, *(PASS(c, authored_assertions=0) for c in CELLS6 if c != CANARY))
+    d = _derive(H)
+    ok &= check("smoke-only: lalu blocked-not-gradeable, tier null, next []",
+                _is(d, "blocked-not-gradeable", [], tier=None, cells_arg=None,
+                    required_cells=CELLS6, blocked_causes={c: "not-gradeable" for c in CELLS6}))
+    # Ekor rusak + pass smoke-only terakhir: bacaan harfiah kontrak -> tetap not-gradeable
+    # (menambal ekor = ubah kontrak, deferred-work CAP-1 r5)
+    Hc = {c: list(v) for c, v in H.items()}
+    Hc["8.1:firefox"] = (Hc["8.1:firefox"], True)
+    d = _derive(Hc)
+    ok &= check("corrupt-tail + smoke-only terakhir -> tetap blocked-not-gradeable (harfiah)",
+                _is(d, "blocked-not-gradeable", [], tier=None))
+    # Review step-04: bentuk input API murni & gerbang bentuk skenario tak crash
+    r0 = PASS(CANARY)
+    ok &= check("_history_entry: pasangan list [records, True] = (records, corrupt_tail)",
+                mod._history_entry([[r0], True]) == ([r0], True))
+    try:
+        mod._history_entry([[r0], "x"])
+        bad = False
+    except ValueError:
+        bad = True
+    ok &= check("_history_entry: isi bukan record -> ValueError", bad)
+    try:
+        _derive({}, canary="7.0:chromium")
+        bad = False
+    except ValueError as e:
+        bad = "7.0:chromium" in str(e)
+    ok &= check("derive_e2e_step: canary di luar cells -> ValueError menyebutnya", bad)
+    ok &= check("_scenario_shape_notes: versions list -> [] (tak crash; validate_layer_shape menandai)",
+                mod._scenario_shape_notes({"versions": ["x"]}, "9.1") == [])
+    # scenario-notes not-gradeable -> blocked-not-gradeable
+    notes = ["typo.json: aksi tak dikenal"]
+    H = _add({}, *(PASS(c, scenario_notes=notes) for c in CELLS6))
+    d = _derive(H, notes=notes)
+    ok &= check("scenario-notes == notes sekarang -> blocked-not-gradeable",
+                _is(d, "blocked-not-gradeable", [], blocked_causes={c: "not-gradeable" for c in CELLS6}))
+    d = _derive(H, notes=[])
+    ok &= check("scenario-notes beda dari notes sekarang -> bukan not-gradeable",
+                d["e2e_step"] != "blocked-not-gradeable")
+    H = _add({}, *(PASS(c) for c in CELLS6 if c != "8.1:firefox"),
+             PASS("8.1:firefox", authored_assertions=0))
+    d = _derive(H)
+    ok &= check("campuran lulus + satu not-gradeable -> blocked-not-gradeable menyebut sel itu saja",
+                _is(d, "blocked-not-gradeable", [], required_cells=["8.1:firefox"],
+                    blocked_causes={"8.1:firefox": "not-gradeable"}))
+
+    # Clean module
+    d = _derive(_add({}, *(PASS(c) for c in CELLS6)))
+    ok &= check("clean module: done, tier null, next [], cells_arg null",
+                _is(d, "done", [], tier=None, cells_arg=None, focus_cell=CANARY,
+                    focus_recorded_failure=False))
+    # ekor histori rusak = tanpa bukti lulus
+    H = {c: [PASS(c)] for c in CELLS6}
+    H[CANARY] = (H[CANARY], True)
+    ok &= check("ekor histori rusak di canary -> bukan done/gate",
+                _derive(H)["e2e_step"] not in ("done", "gate"))
+
+    # Infra twice (satu sesi, satu fp)
+    for name, seq, blocked, cause in (
+            ("no-slots,no-slots", ["no-slots", "no-slots"], True, "no-slots"),
+            ("no-slots,crash", ["no-slots", "crash"], True, "crash"),
+            ("no-slots,stopped,crash", ["no-slots", "stopped", "crash"], True, "crash"),
+            ("no-slots,pass,crash", ["no-slots", None, "crash"], False, None)):
+        H = {CANARY: [PASS(CANARY) if r is None else INC(CANARY, r) for r in seq]}
+        d = _derive(H)
+        if blocked:
+            ok &= check(f"infra twice {name}: blocked-infra, tier null, cause {cause}",
+                        _is(d, "blocked-infra", [], tier=None, required_cells=[CANARY],
+                            blocked_causes={CANARY: cause}, cells_arg=None))
+        else:
+            ok &= check(f"infra twice {name}: tidak blocked", d["e2e_step"] != "blocked-infra")
+    d = _derive({CANARY: [INC(CANARY, "no-slots", session="zzzzzzzzzzzzzzzz"),
+                          INC(CANARY, "crash")]})
+    ok &= check("infra: record sesi lain tak dihitung", d["e2e_step"] != "blocked-infra")
+    d = _derive({CANARY: [INC(CANARY, "crash", "fp0"), INC(CANARY, "crash")]})
+    ok &= check("infra: record basi tak dihitung", d["e2e_step"] != "blocked-infra")
+    d = _derive({"8.1:firefox": [PASS("8.1:firefox", inconclusive=[{"scenario": "s"}]),
+                                 PASS("8.1:firefox", browser_notes=["x"])]})
+    ok &= check("infra: inconclusive-steps lalu browser-notes -> blocked-infra browser-notes",
+                _is(d, "blocked-infra", [], blocked_causes={"8.1:firefox": "browser-notes"}))
+
+    # Scope: --versions 9.1 --browsers chromium di langkah gate
+    d = _derive(_add({}, PASS(CANARY)), sv=["9.1"], sb=["chromium"])
+    five = [c for c in CELLS6 if c != CANARY]
+    ok &= check("scope: blocked-by-scope tier 1, required lima sel, causes out-of-scope",
+                _is(d, "blocked-by-scope", [], tier=1, required_cells=five, cells_arg=None,
+                    blocked_causes={c: "out-of-scope" for c in five}, warm=False, scenarios="full"))
+    d = _derive(_add({}, PASS(CANARY)), sv=["8.1", "9.1"])
+    ok &= check("scope sebagian: gate tersaring, causes {} di luar blocked-*",
+                _is(d, "gate", ["8.1:chromium", "8.1:firefox", "9.1:firefox"], blocked_causes={},
+                    required_cells=five))
+    d = _derive(_add({}, FAIL(CANARY)), sv=["8.1"])
+    ok &= check("scope menggantikan focus: warm false & full walau focus aslinya warm",
+                _is(d, "blocked-by-scope", [], tier=0, warm=False, scenarios="full",
+                    focus_recorded_failure=True))
+
+    # Canary-version loop-back: 9.1:firefox gagal -> cold-version [9.1 x2] memenuhi canary
+    H = _tier1_base(fail_cells=("9.1:firefox",))
+    _add(H, WPASS("9.1:firefox"))
+    d = _derive(H)
+    ok &= check("canary-version loop-back: cold-version [9.1 x2]",
+                _is(d, "cold-version", ["9.1:chromium", "9.1:firefox"]))
+    _add(H, PASS("9.1:chromium", job="cv"), PASS("9.1:firefox", job="cv"))
+    d = _derive(H)
+    ok &= check("canary-version loop-back: lalu gate (cold-canary dilewati)",
+                _is(d, "gate", ["1.7.8:chromium", "1.7.8:firefox", "8.1:chromium", "8.1:firefox"]))
+
+    # Canary non-default 8.1:firefox
+    d = _derive({}, canary="8.1:firefox")
+    ok &= check("canary 8.1:firefox: fresh -> focus [8.1:firefox]",
+                _is(d, "focus", ["8.1:firefox"], focus_cell="8.1:firefox"))
+    d = _derive(_add({}, PASS("8.1:firefox")), canary="8.1:firefox")
+    ok &= check("canary 8.1:firefox lulus -> gate lima sel lain",
+                _is(d, "gate", [c for c in CELLS6 if c != "8.1:firefox"],
+                    cells_arg="1.7.8:chromium+firefox,8.1:chromium,9.1:chromium+firefox"))
+
+    # Config tanpa chromium: canary default = versi terbaru x browser pertama
+    cells_fw = [f"{v}:{b}" for v in TV for b in ("firefox", "webkit")]
+    canary_fw = mod.fl.normalize_canary("", TV, ["firefox", "webkit"])
+    d = _derive({}, canary=canary_fw, cells=cells_fw)
+    ok &= check("config tanpa chromium: canary 9.1:firefox, fresh -> focus [9.1:firefox]",
+                canary_fw == "9.1:firefox" and _is(d, "focus", ["9.1:firefox"]))
+    d = _derive(_add({}, PASS("9.1:firefox")), canary=canary_fw, cells=cells_fw)
+    ok &= check("config tanpa chromium: gate cells_arg ber-browser terkonfigurasi",
+                d["e2e_cells_arg"] == "1.7.8:firefox+webkit,8.1:firefox+webkit,9.1:webkit")
+
+    # cells_arg = sintaks --cells ps-run-layer yang sebenarnya
+    rl_path = MOD_PATH.parent / "ps-run-layer.py"
+    rl_spec = importlib.util.spec_from_file_location("ps_run_layer_t", rl_path)
+    rl = importlib.util.module_from_spec(rl_spec)
+    rl_spec.loader.exec_module(rl)
+    arg = "1.7.8:chromium+firefox,8.1:chromium+firefox,9.1:firefox"
+    ok &= check("cells_arg diterima parse_cells ps-run-layer apa adanya",
+                rl.parse_cells(arg, TV, BROWSERS)
+                == [("1.7.8", BROWSERS), ("8.1", BROWSERS), ("9.1", ["firefox"])])
+
+    # AC 1: invarian atas histori bangkitan (4^6 kombinasi x {dasar, F basi, +warm pass, +warm fail})
+    kinds = (None, "pass", "fail", "crash")
+    bad, count = [], 0
+    for combo in range(4 ** 6):
+        H = {}
+        n = combo
+        t = 0
+        for c in CELLS6:
+            kind = kinds[n % 4]
+            n //= 4
+            if kind is None:
+                continue
+            t += 1
+            ver, b = c.split(":")
+            ts = (_T0 + timedelta(seconds=t)).isoformat(timespec="microseconds")
+            if kind == "crash":
+                r = _rec(ver, b, "fp1", started_at=ts, job_id=f"g{t}", state="inconclusive",
+                         conclusive=False, reason="crash", boot=None, scenario_set=None,
+                         install=None, authored_assertions=None)
+            elif kind == "fail":
+                r = _rec(ver, b, "fp1", started_at=ts, job_id=f"g{t}", state="fail",
+                         findings=[{"scenario": "s1", "step": 1}])
+            else:
+                r = _rec(ver, b, "fp1", started_at=ts, job_id=f"g{t}")
+            H[c] = [r]
+        base = _derive(H)
+        variants = [base]
+        F = base["e2e_focus_cell"]
+        ver, b = F.split(":")
+        ts = (_T0 + timedelta(seconds=100)).isoformat(timespec="microseconds")
+        stale = {k: list(v) for k, v in H.items()}
+        stale[F] = [dict(r, source_fingerprint="fp0") for r in stale.get(F, [])]
+        variants.append(_derive(stale))
+        for st, extra in (("pass", {}), ("fail", {"findings": [{"scenario": "s1", "step": 1}]})):
+            Hv = {k: list(v) for k, v in H.items()}
+            Hv.setdefault(F, []).append(_rec(ver, b, "fp1", started_at=ts, job_id="w1",
+                                             boot="warm", state=st, **extra))
+            variants.append(_derive(Hv))
+        for d in variants:
+            count += 1
+            if not _ac1_invariant(d):
+                bad.append((combo, d))
+    ok &= check(f"AC 1: invarian e2e_next_cells atas {count} derivasi bangkitan"
+                f"{'' if not bad else ' — gagal: ' + str(bad[:2])}", not bad and count == 4 ** 6 * 4)
+    return ok
+
+
+def _pv_file(reports, m, layer, ver, payload, mtime=5000):
+    p = mod.per_version_path(reports, m.name, layer, ver)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload), encoding="utf-8")
+    os.utime(p, (mtime, mtime))
+    return p
+
+
+def _phase1_files(reports, m, ver, static_findings=(), scenario_ok=True, flash=None):
+    """File per-versi Lapis 1/2/5 yang SEGAR & bercakupan PERSIS ver (phase1_reuse true)."""
+    rs = mod.ss.ruleset_provenance([str(mod.ss.DEFAULT_RULES)])
+    tag = mod.fl.resolve_tag(TM, ver)
+    _pv_file(reports, m, "static", ver, {
+        "module": m.name, "main_file_found": True, "ruleset": rs,
+        "versions": {ver: {"errors": sum(f["severity"] == "error" for f in static_findings),
+                           "warnings": 0, "rules_evaluated": 5,
+                           "findings": list(static_findings)}}})
+    _pv_file(reports, m, "flashlight", ver, flash or {
+        "module": m.name, "status": "skipped", "docker_available": False,
+        "versions": {ver: {"tag": tag}}})
+    _pv_file(reports, m, "scenario", ver, {"versions": {ver: {
+        "tag": tag, "conclusive": True,
+        "scenarios": [{"name": "a", "conclusive": True, "ok": scenario_ok,
+                       "steps": [{"phase": "then", "ok": scenario_ok, "detail": "d"}]}]}}})
+
+
+def test_tier_cli():
+    """CLI: field tier di kedua mode, --browsers, canary, phase1_reuse, per_version[V].clean."""
+    ok = True
+    tier_keys = ("e2e_step", "e2e_tier", "e2e_focus_cell", "e2e_focus_recorded_failure",
+                 "e2e_next_cells", "e2e_required_cells", "e2e_cells_arg", "e2e_blocked_causes",
+                 "e2e_scenarios", "e2e_warm", "phase1_reuse")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        m = _module(root)
+        reports = root / "reports"
+        cfg = _cfg(root)
+        fp = mod.source_fingerprint(m, reports)
+
+        # Fresh module, kedua mode; AC 2 (rerun_matrix sama dgn/tanpa cakupan sempit)
+        r1, pv = _plan(m, reports, "--config", str(cfg), "--per-version")
+        r2, canon = _plan(m, reports, "--config", str(cfg))
+        r3, narrow = _plan(m, reports, "--config", str(cfg), "--per-version",
+                           "--versions", "9.1", "--browsers", "chromium")
+        ok &= check("CLI fresh: kedua mode memancarkan semua field tier",
+                    r1.returncode == 0 and r2.returncode == 0
+                    and all(k in pv and k in canon for k in tier_keys))
+        ok &= check("CLI fresh: focus tier 0 [9.1:chromium] sama di kedua mode",
+                    all(d["e2e_step"] == "focus" and d["e2e_next_cells"] == [CANARY]
+                        and d["e2e_tier"] == 0 and d["e2e_cells_arg"] == CANARY
+                        for d in (pv, canon)))
+        ok &= check("AC 2: rerun_matrix e2e enam sel sama dgn & tanpa --versions 9.1 --browsers chromium",
+                    r3.returncode == 0 and _e2e_matrix(pv) == _e2e_matrix(narrow)
+                    and len(_e2e_matrix(pv)) == 6)
+        ok &= check("CLI fresh: phase1_reuse false (tanpa file lapis) di kedua mode; clean false",
+                    pv["phase1_reuse"] is False and canon["phase1_reuse"] is False
+                    and all(e["phase1_reuse"] is False and e["clean"] is False
+                            for e in pv["per_version"].values()))
+        ok &= check("CLI kanonik: tanpa per_version (phase1_reuse/clean hanya per-versi)",
+                    "per_version" not in canon)
+
+        # Clean canary via histori nyata
+        _seed(reports, m, fp, [("9.1", "chromium")])
+        r, plan = _plan(m, reports, "--config", str(cfg), "--per-version")
+        ok &= check("CLI clean canary: gate tier 1, cells_arg persis",
+                    plan["e2e_step"] == "gate" and plan["e2e_tier"] == 1
+                    and plan["e2e_cells_arg"]
+                    == "1.7.8:chromium+firefox,8.1:chromium+firefox,9.1:firefox")
+        r, plan = _plan(m, reports, "--config", str(cfg), "--per-version",
+                        "--versions", "9.1", "--browsers", "chromium")
+        ok &= check("CLI scope: blocked-by-scope tier 1, required lima sel",
+                    plan["e2e_step"] == "blocked-by-scope" and plan["e2e_tier"] == 1
+                    and plan["e2e_required_cells"] == [c for c in CELLS6 if c != CANARY]
+                    and set(plan["e2e_blocked_causes"].values()) == {"out-of-scope"})
+        # --versions eksplisit = default skrip tetap cakupan (menang atas config 9.1 saja)
+        cfg91 = _cfg(root, versions="9.1", name="v91.json")
+        r, _o = _plan(m, reports, "--config", str(cfg91), "--versions", "1.7.8,8.1,9.1")
+        ok &= check("--versions eksplisit = default skrip menang atas config (lalu exit 2 di luar himpunan)",
+                    r.returncode == 2 and "1.7.8" in r.stderr)
+        # --browsers eksplisit chromium,firefox menang atas config psm_e2e_browsers chromium
+        cfgc = _cfg(root, browsers="chromium", name="chrome.json")
+        r, _o = _plan(m, reports, "--config", str(cfgc), "--browsers", "chromium,firefox")
+        ok &= check("--browsers chromium,firefox eksplisit menang atas config chromium "
+                    "(dinilai apa adanya: firefox di luar himpunan -> exit 2)",
+                    r.returncode == 2 and "firefox" in r.stderr and "--browsers" in r.stderr)
+        r, o = _plan(m, reports, "--config", str(cfgc))
+        ok &= check("tanpa --browsers: cakupan dari config (chromium) -> exit 0",
+                    r.returncode == 0 and o["e2e_focus_cell"] == CANARY)
+        for bad in ("safari", "", "webkit"):
+            r, _o = _plan(m, reports, "--config", str(cfg), "--browsers", bad)
+            ok &= check(f"--browsers {bad!r} -> exit 2 tanpa traceback",
+                        r.returncode == 2 and "Traceback" not in r.stderr)
+        r, o = _plan(m, reports, "--config", str(cfg), "--browsers", " Firefox ")
+        ok &= check("--browsers dinormalisasi seperti psm_e2e_browsers (strip + huruf kecil)",
+                    r.returncode == 0 and o["e2e_step"] == "gate"
+                    and o["e2e_next_cells"] == ["1.7.8:firefox", "8.1:firefox", "9.1:firefox"])
+
+        # Canary: tabel bentuk (exit 2 menyebut key), non-default, config tanpa chromium
+        def _canary_cfg(val, **extra):
+            body = {"psm_target_versions": "1.7.8,8.1,9.1", "psm_e2e_browsers": "chromium,firefox",
+                    "psm_e2e_canary": val, **extra}
+            p = root / "canary.json"
+            p.write_text(json.dumps(body), encoding="utf-8")
+            return p
+        r, o = _plan(m, reports, "--config", str(_canary_cfg(" 9.1 : Chromium ")))
+        ok &= check("canary ' 9.1 : Chromium ' sah -> 9.1:chromium",
+                    r.returncode == 0 and o["e2e_focus_cell"] == CANARY)
+        for val in ("9.1", "9.1:chromium:x", ":chromium", "9.1:", "7.0:chromium", "9.1:webkit",
+                    9.1, ["9.1:chromium"]):
+            r, _o = _plan(m, reports, "--config", str(_canary_cfg(val)))
+            ok &= check(f"canary {val!r} -> exit 2 menyebut psm_e2e_canary",
+                        r.returncode == 2 and "psm_e2e_canary" in r.stderr
+                        and "Traceback" not in r.stderr)
+        r, _o = _plan(m, reports, "--config",
+                      str(_canary_cfg("9.1:webkit", psm_e2e_enabled="false")))
+        ok &= check("canary buruk tetap exit 2 walau psm_e2e_enabled false",
+                    r.returncode == 2 and "psm_e2e_canary" in r.stderr)
+        for val in (None, ""):
+            r, o = _plan(m, reports, "--config", str(_canary_cfg(val)))
+            ok &= check(f"canary {val!r} -> default 9.1:chromium",
+                        r.returncode == 0 and o["e2e_focus_cell"] == CANARY)
+        r, o = _plan(m, reports, "--config", str(_canary_cfg("8.1:firefox")), "--per-version")
+        ok &= check("canary non-default 8.1:firefox: focus 8.1:firefox",
+                    o["e2e_step"] == "focus" and o["e2e_next_cells"] == ["8.1:firefox"])
+        nochrome = _cfg(root, browsers="firefox,webkit", name="nochrome.json")
+        r, o = _plan(m, reports, "--config", str(nochrome))
+        ok &= check("config tanpa chromium: canary default 9.1:firefox",
+                    r.returncode == 0 and o["e2e_focus_cell"] == "9.1:firefox"
+                    and o["e2e_next_cells"] == ["9.1:firefox"])
+
+    # phase1_reuse & per_version[V].clean (file Lapis 1/2/5 per-versi)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        m = _module(root)
+        reports = root / "reports"
+        cfg = _cfg(root)
+        err = {"id": "eval", "severity": "error", "message": "eval()", "occurrences": []}
+        warn = {"id": "w", "severity": "warning", "message": "hati-hati", "occurrences": []}
+        _phase1_files(reports, m, "9.1", static_findings=[warn])
+        _phase1_files(reports, m, "8.1", static_findings=[err])
+        r, plan = _plan(m, reports, "--config", str(cfg), "--per-version", "--versions", "8.1,9.1")
+        pv = plan["per_version"] if plan else {}
+        ok &= check("clean true: phase1_reuse V & tanpa temuan error (warning tak memblok)",
+                    r.returncode == 0 and pv["9.1"]["phase1_reuse"] is True
+                    and pv["9.1"]["clean"] is True)
+        ok &= check("clean false: temuan static severity error",
+                    pv["8.1"]["phase1_reuse"] is True and pv["8.1"]["clean"] is False)
+        ok &= check("phase1_reuse top-level = AND atas --versions",
+                    plan["phase1_reuse"] is True)
+        r, plan = _plan(m, reports, "--config", str(cfg), "--per-version")
+        ok &= check("phase1_reuse top-level false bila satu versi (1.7.8) belum punya file",
+                    plan["phase1_reuse"] is False and plan["per_version"]["1.7.8"]["clean"] is False)
+        _phase1_files(reports, m, "8.1", scenario_ok=False)
+        r, plan = _plan(m, reports, "--config", str(cfg), "--per-version", "--versions", "8.1")
+        ok &= check("clean false: skenario Lapis 5 gagal (temuan error)",
+                    plan["per_version"]["8.1"]["clean"] is False)
+        r, plan = _plan(m, reports, "--config", str(cfg), "--versions", "8.1,9.1")
+        ok &= check("kanonik: phase1_reuse = tanpa lapis selain e2e/adversarial di rerun",
+                    plan["phase1_reuse"] is (not [l for l in plan["rerun"]
+                                                  if l not in ("e2e", "adversarial")]))
+        # file rusak -> exit 2 menyebut path
+        _phase1_files(reports, m, "8.1", static_findings=[{"id": "x", "severity": "error"}])
+        r, _o = _plan(m, reports, "--config", str(cfg), "--per-version", "--versions", "8.1")
+        ok &= check("clean: static tanpa 'message' -> exit 2 menyebut file",
+                    r.returncode == 2 and "mymod-static-8.1.json" in r.stderr
+                    and "Traceback" not in r.stderr)
+        _phase1_files(reports, m, "8.1")
+        p = mod.per_version_path(reports, m.name, "scenario", "8.1")
+        body = json.loads(p.read_text())
+        body["versions"]["8.1"]["scenarios"] = {"a": 1}
+        _pv_file(reports, m, "scenario", "8.1", body)
+        r, _o = _plan(m, reports, "--config", str(cfg), "--per-version", "--versions", "8.1")
+        ok &= check("clean: scenarios bukan list objek -> exit 2 menyebut file",
+                    r.returncode == 2 and "mymod-scenario-8.1.json" in r.stderr)
+        body["versions"]["8.1"]["scenarios"] = [{"name": "a", "steps": "bukan-list"}]
+        _pv_file(reports, m, "scenario", "8.1", body)
+        r, _o = _plan(m, reports, "--config", str(cfg), "--per-version", "--versions", "8.1")
+        ok &= check("clean: steps bukan list objek -> exit 2 menyebut file",
+                    r.returncode == 2 and "mymod-scenario-8.1.json" in r.stderr)
+        # phase1_reuse false -> clean false TANPA memuat file (skenario rusak tak menyalakan exit 2)
+        mod.per_version_path(reports, m.name, "static", "8.1").unlink()
+        r, plan = _plan(m, reports, "--config", str(cfg), "--per-version", "--versions", "8.1")
+        ok &= check("phase1_reuse false -> clean false tanpa memuat file Lapis 1/2/5",
+                    r.returncode == 0 and plan["per_version"]["8.1"]["phase1_reuse"] is False
+                    and plan["per_version"]["8.1"]["clean"] is False)
+    return ok
+
+
 def _raises(fn, needle=None):
     try:
         fn()
@@ -675,8 +1299,9 @@ def main():
         # penerima: rutekan SKILL.md + gerbang) yang tersisa. Emisi main() diuji proses nyata —
         # wiring ke JSON dulu NOL coverage (seluruh output pra-pass bisa dihapus tanpa test merah).
         plan = _plan_cli()
-        ok &= check("CLI: e2e_scenarios TAK lagi diemit (echo yatim dihapus)",
-                    "e2e_scenarios" not in plan)
+        # CAP-1: nama `e2e_scenarios` kini field tier (`full`|`failed-only`), bukan echo daftar file.
+        ok &= check("CLI: e2e_scenarios = field tier (full|failed-only), bukan echo daftar sumber",
+                    plan.get("e2e_scenarios") in ("full", "failed-only"))
         ok &= check("CLI: e2e_scenario_notes sampai ke JSON pra-pass",
                     len(plan.get("e2e_scenario_notes") or []) == 1
                     and "typo.json" in plan["e2e_scenario_notes"][0])
@@ -899,6 +1524,8 @@ def main():
                     '"all_reuse"' in r1.stdout and '"rerun_matrix"' in r1.stdout)
 
     ok &= test_e2e_cells()
+    ok &= test_tier_derivation()
+    ok &= test_tier_cli()
     ok &= test_session_cli()
     ok &= test_require_config_cli()
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))

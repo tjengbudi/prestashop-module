@@ -1,0 +1,32 @@
+[
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Docs (interim rules: 'Any other ps-run-layer exit (1 — e.g. one child stopped ... — 130, or a traceback), with or without an output line: interactive shows stderr and asks Budi to rerun or end the E2E loop; headless returns `blocked` with the stderr, no wrap-up')",
+    "issue": "Exit 1 with an output line is also ps-run-layer's normal result for any run that appended an `inconclusive`, `not-run` or `no-slots` record and no `fail` (contract Runner exit codes; `_e2e_exit` returns 1 in that case and also when a child was stopped). The rule treats every exit 1 as an abnormal exit. It gives no way to tell a normal inconclusive run from a run with a stopped child. Both print `e2e_status: ran`. The only difference is that the stopped version's cells are missing from `appended`.",
+    "implementation_impact": "In headless, the first `no-slots` or `crash` run returns `blocked` with no wrap-up. The contract's Headless rule says that run is a step that is not clean: `complete`, `ready: false`, wrap-up and aggregate. In interactive, every inconclusive run asks rerun-or-end, while the infra-cause carry rule (which assumes the loop goes on and prompts for an environment fix) and the 'Infra twice' path to `blocked-infra` cannot be reached as written.",
+    "suggestion": "Classify exit 1 by its output line. Exit 1 with an output line whose `appended` covers every cell passed in `--cells` is a normal result: re-plan, apply the infra-cause rule, and in headless treat it as a step that is not clean (`complete`). Exit 1 with an output line that lacks some given cells (a stopped child), or with no output line (traceback), or exit 130, falls under 'any other exit'."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Plan (Derivation) / Code Map predicate `is_not_gradeable`; contract Plan steps 2 and 4-7 vs Evidence record > Storage (`corrupt-history`)",
+    "issue": "A cell whose history ends in a corrupt line has no passing gate-grade evidence, and its rerun reason is `corrupt-history`. The not-gradeable test looks only at the newest valid gate-grade record. The current `is_not_gradeable` ignores `corrupt_tail`. Neither the spec nor the contract says whether a corrupt-tail cell can be not-gradeable, or how `failing` and step 3 read it.",
+    "implementation_impact": "A corrupt-tail cell whose last valid gate-grade record is a smoke-only pass counts as not-gradeable. Steps 2 and 4-7 then treat it as satisfied: the plan can derive `blocked-not-gradeable` (with cause `not-gradeable`, while `rerun_matrix` says `corrupt-history`) or leave it out of the `gate` cells. The cell is never re-run, so the corrupt tail is never repaired, and the E2E loop ends.",
+    "suggestion": "State in Design Notes > Plan that a cell with a corrupt tail is never not-gradeable (`is_not_gradeable` returns False when `corrupt_tail`), so it stays in the step's cells until a valid record follows. Add a test: valid smoke-only pass, then a corrupt line, gives `gate` including that cell, not `blocked-not-gradeable`."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Aggregate / Design Notes > Aggregate ('`--session` sets `versions[ver].reached`')",
+    "issue": "The contract has plan and ps-run-layer reject a malformed `--session` token (exit 2). The aggregate's new optional `--session` has no validation rule. A missing value, a typo, or a token not shaped `[a-z0-9]{16}` simply matches no record.",
+    "implementation_impact": "A wrong token from headless silently gives `reached: false` for every version that lacks passing evidence. The return then reports `not reached: stopped at <step>` for versions the session did run. psm-optimize Verifikasi then reports those versions as 'not comparable'.",
+    "suggestion": "Add to Design Notes > Aggregate: `--session`, when given, must pass `ps_plan_layers.valid_session` (shared with plan and runner), else exit 2 naming the flag. Add an aggregate test for a malformed token."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Plan ('`e2e_warm` false and `e2e_scenarios` `full` on every step but `focus`') vs contract Plan > Run scope (`blocked-by-scope` replaces the derived step)",
+    "issue": "When the derived step is `focus` and the run scope removes the focus cell, the plan reports `e2e_step: blocked-by-scope` with the blocked step's tier. The spec does not say whether `e2e_warm` and `e2e_scenarios` follow the derived `focus` step (warm or failed-only possible) or the reported step (false/`full`).",
+    "implementation_impact": "Two implementations can emit different values for the same history. Tests for the 'Hosted in 8.1' `--versions 8.1` row, and AC 1 style generated cases with a scope, can pin either one. Nothing runs, but a later reader of these fields (CAP-4/5) gets values that depend on the implementation.",
+    "suggestion": "State that `e2e_warm`/`e2e_scenarios` follow the reported `e2e_step`: `blocked-by-scope` gives false/`full`, the same as tier and required cells come from the blocked step only. For example: `warm = step_reported == 'focus' and ...`."
+  },
+  {
+    "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Docs (interim rules: 'An infra cause (short of `blocked-infra`) is carried per version V ... Before the first later run whose `e2e_next_cells` include a cell of V, interactive asks Budi to fix the environment or decline')",
+    "issue": "The rule says when a carried infra cause is set and when it prompts. It never says when the cause is cleared: after Budi says he fixed it, after the next run of V leaves no infra cause, or after a patch changes the fingerprint.",
+    "implementation_impact": "The orchestrator either prompts again before every later run of V for the rest of the session, even after a clean run, or prompts only once ever and lets a later fresh infra cause on V go without a prompt. Both readings fit the prose.",
+    "suggestion": "Add one clause: the prompt consumes the carried cause; the next run then sets a new cause for V only if it leaves one again (same `appended` and rerun-reason test), so each infra-cause run gets at most one prompt before the next run of V."
+  }
+]

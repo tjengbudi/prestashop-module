@@ -16,6 +16,11 @@ terbaru, else record terbaru (aturan state/kesegaran milik ps-plan-layers). Bila
 `--require` memuat e2e, `ready` jatuh selama ada sel terkonfigurasi tanpa bukti lulus
 gate-grade. `--e2e` = exit 2; `<module>-e2e.json`/`<module>-e2e-<ver>.json` diabaikan.
 Versi terkonfigurasi yang absen dari hasil static = belum terbukti (ready false), bukan exit 2.
+`psm_e2e_canary` di --config divalidasi lewat normalizer bersama (tak sah = exit 2 menyebut
+key-nya, apa pun `psm_e2e_enabled`). Dengan `--session`, tiap versi terkonfigurasi membawa
+`versions[ver].reached`: true bila ada sel versi itu yang punya record sesi tersebut (`not-run`,
+`no-slots`, `stopped` ikut dihitung) ATAU semua sel versi itu punya bukti lulus gate-grade (dari
+sesi mana pun); selain itu false. Tanpa `--session` field itu tak diemit.
 
 Aturan lolos: sebuah versi lolos hanya bila TAK ADA temuan severity `error` dari
 lapis manapun yang KONKLUSIF di versi itu. Lapis yang tak konklusif (Docker absen,
@@ -861,16 +866,33 @@ def read_aggregate_config(path):
     """--config -> (versions, browsers, psm_flashlight_tag_map). Error -> CellConfigError.
 
     Himpunan sel dibaca LANGSUNG lewat normalizer bersama (ps-flashlight-run), bukan
-    apply_config_file: `--versions` tak pernah menyusutkan himpunan wajib.
+    apply_config_file: `--versions` tak pernah menyusutkan himpunan wajib. `psm_e2e_canary`
+    hanya divalidasi (normalizer yang sama dgn plan & runner; pesan error menyebut key-nya) —
+    agregat tak memakai nilainya, tapi config yang ditolak plan tak boleh lolos di sini.
     """
     fl = pl.fl
     cfg = fl.read_config_json(path) if path else {}
     versions = fl.normalize_versions(cfg.get("psm_target_versions"))
     browsers = fl.normalize_engines(cfg.get("psm_e2e_browsers"))
+    fl.normalize_canary(cfg.get(fl.CANARY_KEY), versions, browsers)
     tag_map = cfg.get("psm_flashlight_tag_map")
     if tag_map is not None and not isinstance(tag_map, str):
         raise fl.CellConfigError(f"psm_flashlight_tag_map={tag_map!r} harus string versi=tag,...")
     return versions, browsers, tag_map
+
+
+def version_reached(row, browsers, session):
+    """`versions[ver].reached` (cell-contract.md > Aggregate): true bila salah satu sel
+    terkonfigurasi versi itu punya record (valid) ber-`session` ini — APA PUN state/reason-nya,
+    jadi `not-run`, `no-slots` dan `stopped` ikut — atau bila SEMUA sel terkonfigurasinya punya
+    bukti lulus gate-grade (dari sesi mana pun). Selain itu false: loop E2E sesi ini tak pernah
+    sampai ke versi itu sementara buktinya belum lengkap.
+    """
+    infos = [(row or {}).get(b) or _missing_cell() for b in browsers]
+    if any(isinstance(r, dict) and r.get("session") == session
+           for i in infos for r in i["records"]):
+        return True
+    return bool(infos) and all(i["passing"] for i in infos)
 
 
 def main():
@@ -896,8 +918,9 @@ def main():
     ap.add_argument("--tag-map", help="Peta LENGKAP versi=tag (MENGGANTI psm_flashlight_tag_map/"
                                       "default) — sama seperti yang diteruskan ke plan & runner")
     ap.add_argument("--extra-tag-map", help="Tag TAMBAHAN versi=tag (MENAMBAH di atas peta)")
-    ap.add_argument("--session", help="Token sesi validasi (opsional; divalidasi [a-z0-9]{16}, "
-                                      "belum dipakai)")
+    ap.add_argument("--session", help="Token sesi validasi (opsional; [a-z0-9]{16}, salah bentuk "
+                                      "= exit 2). Bila diberi, tiap versi membawa "
+                                      "versions[ver].reached")
     ap.add_argument("--versions", help="Opsional, harus SAMA (sebagai himpunan) dengan "
                                        "psm_target_versions dari --config; beda = exit 2")
     ap.add_argument("--require", help="Lapis yang WAJIB tuntas agar `ready` true, dipisah koma "
@@ -918,6 +941,11 @@ def main():
     if args.session is not None and not pl.valid_session(args.session):
         return _input_error(f"--session tak valid: {args.session!r} — harus [a-z0-9]{{16}} "
                             "(dari ps-plan-layers.py --new-session)")
+    if args.session is not None and not (args.reports_dir and args.module):
+        # `reached` dibaca dari histori sel; tanpa folder laporan semua versi akan palsu
+        # "not reached".
+        return _input_error("--session butuh --reports-dir + --module (reached dibaca dari "
+                            "histori sel)")
 
     # Nama file lapis DITURUNKAN bila folder+module diberi. Mengetik empat path dengan tangan
     # di akhir run panjang adalah kerja deterministik yang sudah punya satu jawaban benar
@@ -1042,6 +1070,8 @@ def main():
     for full_ver in target_versions:
         m = merge_version(full_ver, static, flash, adversarial, cells[full_ver], scen,
                           browsers=cfg_browsers)
+        if args.session is not None:
+            m["reached"] = version_reached(cells[full_ver], cfg_browsers, args.session)
         versions[full_ver] = m
         overall_pass = overall_pass and m["pass"]
         all_conclusive = all_conclusive and m["flashlight_conclusive"]

@@ -53,6 +53,10 @@ PSM_DEFAULTS = {
     # Cap slot Lapis 4 SEDAEMON (ps-run-layer.py --slots): jumlah label psm.slots semua
     # container E2E yang jalan di daemon Docker, lintas run/sesi. Bilangan bulat >= 1.
     "psm_e2e_slots": "6",
+    # Sel canary tier 0 `<versi>:<browser>`. Kosong = versi target terbaru x chromium (browser
+    # terkonfigurasi pertama bila chromium tak dikonfigurasi). Dinormalisasi satu pemilik:
+    # ps-flashlight-run.normalize_canary (salah bentuk = exit 2, apa pun psm_e2e_enabled).
+    "psm_e2e_canary": "",
     "psm_modules_dir": "{project-root}/modules",
     "psm_reports_dir": "{project-root}/_bmad-output/psm-validate",
 }

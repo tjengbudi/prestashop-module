@@ -1,0 +1,92 @@
+{
+ "round": 1,
+ "critical_high": 15,
+ "fixed": 13,
+ "escalated": 2,
+ "dropped": 0,
+ "code_defects": 0,
+ "questions_for_budi": [
+  {
+   "id": "20261126-192048.r1-q1",
+   "finding": "CAP-1 mengganti interim orchestration seluruhnya, padahal kontrak tak punya aturan untuk: exit 2 anak mengakhiri loop E2E; exit 2 pra-spawn/append = perbaiki input lalu ulang (headless: blocked); exit 143 interaktif mengakhiri loop kecuali Budi minta ulang; prompt perbaikan lingkungan sebelum infra retry. Tanpa itu, exit 2 anak membuat orkestrator mengulang step yang sama tanpa henti, dan sel infra langsung diulang tanpa bertanya.",
+   "options": [
+    "Bawa aturan interim itu ke docs CAP-1",
+    "Ikuti kontrak saja (buang)"
+   ],
+   "recommended": "Bawa aturan interim itu ke docs CAP-1",
+   "oscillation": false
+  },
+  {
+   "id": "20261126-192048.r1-q2",
+   "finding": "Predikat diverge (kontrak Plan step 7) punya dua tafsir: pass warm/parsial lebih baru dari fail cold-full MANA PUN (maka cold fail → warm pass → warm fail juga diverge dan dipaksa cold), atau ADA fail cold-full yang lebih baru dari pass warm itu. Kontrak tak boleh diedit, jadi spec perlu keputusanmu.",
+   "options": [
+    "Literal: fail cold-full mana pun yang lebih tua",
+    "Fail cold-full lebih baru dari pass warm"
+   ],
+   "recommended": "Fail cold-full lebih baru dari pass warm",
+   "oscillation": false
+  }
+ ],
+ "medium_low": [
+  {
+   "location": "Runner > stopped (adversarial-3, edge-case-3)",
+   "issue": "Engine yang sudah selesai pada anak yang di-SIGTERM ikut jadi `stopped`; konsisten dgn kontrak (anak 143 tak menulis hasil), hanya belum dicatat sebagai kerugian."
+  },
+  {
+   "location": "I/O matrix (adversarial-5)",
+   "issue": "Baris tambahan untuk `reached`, `clean`, SIGTERM satu anak, scenario-notes not-gradeable, canary buruk di aggregate, `--browsers \"\"`."
+  },
+  {
+   "location": "I/O 'Hosted in 8.1' (adversarial-6, implementer-12)",
+   "issue": "Baris ini sama dengan tes kontrak; usulan kontras `--versions 8.1` → `blocked-by-scope` sebagai penguat."
+  },
+  {
+   "location": "Code Map (adversarial-15)",
+   "issue": "Companion interim, bahaya dua instans modul ps-plan-layers, signature fungsi derivasi."
+  },
+  {
+   "location": "Runner > stop (edge-case-4)",
+   "issue": "Sel antre saat stop: kini tertulis tanpa rekaman (sudah jelas dari 'admitted')."
+  },
+  {
+   "location": "Plan > --versions (edge-case-10)",
+   "issue": "--versions di luar versi terkonfigurasi pada plan."
+  },
+  {
+   "location": "Docs > hosting version (edge-case-11)",
+   "issue": "'First in-scope version' — urutan numerik tersirat dari kontrak."
+  },
+  {
+   "location": "Aggregate > reached (edge-case-13, implementer-22)",
+   "issue": "Rekaman not-run/no-slots/stopped dihitung reached sesuai kontrak literal; konfirmasi + tes opsional."
+  },
+  {
+   "location": "Aggregate > reached (edge-case-14)",
+   "issue": "Loop E2E berakhir sebelum run apa pun → semua versi reached false; teks alasan."
+  },
+  {
+   "location": "Headless config copy (edge-case-15)",
+   "issue": "Canary malformed di headless (berujung exit 2 plan)."
+  },
+  {
+   "location": "Plan > focus cell (edge-case-16)",
+   "issue": "Tie-break lintas run dengan started_at identik / job_id null."
+  },
+  {
+   "location": "Visual review (implementer-17)",
+   "issue": "Run focus cold full pasca-gagal di interim — aturan 'hanya cold full' sudah mencakupnya."
+  },
+  {
+   "location": "Design Notes > e2e_blocked_causes (implementer-18)",
+   "issue": "`{}` di luar blocked-* sebagai tafsir yang dipilih spec; bisa dicatat eksplisit."
+  },
+  {
+   "location": "Plan > e2e_scenarios (implementer-19)",
+   "issue": "Plan hanya menghitung kekosongan failed set (CAP-4) tanpa seleksi skenario."
+  },
+  {
+   "location": "Code Map > plan_e2e_cells (implementer-20)",
+   "issue": "Bentuk API stabil plan_e2e_cells vs fungsi baru yang mengembalikan rekaman."
+  }
+ ]
+}

@@ -1,0 +1,21 @@
+{"round": 5, "critical_high": 10, "fixed": 8, "escalated": 2, "dropped": 0, "code_defects": 0,
+ "questions_for_budi": [
+  {"id": "20261126-192048.r5-q1", "finding": "Docker absen: Layer 2/5 skipped tak dipersist, jadi phase1_reuse false dan clean dari plan selalu false. Override kontrak 'run skipped dihitung clean' bisa dibaca V langsung clean, atau hanya lapis itu dianggap selesai sehingga temuan blocking Layer 1 V harus dinilai orchestrator sendiri. Spec tak menyebut yang mana.", "options": ["V langsung clean (temuan Layer 1 dilaporkan di wrap-up)", "Lapis skipped dianggap selesai; orchestrator menilai file Layer 1 V (temuan severity error), seperti interim", "Plan dapat petunjuk lapis-skipped dan menilai clean sendiri (tambah lingkup)"], "recommended": "Lapis skipped dianggap selesai; orchestrator menilai file Layer 1 V, seperti interim", "oscillation": false},
+  {"id": "20261126-192048.r5-q2", "finding": "e2e_warm/e2e_scenarios saat blocked-by-scope menggantikan langkah turunan focus: ronde 2 sudah memperbaiki dengan 'blocked-by-scope included' (false/full), tapi perampingan membuang klausa itu dan reviewer mengangkatnya lagi.", "options": ["Pulihkan '(blocked-by-scope included)'", "Biarkan seperti sekarang"], "recommended": "Pulihkan '(blocked-by-scope included)'", "oscillation": true}
+ ],
+ "medium_low": [
+  {"location": "Design Notes > Canary (whatever psm_e2e_enabled)", "issue": "Canary rusak memblokir plan/aggregate walau E2E nonaktif; aturan ini keputusan ronde 2, konsekuensinya bisa didokumentasikan di README/headless.md"},
+  {"location": "Design Notes > Runner (RESERVED_PASSTHROUGH)", "issue": "--tier di daftar reserved membuat singkatan passthrough --ti (dulu --timeout) ditolak; bisa pakai exact match atau test"},
+  {"location": "Tasks > tests (--tier stamp)", "issue": "Tak ada test yang memastikan tier integer di tiap jenis rekaman (child, crash, no-slots, not-run)"},
+  {"location": "Design Notes > Plan (failed-only)", "issue": "Failed set dengan scenario null/non-string tak didefinisikan; relevan saat CAP-4"},
+  {"location": "Design Notes > Docs > Headless (canary reset)", "issue": "Nilai well-formed tapi sampah (9.1:safari) direset diam-diam di headless; mengikuti kata kontrak Headless"},
+  {"location": "Design Notes > Aggregate (reached) x blocked-not-gradeable", "issue": "Versi not-gradeable tanpa rekaman sesi dilaporkan 'not reached'; mengikuti kontrak, kandidat deferred-work"},
+  {"location": "Design Notes > Plan (not-gradeable vs corrupt tail)", "issue": "Sel corrupt-tail dengan pass smoke-only terakhir terhitung not-gradeable menurut kontrak harfiah, sehingga tail tak pernah diperbaiki; perubahan kontrak"},
+  {"location": "Design Notes > Docs (infra cause)", "issue": "Kapan penyebab infra yang dibawa dihapus tidak dinyatakan eksplisit ('first later run' menyiratkan sekali prompt)"},
+  {"location": "Code Map / AC 1 (pure derivation)", "issue": "Nama dan input fungsi derivasi murni tak disebut"},
+  {"location": "AC 1 (crash records)", "issue": "Kalimat menyebut crash 'cold-full' lalu boot/scenario_set null; klausa akhir sudah menjelaskan"},
+  {"location": "Boundaries > Never (stopped records)", "issue": "'readers already skip them' tidak akurat: reader adalah kode baru CAP-1 dan aggregate reached menghitung stopped; juga entri deferred-work"},
+  {"location": "Boundaries > Never (bankwire timing report)", "issue": "Laporan timing wajib SPEC tak punya entri deferred-work dan commit baseline 'before'"},
+  {"location": "Tasks > tests", "issue": "Tak ada test presedensi --browsers eksplisit vs config, dan tabel bentuk canary"},
+  {"location": "Design Notes > Docs > Headless (canary reset)", "issue": "Normalisasi reset canary dikerjakan model tangan; bisa diberi mode skrip"}
+ ]}

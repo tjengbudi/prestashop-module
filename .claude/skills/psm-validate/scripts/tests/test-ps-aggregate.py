@@ -1474,7 +1474,7 @@ def main():
         rc, err, out = env.run("--session", "BUKAN-TOKEN")
         ok &= check("--session salah bentuk -> exit 2", rc == 2 and out is None)
         rc, err, out = env.run("--session", SESSION)
-        ok &= check("--session sah -> diterima (belum dipakai), ready True",
+        ok &= check("--session sah -> diterima, ready True",
                     rc == 0 and out is not None and out["ready"] is True)
         rc, err = _run_main(["--static", str(env.static), "--config", env.cfg,
                              "-o", str(env.out), "--require", "static,e2e"])
@@ -1483,6 +1483,10 @@ def main():
                     rc == 0 and out is not None and out["ready"] is False
                     and out["layers_run"]["e2e"] is False
                     and all(c["reason"] == "missing" for c in out["e2e_cells"]["9.1"].values()))
+        rc, err = _run_main(["--static", str(env.static), "--config", env.cfg,
+                             "-o", str(env.out), "--session", SESSION])
+        ok &= check("--session tanpa --reports-dir/--module -> exit 2 (reached palsu dicegah)",
+                    rc == 2 and "--reports-dir" in err)
         bad_br = _write_cfg(env.root / "bad-br.json", "9.1", "chromium,webkitx")
         rc, err, out = env.run("--config", bad_br, config=False)
         ok &= check("psm_e2e_browsers tak sah (webkitx) -> exit 2", rc == 2 and "webkitx" in err)
@@ -1491,6 +1495,89 @@ def main():
         ok &= check("tanpa --config -> himpunan default skrip (tiga versi), ready False",
                     out is not None and out["target_versions"] == TV and out["ready"] is False
                     and out["e2e_cells"]["8.1"]["chromium"]["reason"] == "missing")
+
+    # CAP-1 Aggregate: versions[ver].reached dgn --session (cell-contract.md > Aggregate).
+    other = "zyxwvutsrq987654"
+
+    def _unstarted(ver, b, state, reason, session=SESSION):
+        return _rec(ver, b, session=session, state=state, conclusive=False, reason=reason,
+                    boot=None, boot_id=None, scenario_set=None, scenarios_run=None,
+                    install=None, findings=None, inconclusive=None, authored_assertions=None,
+                    scenario_notes=None, browser_notes=None, phase_durations={},
+                    boot_phases=None, tier=1)
+
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td)  # 1.7.8,8.1,9.1 x chromium,firefox
+        env.add("9.1", "chromium", _unstarted("9.1", "chromium", "not-run",
+                                              "fail-fast after 8.1:chromium"))
+        env.add("8.1", "firefox", _unstarted("8.1", "firefox", "inconclusive", "no-slots"))
+        env.add("1.7.8", "chromium", _unstarted("1.7.8", "chromium", "inconclusive", "stopped"))
+        rc, err, out = env.run("--session", SESSION)
+        vs = out["versions"] if out else {}
+        ok &= check("reached: hanya record sesi not-run / no-slots / stopped -> true (tiap versi)",
+                    rc == 0 and all(vs[v].get("reached") is True for v in TV)
+                    and out["ready"] is False)
+        rc, err, out = env.run("--session", other)
+        ok &= check("reached: record yg sama dari sesi LAIN, bukti belum lengkap -> false",
+                    out is not None and all(out["versions"][v].get("reached") is False
+                                            for v in TV))
+        rc, err, out = env.run()
+        ok &= check("reached: tanpa --session -> field absen di setiap versi",
+                    out is not None and all("reached" not in out["versions"][v] for v in TV))
+
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td, versions="8.1,9.1")
+        for b in BR:
+            env.add("9.1", b, session=other)          # 9.1 lulus penuh, sesi sebelumnya
+        env.add("8.1", "chromium", session=other)     # 8.1:firefox tanpa bukti lulus
+        env.fail("8.1", "firefox", session=other)
+        rc, err, out = env.run("--session", SESSION)
+        vs = out["versions"] if out else {}
+        ok &= check("reached: tanpa record sesi, semua sel V lulus dari sesi lebih awal -> true",
+                    out is not None and vs["9.1"].get("reached") is True)
+        ok &= check("reached: tanpa record sesi, satu sel V tanpa bukti lulus -> false",
+                    out is not None and vs["8.1"].get("reached") is False
+                    and vs["8.1"]["e2e_state"] == "fail")
+        env.add("8.1", "firefox", session=SESSION)    # sel itu kini lulus di sesi ini
+        rc, err, out = env.run("--session", SESSION)
+        ok &= check("reached: record sesi yang lulus -> true, ready True",
+                    out is not None and out["versions"]["8.1"].get("reached") is True
+                    and out["ready"] is True)
+
+    # Clean module (I/O): canary lalu lima sel gerbang cold full pass -> ready true dgn
+    # --require e2e saja + fixture static Lapis 1 minimal yang konklusif & lulus.
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td)
+        env.add("9.1", "chromium", tier=0, job_id="j-canary",
+                started_at="2026-11-26T10:00:00.000000+00:00")
+        for v, b in (("1.7.8", "chromium"), ("1.7.8", "firefox"), ("8.1", "chromium"),
+                     ("8.1", "firefox"), ("9.1", "firefox")):
+            env.add(v, b, tier=1, job_id="j-gate", started_at="2026-11-26T11:00:00.000000+00:00")
+        rc, err, out = env.run("--session", SESSION, require="e2e")
+        ok &= check("clean module: --require e2e + static konklusif -> ready True, exit 0",
+                    rc == 0 and out is not None and out["ready"] is True
+                    and out["required_layers"] == ["e2e"]
+                    and all(out["versions"][v]["reached"] is True for v in TV))
+
+    # Canary psm_e2e_canary divalidasi: tak sah = exit 2 menyebut key, apa pun psm_e2e_enabled.
+    with tempfile.TemporaryDirectory() as td:
+        env = Env(td, versions="8.1,9.1")
+        env.seed_all()
+        for label, extra in (("9.1:webkit tak terkonfigurasi", {"psm_e2e_canary": "9.1:webkit"}),
+                             ("9.1:webkit, psm_e2e_enabled false",
+                              {"psm_e2e_canary": "9.1:webkit", "psm_e2e_enabled": False}),
+                             ("tanpa ':'", {"psm_e2e_canary": "9.1"}),
+                             ("versi 7.0", {"psm_e2e_canary": "7.0:chromium"}),
+                             ("bukan string", {"psm_e2e_canary": 91})):
+            bad = _write_cfg(env.root / "bad-canary.json", "8.1,9.1", **extra)
+            rc, err, out = env.run("--config", bad, config=False)
+            ok &= check(f"canary {label} -> exit 2 menyebut psm_e2e_canary",
+                        rc == 2 and out is None and "psm_e2e_canary" in err)
+        good = _write_cfg(env.root / "good-canary.json", "8.1,9.1",
+                          psm_e2e_canary=" 8.1 : Firefox ")
+        rc, err, out = env.run("--config", good, config=False)
+        ok &= check("canary ' 8.1 : Firefox ' sah -> diterima, ready True",
+                    rc == 0 and out is not None and out["ready"] is True)
 
     print("\n" + ("SEMUA TEST LOLOS" if ok else "ADA TEST GAGAL"))
     return 0 if ok else 1

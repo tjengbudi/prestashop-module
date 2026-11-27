@@ -1,0 +1,255 @@
+{
+ "run_id": "20261126-192048",
+ "round": 5,
+ "complete": true,
+ "lenses": {
+  "adversarial": {
+   "reported": 10,
+   "valid": true,
+   "count": 10
+  },
+  "edge-case": {
+   "reported": 5,
+   "valid": true,
+   "count": 5
+  },
+  "implementer": {
+   "reported": 13,
+   "valid": true,
+   "count": 13
+  }
+ },
+ "invalid": [],
+ "missing": [],
+ "unexpected": [
+  "carry.json"
+ ],
+ "findings": [
+  {
+   "id": "adversarial-1",
+   "lens": "adversarial",
+   "location": "Design Notes > Docs > Interim rules Budi kept (last sentence: 'Any other ps-run-layer exit (1 — e.g. one child stopped ... — 130, or a traceback), with or without an output line')",
+   "issue": "Exit 1 with an output line is the normal outcome of `ps-run-layer.py --layer e2e`, not an abnormal one. Contract Runner says the run exits 1 whenever any appended record is inconclusive, `not-run` or `no-slots`, and the code returns 1 for any non-pass state (ps-run-layer.py ~L1386). This catch-all puts every ordinary infra result (no-slots, crash, browser-unavailable, install failure) into 'interactive: ask to rerun or end; headless: return blocked, no wrap-up'. That contradicts the infra-cause carry rule two sentences earlier, which assumes such runs are re-planned. It also contradicts contract Headless, where an unclean step is `status: complete` and the wrap-up always runs, and `blocked` is only for 'cannot assess at all'.",
+   "implementation_impact": "An implementer writing the docs literally would make headless callers (psm-develop/cross-version/scaffold/optimize) return `blocked` with no aggregate after any no-slots or crash run. The headless `versions`/`not_run_cells`/`e2e_tier_reached` return would be lost exactly when it matters. Interactive runs would add a spurious rerun/end prompt on top of the infra prompt.",
+   "suggestion": "Classify by output line, not by exit code alone. Exits 0, 1 and 3 that print the output line are normal: re-plan and apply the infra-cause and headless step-clean rules. Treat as abnormal only a run with no output line and exit other than 2 or 143 (a traceback, or exit 1 with no line), plus exit 130. Note that a stopped child (exit 1 with a line) is covered by the normal path, because its cells keep their earlier records and the next plan re-derives them."
+  },
+  {
+   "id": "adversarial-2",
+   "lens": "adversarial",
+   "location": "Design Notes > Plan, first bullet (`--browsers` argparse default None 'so an explicit chromium,firefox beats apply_config_file')",
+   "issue": "The spec fixes the default-equals-explicit trap for `--browsers` but leaves the same trap in `--versions`. Its argparse default is the literal '1.7.8,8.1,9.1' (ps-plan-layers.py L774), and apply_config_file overwrites any value equal to the parser default (ps-flashlight-run.py `getattr(args, dest) != parser.get_default(dest)`). So with a config targeting e.g. 1.7.6,1.7.8,8.1,9.1, an explicit `--versions 1.7.8,8.1,9.1` is silently widened to all four. CAP-1 makes the plan's run-scope filter decide `e2e_next_cells`, which are run exactly, so this pre-existing quirk now directly boots versions outside the operator's scope.",
+   "implementation_impact": "The scope menu's choice is not honoured for one specific selection. The orchestrator runs `e2e_cells_arg` containing out-of-scope cells, and the `blocked-by-scope` I/O rows cannot be reproduced when the scope happens to equal the script default.",
+   "suggestion": "Give `--versions` the same treatment: argparse default None, then `--config`, then the script default. Add a test where config has 4 versions and an explicit `--versions 1.7.8,8.1,9.1` keeps the 3-version scope in `e2e_next_cells`."
+  },
+  {
+   "id": "adversarial-3",
+   "lens": "adversarial",
+   "location": "Design Notes > Plan, `clean` bullet ('fails validate_layer_shape (static ...; flashlight with none) or is a scenario payload whose `versions` is not an object = exit 2')",
+   "issue": "The scenario guard only checks that `versions` is an object. ps-aggregate's `scenario_layer` then calls `.get` on `versions[V]`, on each `scenarios[]` item and on each `steps[]` item without type checks. A truncated or foreign per-version scenario file with `versions[V]` as a list or string, or a non-object scenario or step, raises AttributeError. The aggregate itself applies no shape gate to scenario payloads, so nothing upstream catches it either.",
+   "implementation_impact": "Under the stated rule, a malformed Layer 5 per-version file makes the plan crash with a traceback (exit 1) instead of the promised exit 2 naming the file. Every later plan call keeps crashing until the file is removed by hand.",
+   "suggestion": "Run scenario payloads through `validate_layer_shape(payload, ())` as well, which catches non-object `versions[V]`. Also require `versions[V].scenarios`, when present, to be a list of objects whose `steps`, when present, are lists of objects; anything else = exit 2 naming the file. Add one test per shape."
+  },
+  {
+   "id": "adversarial-4",
+   "lens": "adversarial",
+   "location": "Design Notes > Canary ('Value trimmed; absent, null or empty = ...; otherwise it must split at exactly one `:`')",
+   "issue": "The normalizer only covers string values. The resolver passes YAML values through unchanged (resolve-psm-config.py copies `psm_section.get(key)` as is), so `psm_e2e_canary` can arrive as an int, list, dict or bool, e.g. from a YAML typo. 'Trimmed' is undefined for those. `_config_items` shows the codebase's convention: a non-string or non-list is an explicit input error.",
+   "implementation_impact": "A literal implementation calls `.strip()` on a non-string and crashes with exit 1 in plan, runner and aggregate. A defensive one might `str()` it into something that accidentally validates. Either way the three readers can diverge.",
+   "suggestion": "State that a present, non-null, non-string canary is exit 2 naming the key. Cover it in the canary normalizer tests (int and list cases)."
+  },
+  {
+   "id": "adversarial-5",
+   "lens": "adversarial",
+   "location": "Design Notes > Canary ('exit 2 naming the key, whatever psm_e2e_enabled') together with Boundaries > Always ('validated by plan, aggregate and ps-run-layer')",
+   "issue": "The contract only says a canary outside the configured cells is an input error. The spec widens this so a bad canary fails the plan and the aggregate even when E2E is disabled. Contract Configured cells keeps 'gating without E2E ... through `ps-aggregate.py --require` without `e2e`'. With this rule, a project that set `psm_e2e_enabled: false` and has a stale canary (e.g. after dropping a target version) cannot run Phase 1 plan calls or the aggregate at all. Headless callers get `blocked` for a key that has no effect on the run.",
+   "implementation_impact": "Layers 1, 2 and 5 validation becomes impossible because of an unused E2E key. The fix (edit the canary) is not discoverable from a non-E2E workflow. The spec gives no test for this interaction.",
+   "suggestion": "Either keep the rule and state the consequence explicitly in the README config table and headless.md, with a test pinning it, or validate the canary only when it is used: plan E2E fields, a non-merge-only e2e run, and an aggregate whose `--require` includes `e2e`. Treat the second option as Ask First, since it narrows when the contract's error fires."
+  },
+  {
+   "id": "adversarial-6",
+   "lens": "adversarial",
+   "location": "Design Notes > Runner ('`--tier` ... joins RESERVED_PASSTHROUGH')",
+   "issue": "`reserved_in_passthrough` also matches prefix abbreviations of 4 or more characters against every reserved flag. Adding `--tier` makes the passthrough abbreviation `--ti`, which the children's argparse resolves to `--timeout` (ps-e2e-run.py, ps-flashlight-run.py, ps-scenario-run.py), get rejected as the reserved flag `--tier`. The rejection applies to Layers 2 and 5 too, not just e2e. The contract's RESERVED_PASSTHROUGH list does not include `--tier`, so this is a spec-added behaviour with an untested side effect.",
+   "implementation_impact": "Low, but a previously valid passthrough `-- --ti 900` now exits 2 with a misleading 'reserved flag --tier' message.",
+   "suggestion": "Either accept it and add a test documenting that `--ti` is now rejected, or reject `--tier` in passthrough with an exact-match check rather than through the abbreviation loop. Because no child accepts `--tier`, an exact match is enough to stop it reaching a child."
+  },
+  {
+   "id": "adversarial-7",
+   "lens": "adversarial",
+   "location": "Boundaries > Always (Runner: '--tier ... stamped on every record') / Tasks > tests",
+   "issue": "Records come from several code paths in ps-run-layer: child-result merge, `crash`, `browser-unavailable`, `not-run` (fail-fast and input-error), `no-slots`, and the per-version not-run truncation. The test list only says 'existing e2e runs gain --tier'. No test asserts that `tier` is the given integer on each record kind, or that it is a JSON integer rather than the string argparse yields.",
+   "implementation_impact": "Stamping `tier` in `build_record` for the child path only, or passing the argparse string, would go undetected. The contract field `tier` would be null or '0' on exactly the records (not-run, no-slots) that tier-reached reporting and later CAP slices read.",
+   "suggestion": "Add a test that drives one run producing a child result, a `crash`, a `no-slots` and a fail-fast `not-run`. Assert `rec['tier'] == 1` with `type(rec['tier']) is int` on all of them, and repeat with `--tier 0`."
+  },
+  {
+   "id": "adversarial-8",
+   "lens": "adversarial",
+   "location": "Design Notes > Plan ('for failed-only the plan only tests the focus cell's failed set ... for emptiness')",
+   "issue": "The failed set is the union of `findings[].scenario` and `inconclusive[].scenario`. The spec does not say how to treat entries whose `scenario` is absent, null or not a string, e.g. install, boot or smoke-level findings, or older records. Counted naively, a set like `{None}` is non-empty, so the plan emits `e2e_scenarios: failed-only` for a cell with no rerunnable scenario name.",
+   "implementation_impact": "The plan output is wrong today (orchestrator ignores it in the interim) and becomes a real wrong run once CAP-4 lands. The CAP-4 runner would resolve an empty or invalid name list and fall back to full while the plan claims failed-only. Plan and runner then disagree about the same set.",
+   "suggestion": "Define the failed set as non-empty string names only, and say the runner's CAP-4 resolution must use the same helper. Add a test where a fail record's only finding has no `scenario` and expect `e2e_scenarios: full`."
+  },
+  {
+   "id": "adversarial-9",
+   "lens": "adversarial",
+   "location": "Design Notes > Docs > Headless (config copy resets the canary when 'well-formed ... and, normalized as Design Notes > Canary, outside the caller's set')",
+   "issue": "'Well-formed' is purely syntactic: one colon, two non-empty parts. So any garbage with one colon, such as `abc:xyz`, `9.1:safari` or `9.1:chromium ` with a typo'd version, counts as well-formed. It is then 'outside the caller's set' and silently reset to the default with only an assumption logged. The same value is a hard exit 2 in interactive runs. The split is arbitrary: `9.1chromium` (no colon) is kept and returns `blocked`, while `9.1:safari` is quietly replaced.",
+   "implementation_impact": "Headless and interactive diverge on the same config. A typo'd canary in a shared config is masked in every headless call and surfaces only interactively.",
+   "suggestion": "Reset only when the value is a valid canary for the full resolved config: version a configured string, browser a supported engine inside `psm_e2e_browsers`, and that cell outside the caller's set. Keep everything else so the plan's exit 2 returns `blocked`. Add a headless.md example for each branch."
+  },
+  {
+   "id": "adversarial-10",
+   "lens": "adversarial",
+   "location": "Design Notes > Aggregate (`reached`) with Design Notes > Docs > Headless ('not reached: stopped at <step>')",
+   "issue": "A headless call can reach `blocked-not-gradeable` with no run at all, e.g. a smoke-only module whose cells were all proven in an earlier session. In that case every version has cells lacking passing evidence (the not-gradeable ones) and no record of this session. Each version then gets `reached: false` and reason `not reached: stopped at blocked-not-gradeable`, which wrongly tells the psm-develop/optimize callers the version was never exercised. The actual reason is that its cells are not gradeable. The callers' docs treat `not reached` as 'unproven, not comparable', so psm-optimize's Verifikasi would report the version as not comparable instead of showing its smoke results.",
+   "implementation_impact": "The rule is a misleading caller-facing verdict that the docs task will spread to four SKILL.md files. Fixing it later means changing the headless return contract the callers rely on.",
+   "suggestion": "This follows the contract's Aggregate wording, so do not change it unilaterally. Record it in deferred-work, or raise it as Ask First, with the proposal that a cell that is not-gradeable on a fresh record counts as reached for `reached`. If it is kept, add an I/O row pinning the current behaviour so it is a known outcome rather than a surprise."
+  },
+  {
+   "id": "edge-case-1",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Docs (interim rules: 'Any other ps-run-layer exit (1 — e.g. one child stopped ... — 130, or a traceback), with or without an output line: interactive shows stderr and asks Budi to rerun or end the E2E loop; headless returns `blocked` with the stderr, no wrap-up')",
+   "issue": "Exit 1 with an output line is also ps-run-layer's normal result for any run that appended an `inconclusive`, `not-run` or `no-slots` record and no `fail` (contract Runner exit codes; `_e2e_exit` returns 1 in that case and also when a child was stopped). The rule treats every exit 1 as an abnormal exit. It gives no way to tell a normal inconclusive run from a run with a stopped child. Both print `e2e_status: ran`. The only difference is that the stopped version's cells are missing from `appended`.",
+   "implementation_impact": "In headless, the first `no-slots` or `crash` run returns `blocked` with no wrap-up. The contract's Headless rule says that run is a step that is not clean: `complete`, `ready: false`, wrap-up and aggregate. In interactive, every inconclusive run asks rerun-or-end, while the infra-cause carry rule (which assumes the loop goes on and prompts for an environment fix) and the 'Infra twice' path to `blocked-infra` cannot be reached as written.",
+   "suggestion": "Classify exit 1 by its output line. Exit 1 with an output line whose `appended` covers every cell passed in `--cells` is a normal result: re-plan, apply the infra-cause rule, and in headless treat it as a step that is not clean (`complete`). Exit 1 with an output line that lacks some given cells (a stopped child), or with no output line (traceback), or exit 130, falls under 'any other exit'."
+  },
+  {
+   "id": "edge-case-2",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Plan (Derivation) / Code Map predicate `is_not_gradeable`; contract Plan steps 2 and 4-7 vs Evidence record > Storage (`corrupt-history`)",
+   "issue": "A cell whose history ends in a corrupt line has no passing gate-grade evidence, and its rerun reason is `corrupt-history`. The not-gradeable test looks only at the newest valid gate-grade record. The current `is_not_gradeable` ignores `corrupt_tail`. Neither the spec nor the contract says whether a corrupt-tail cell can be not-gradeable, or how `failing` and step 3 read it.",
+   "implementation_impact": "A corrupt-tail cell whose last valid gate-grade record is a smoke-only pass counts as not-gradeable. Steps 2 and 4-7 then treat it as satisfied: the plan can derive `blocked-not-gradeable` (with cause `not-gradeable`, while `rerun_matrix` says `corrupt-history`) or leave it out of the `gate` cells. The cell is never re-run, so the corrupt tail is never repaired, and the E2E loop ends.",
+   "suggestion": "State in Design Notes > Plan that a cell with a corrupt tail is never not-gradeable (`is_not_gradeable` returns False when `corrupt_tail`), so it stays in the step's cells until a valid record follows. Add a test: valid smoke-only pass, then a corrupt line, gives `gate` including that cell, not `blocked-not-gradeable`."
+  },
+  {
+   "id": "edge-case-3",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Boundaries > Aggregate / Design Notes > Aggregate ('`--session` sets `versions[ver].reached`')",
+   "issue": "The contract has plan and ps-run-layer reject a malformed `--session` token (exit 2). The aggregate's new optional `--session` has no validation rule. A missing value, a typo, or a token not shaped `[a-z0-9]{16}` simply matches no record.",
+   "implementation_impact": "A wrong token from headless silently gives `reached: false` for every version that lacks passing evidence. The return then reports `not reached: stopped at <step>` for versions the session did run. psm-optimize Verifikasi then reports those versions as 'not comparable'.",
+   "suggestion": "Add to Design Notes > Aggregate: `--session`, when given, must pass `ps_plan_layers.valid_session` (shared with plan and runner), else exit 2 naming the flag. Add an aggregate test for a malformed token."
+  },
+  {
+   "id": "edge-case-4",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Plan ('`e2e_warm` false and `e2e_scenarios` `full` on every step but `focus`') vs contract Plan > Run scope (`blocked-by-scope` replaces the derived step)",
+   "issue": "When the derived step is `focus` and the run scope removes the focus cell, the plan reports `e2e_step: blocked-by-scope` with the blocked step's tier. The spec does not say whether `e2e_warm` and `e2e_scenarios` follow the derived `focus` step (warm or failed-only possible) or the reported step (false/`full`).",
+   "implementation_impact": "Two implementations can emit different values for the same history. Tests for the 'Hosted in 8.1' `--versions 8.1` row, and AC 1 style generated cases with a scope, can pin either one. Nothing runs, but a later reader of these fields (CAP-4/5) gets values that depend on the implementation.",
+   "suggestion": "State that `e2e_warm`/`e2e_scenarios` follow the reported `e2e_step`: `blocked-by-scope` gives false/`full`, the same as tier and required cells come from the blocked step only. For example: `warm = step_reported == 'focus' and ...`."
+  },
+  {
+   "id": "edge-case-5",
+   "lens": "edge-case",
+   "location": "spec-psm-e2e-cap1-tiered-gate.md: Design Notes > Docs (interim rules: 'An infra cause (short of `blocked-infra`) is carried per version V ... Before the first later run whose `e2e_next_cells` include a cell of V, interactive asks Budi to fix the environment or decline')",
+   "issue": "The rule says when a carried infra cause is set and when it prompts. It never says when the cause is cleared: after Budi says he fixed it, after the next run of V leaves no infra cause, or after a patch changes the fingerprint.",
+   "implementation_impact": "The orchestrator either prompts again before every later run of V for the rest of the session, even after a clean run, or prompts only once ever and lets a later fresh infra cause on V go without a prompt. Both readings fit the prose.",
+   "suggestion": "Add one clause: the prompt consumes the carried cause; the next run then sets a new cause for V only if it leaves one again (same `appended` and rerun-reason test), so each infra-cause run gets at most one prompt before the next run of V."
+  },
+  {
+   "id": "implementer-1",
+   "lens": "implementer",
+   "location": "Design Notes > Docs > interim rules, last sentence ('Any other ps-run-layer exit (1 — e.g. one child stopped ... — 130, or a traceback), with or without an output line ...')",
+   "issue": "Exit 1 is ps-run-layer's normal result for any run that appended an inconclusive, no-slots or crash record (ps-run-layer.py _e2e_exit: `any(s != 'pass') -> 1`, with an output line; CAP-3 spec: 'not-run/no-slots records count as not pass ... so 1'). Read literally, this rule makes every infra outcome an 'ask Budi to rerun or end the loop' prompt in interactive mode, and in headless a `blocked` return with no wrap-up. That contradicts three other rules: the spec's own infra-cause rule (cause carried per version, env-fix prompt before the next run that includes V), contract Headless (a step that is not clean returns `complete` and runs the wrap-up and aggregate), and the CAP-3 headless.md rule that 'no-slots / not-run bukan blocked'. The only exit 1 cases the rule seems meant for (a stopped child, a traceback) look the same as a normal exit 1 by exit code. A stopped child still prints the output line and logs 'anak dihentikan'; a traceback prints no output line.",
+   "implementation_impact": "The docs author can't write one consistent rule for exit 1. Taken literally, headless returns `blocked` without an aggregate on the first boot timeout or no-slots run, and headless callers lose the per-version `versions`/`not reached` contract.",
+   "suggestion": "Limit the rule to exit 1 without an output line (traceback), exit 130, and exit 1 whose stderr names a stopped child (`anak dihentikan`). State that an exit 1 with an output line is read like exit 0/3: outcomes come from the next plan call, and infra causes follow the infra-cause rule (headless: step not clean -> `complete`)."
+  },
+  {
+   "id": "implementer-2",
+   "lens": "implementer",
+   "location": "Tasks & Acceptance > tests ('the Clean-module aggregate runs with --require e2e so ready true does not depend on Layer 1/2/5 fixtures')",
+   "issue": "This claim does not hold in the current ps-aggregate.py. main exits 2 ('--static wajib') when `<module>-static.json` is absent and `--static` is not given. version_ready also has a floor that applies whatever `--require` says: `if not m.get('conclusive'): return False`, and `conclusive` = static_layer conclusive, which needs `rules_evaluated` >= 1 and `main_file_found: true`. So `ready: true` still needs a conclusive, passing Layer 1 fixture.",
+   "implementation_impact": "A test written as the spec says (histories only plus --require e2e) gets exit 2 or `ready: false`. The implementer then has to guess whether to add a static fixture or weaken the floor, which the spec does not authorize.",
+   "suggestion": "Reword: 'with --require e2e and a minimal conclusive static fixture (`<module>-static.json` with versions[V].rules_evaluated >= 1, no error findings, main_file_found true), so ready does not depend on Layer 2/5 fixtures'."
+  },
+  {
+   "id": "implementer-3",
+   "lens": "implementer",
+   "location": "Design Notes > Plan ('clean: false without loading files when phase1_reuse is false for V') x contract Plan > Phase 1 override ('a Layer 2 or 5 run of V that reported skipped (Docker absent) counts as clean') x Design Notes > Docs ('Phase 1 loop gated by clean')",
+   "issue": "With Docker absent, ps-run-layer does not persist a per-version Layer 2/5 file for a skipped child (ps-run-layer.py: 'Payload skip (versions {}) TAK dipersist'). `flashlight`/`scenario` therefore stay in per_version[V].rerun, phase1_reuse is false, and the plan emits clean=false without ever loading V's Layer 1 file. The contract override says the skipped run 'counts as clean', but nothing says whether V then counts as clean even with Layer 1 blocking findings, or whether the orchestrator must judge V's per-version static file by hand. Moving that judgment into the script is exactly what the plan was meant to do.",
+   "implementation_impact": "The docs author has to invent the Docker-absent Phase 1 exit and Phase 2 entry rule. Either Layer 1 errors are silently skipped on Docker-less hosts, or the model reads JSON findings by hand.",
+   "suggestion": "State the rule: with Docker absent, V is clean iff per_version[V].rerun minus {e2e, adversarial, the layers whose run reported skipped this session} is empty and V's Layer 1 file has no blocking finding. Either give the plan a way to evaluate this (e.g. a `--skipped-layers flashlight,scenario` run-scope hint, so the plan judges Layer 1 alone), or tell the docs exactly how the orchestrator judges Layer 1."
+  },
+  {
+   "id": "implementer-4",
+   "lens": "implementer",
+   "location": "Design Notes > Plan ('e2e_focus_cell is always a cell'); contract Plan field list",
+   "issue": "The type of `e2e_focus_cell` is never given. `e2e_next_cells`/`e2e_required_cells` are lists of '<ver>:<browser>' and `e2e_blocked_causes` uses those keys, but the focus cell could equally be a string or a {version, browser} object. The AC1 test compares cells against it ('being or sharing the version of e2e_focus_cell').",
+   "implementation_impact": "Plan output, tests and docs (which parse the focus cell's version to pick the hosting version) can disagree.",
+   "suggestion": "Say `e2e_focus_cell` is a '<ver>:<browser>' string like the list entries."
+  },
+  {
+   "id": "implementer-5",
+   "lens": "implementer",
+   "location": "Design Notes > Canary; Boundaries ('one normalizer in ps-flashlight-run.py'); Code Map ('configured_cells (signature kept ...)')",
+   "issue": "The canary normalizer has no name, signature or return value, and handling of non-string values is undefined ('Value trimmed'). A YAML value such as a number or a list reaches the config JSON unchanged through the resolver. configured_cells keeps its (versions, browsers) return, so each caller must re-read the config JSON to get the raw canary.",
+   "implementation_impact": "Plan, runner and aggregate may each call it differently. A non-string canary may raise AttributeError (traceback, exit 1) instead of exit 2 naming the key.",
+   "suggestion": "Name it, e.g. `normalize_canary(raw, versions, browsers) -> '<ver>:<browser>'` raising CellConfigError. State that a non-null, non-string value is exit 2 naming `psm_e2e_canary`."
+  },
+  {
+   "id": "implementer-6",
+   "lens": "implementer",
+   "location": "Acceptance Criteria #1; Code Map ('new pure step derivation')",
+   "issue": "AC1 has to call 'the pure step derivation ... in-process', but the spec names no function or inputs. The derivation needs per-cell records and corrupt flags, fingerprint, per-version tags, current scenario notes, the canary, configured order, the session (blocked-infra, e2e_warm) and the run scope.",
+   "implementation_impact": "The test harness and implementation are designed together by guess. Scope filtering may or may not sit inside the 'pure' function, which changes what AC1 asserts on.",
+   "suggestion": "Name the function and its inputs (e.g. `derive_e2e_step(cells, canary, versions, browsers, session, scope_versions, scope_browsers, current_notes)` returning every tier field). Say whether the scope filter is applied inside it (AC1 then uses the default scope)."
+  },
+  {
+   "id": "implementer-7",
+   "lens": "implementer",
+   "location": "Acceptance Criteria #1 ('every combination of none/pass/fail/inconclusive-`crash` cold-full records ... `crash` records carry `boot`/`scenario_set` null')",
+   "issue": "The criterion says crash records are 'cold-full' and, in the same sentence, that they carry boot/scenario_set null, so they are not cold-full. Which reading applies changes `is_failing`/`failing` and the focus-cell computation.",
+   "implementation_impact": "The generator may build crash records with boot cold/scenario_set full, which the runner never writes for a crash without child output.",
+   "suggestion": "Write 'none / cold-full pass / cold-full fail / inconclusive `crash` (boot and scenario_set null, as the runner writes it)'."
+  },
+  {
+   "id": "implementer-8",
+   "lens": "implementer",
+   "location": "Boundaries > Never ('producing `stopped` records (deferred-work; readers already skip them)'); deferred-work.md CAP-1 entry",
+   "issue": "'Readers already skip them' is false at baseline c460e10: ps-plan-layers has no blocked-infra derivation, and ps-aggregate has no `reached`. Both readers are new CAP-1 code, and their `stopped` handling (skipped for blocked-infra, counted for reached) must be written in this slice.",
+   "implementation_impact": "An implementer may assume no `stopped` handling is needed and skip the skip/count logic beyond the single I/O row.",
+   "suggestion": "Replace with 'readers handle them per contract (blocked-infra skips `stopped`; aggregate `reached` counts it); tests use hand-written `stopped` records'."
+  },
+  {
+   "id": "implementer-9",
+   "lens": "implementer",
+   "location": "Boundaries > Never ('the bankwire timing report')",
+   "issue": "SPEC.md's Success signal makes the before/after bankwire timing report mandatory, with 'before' measured on the scripts of the commit preceding the first script change (now pre-CAP-2). CAP-1 defers it, but deferred-work.md has no entry for it and no record of which commit is the 'before' baseline.",
+   "implementation_impact": "The mandatory success criterion has no owner and its baseline commit may be lost.",
+   "suggestion": "Add a deferred-work entry naming the report and the baseline commit (the parent of CAP-2's first script change)."
+  },
+  {
+   "id": "implementer-10",
+   "lens": "implementer",
+   "location": "Design Notes > Plan ('clean' ... 'a scenario payload whose versions is not an object = exit 2')",
+   "issue": "The scenario guard checks only the top-level `versions` type. scenario_layer then calls `ver.get('scenarios', [])` and `s.get(...)`, so a per-version scenario file with versions[V] or a scenarios entry that is not an object raises AttributeError. That is a traceback, exit 1, in a plan call that every loop depends on. validate_layer_shape is not applied to scenario files (they have no `findings`).",
+   "implementation_impact": "A truncated or foreign Layer 5 file crashes every run-scope plan call instead of giving the named exit 2 the spec promises for unloadable files.",
+   "suggestion": "Extend the guard: versions[V] must be an object and each `scenarios` entry an object, else exit 2 naming the file."
+  },
+  {
+   "id": "implementer-11",
+   "lens": "implementer",
+   "location": "Tasks & Acceptance > tests; I/O Bad input row",
+   "issue": "No test is listed for two behaviors the Design Notes specify precisely. First, `--browsers` precedence: argparse default None, so an explicit `chromium,firefox` beats `--config` through apply_config_file. Second, canary forms: whitespace trimmed, upper-case browser accepted, '9.1:chromium:x', ':chromium', '9.1:', '9.1.0:chromium' against a configured '9.1'. The Bad input row covers only a well-formed canary outside the configured set.",
+   "implementation_impact": "The trickiest parsing rules can regress unnoticed. The headless config-copy rule depends on the same well-formedness definition.",
+   "suggestion": "Add these tests: explicit `--browsers chromium,firefox` against config `firefox` gives scope chromium,firefox; and the canary table, run through plan, aggregate and ps-run-layer."
+  },
+  {
+   "id": "implementer-12",
+   "lens": "implementer",
+   "location": "Design Notes > Docs > Headless ('config copy resets the canary only when it is well-formed ... and, normalized as Design Notes > Canary, outside the caller's set')",
+   "issue": "The reset decision (trim, exactly one ':', lower-case the browser, exact version-string match against the caller's normalized versions) is left to the model writing the config copy by hand. Every other deterministic transform in the family is done by a script.",
+   "implementation_impact": "The model can mis-normalize, e.g. reset '9.1:Chromium' or keep '9.1.0:chromium'. That turns a valid headless call into `blocked`, or silently changes the canary.",
+   "suggestion": "Either give the docs an exact procedure, or add a small script mode (e.g. the canary normalizer exposed as a CLI flag) that prints whether the canary is kept or reset for a given versions/browsers set."
+  },
+  {
+   "id": "implementer-13",
+   "lens": "implementer",
+   "location": "Design Notes > Docs ('stop convergence (offered when V is not clean or e2e_focus_recorded_failure is true)') x contract Plan > Phase 1 ('A version's Phase 1 loop (--versions V --per-version; its E2E fields are not read)')",
+   "issue": "The offer reads an E2E field, but the contract says the V-loop plan call's E2E fields are not read, and only the hosting loop makes the separate run-scope call. The spec does not say which call supplies `e2e_focus_recorded_failure` in a non-hosting V loop. The value does not depend on scope, so either call would do, but the docs must name one.",
+   "implementation_impact": "The docs may make non-hosting loops issue an extra run-scope plan call, or read a field the contract says is unread.",
+   "suggestion": "State that `e2e_focus_recorded_failure` may be read from the V-loop call (focus derivation ignores --versions/--browsers), as the one exception to 'its E2E fields are not read'."
+  }
+ ],
+ "duplicates_removed": [],
+ "clusters": []
+}
